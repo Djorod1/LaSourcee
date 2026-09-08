@@ -1880,6 +1880,7 @@ async function changerPanAdmin(elem, p) {
     else if (p === 'signalements') c.innerHTML = await adminSignalements();
     else if (p === 'categories')   c.innerHTML = await adminCategories();
     else if (p === 'audit')        c.innerHTML = await adminAudit();
+    else if (p === 'diagnostic')   c.innerHTML = await adminDiagnostic();
   } catch (err) {
     c.innerHTML = `<div class="carte"><p style="color:var(--rouge);">
       Erreur de chargement : ${echapper(err.message || 'inconnue')}.</p></div>`;
@@ -2240,4 +2241,133 @@ function fermerBurgerApp() {
   const b = document.getElementById('burgerApp');
   if (m) m.classList.remove('ouvert');
   if (b) b.classList.remove('actif');
+}
+
+/* ============================================================
+   DIAGNOSTIC DE CONFIGURATION (administrateurs)
+   ------------------------------------------------------------
+   Les variables d'environnement d'un hébergement serverless ne sont
+   lisibles que depuis son tableau de bord — et celles enregistrées
+   comme « secret » n'y sont plus consultables du tout. Ce panneau
+   montre ce que le serveur a réellement reçu, sans exposer la moindre
+   valeur secrète.
+   ============================================================ */
+
+function _ligneDiag(libelle, ok, detail, conseil) {
+  const etat = ok
+    ? '<span class="tag tag-vert">OK</span>'
+    : '<span class="tag tag-rose">À corriger</span>';
+  return `<div class="ligne-session">
+    <div style="flex:1;">
+      <strong>${echapper(libelle)}</strong>
+      ${detail ? `<div class="desc">${echapper(detail)}</div>` : ''}
+      ${!ok && conseil ? `<div class="desc" style="color:var(--rouge-fonce);">${echapper(conseil)}</div>` : ''}
+    </div>
+    ${etat}
+  </div>`;
+}
+
+async function adminDiagnostic() {
+  let d;
+  try {
+    d = await API.get('/admin/diagnostic');
+  } catch (err) {
+    return `<h2 style="margin-bottom:18px;">Diagnostic</h2>
+      <div class="carte"><p style="color:var(--rouge-fonce);">
+        ${echapper(err.message || 'Diagnostic indisponible.')}</p></div>`;
+  }
+
+  const bloquantes = (d.anomalies || []).filter(a => a.gravite === 'bloquant');
+  const alertes = (d.anomalies || []).filter(a => a.gravite !== 'bloquant');
+
+  return `<h2 style="margin-bottom:6px;">Diagnostic</h2>
+    <p class="desc" style="margin-bottom:18px;">
+      Ce que le serveur a réellement reçu. Aucune valeur secrète n'est
+      affichée : mots de passe et secrets n'apparaissent jamais, seulement
+      le fait qu'ils soient renseignés.</p>
+
+    ${bloquantes.length ? `<div class="bandeau-alerte" role="alert">
+      <strong>${bloquantes.length} point(s) bloquant(s).</strong>
+      <ul style="margin:8px 0 0 18px;">
+        ${bloquantes.map(a => `<li>${echapper(a.message)}</li>`).join('')}
+      </ul></div>` : ''}
+
+    ${alertes.length ? `<div class="carte" style="margin-bottom:14px;">
+      <strong>Avertissements</strong>
+      <ul style="margin:8px 0 0 18px; color:var(--texte-doux); font-size:13px;">
+        ${alertes.map(a => `<li>${echapper(a.message)}</li>`).join('')}
+      </ul></div>` : ''}
+
+    <div class="carte" style="margin-bottom:14px;">
+      <h3 class="titre-param">Base de données</h3>
+      ${_ligneDiag('Moteur', d.base.moteur === 'postgres',
+                   `${d.base.moteur} — ${d.base.comptes} compte(s), `
+                   + `${d.base.administrateurs} administrateur(s)`,
+                   'Sur cet hébergement, seul PostgreSQL conserve les données.')}
+    </div>
+
+    <div class="carte" style="margin-bottom:14px;">
+      <h3 class="titre-param">Envoi des e-mails</h3>
+      ${_ligneDiag('Configuration SMTP', d.email.operationnel,
+                   d.email.motif,
+                   'Sans SMTP, ni confirmation d\'inscription ni '
+                   + 'réinitialisation de mot de passe ne partent.')}
+      ${d.email.expediteur ? _ligneDiag('Expéditeur', true, d.email.expediteur) : ''}
+      ${_ligneDiag('Confirmation d\'adresse exigée',
+                   d.email.confirmation_obligatoire,
+                   d.email.confirmation_obligatoire
+                     ? 'Un compte doit confirmer son adresse avant de se connecter.'
+                     : 'Un compte est utilisable sans confirmer son adresse.',
+                   'S\'active d\'elle-même dès que l\'envoi SMTP fonctionne.')}
+      <button class="btn btn-secondaire btn-petit" style="margin-top:10px;"
+              onclick="testerEnvoiEmail(this)">M'envoyer un message d'essai</button>
+      <div id="resultat-test-email" class="desc" style="margin-top:8px;"></div>
+    </div>
+
+    <div class="carte" style="margin-bottom:14px;">
+      <h3 class="titre-param">Connexion Google</h3>
+      ${_ligneDiag('Identifiant client renseigné', d.google.configure, '',
+                   'Sans lui, le bouton Google reste masqué.')}
+      ${d.google.configure ? _ligneDiag(
+          'Forme de l\'identifiant', d.google.forme_valide,
+          d.google.valeur,
+          'Un identifiant client se termine par '
+          + '« .apps.googleusercontent.com ». Une autre valeur — le secret '
+          + 'client, par exemple — provoque « invalid_client ».') : ''}
+      <p class="desc" style="margin-top:8px;">
+        Pensez aussi à déclarer ${echapper(d.adresse_publique)} dans les
+        origines JavaScript autorisées de la console Google.</p>
+    </div>
+
+    <div class="carte">
+      <h3 class="titre-param">Divers</h3>
+      ${_ligneDiag('Clé de signature fournie', d.cle_signature_fournie, '',
+                   'Sans SECRET_KEY fixe, la connexion LinkedIn échoue par intermittence.')}
+      ${_ligneDiag('Adresse publique', !!d.adresse_publique, d.adresse_publique)}
+      ${_ligneDiag('Environnement', d.environnement === 'production', d.environnement)}
+    </div>`;
+}
+
+async function testerEnvoiEmail(bouton) {
+  const zone = document.getElementById('resultat-test-email');
+  bouton.disabled = true;
+  const libelle = bouton.textContent;
+  bouton.textContent = 'Envoi…';
+  try {
+    const r = await API.post('/admin/diagnostic/test-email');
+    if (r.envoye) {
+      zone.style.color = 'var(--vert)';
+      zone.textContent = `Message envoyé à ${r.destinataire}. `
+        + 'Vérifiez votre boîte, et le dossier des indésirables.';
+    } else {
+      zone.style.color = 'var(--rouge-fonce)';
+      zone.textContent = r.motif || "L'envoi a échoué.";
+    }
+  } catch (err) {
+    zone.style.color = 'var(--rouge-fonce)';
+    zone.textContent = err.message || 'Test impossible.';
+  } finally {
+    bouton.disabled = false;
+    bouton.textContent = libelle;
+  }
 }

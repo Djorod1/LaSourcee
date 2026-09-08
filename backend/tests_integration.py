@@ -650,7 +650,54 @@ def executer_tests():
                 os.environ[cle] = valeur
 
     print("\n" + "═" * 70)
-    print("  13. AUTHENTIFICATION EXTERNE (OAuth)")
+    print("  13. DIAGNOSTIC DE CONFIGURATION")
+    print("═" * 70)
+    r = adm.get("/api/admin/diagnostic")
+    verifier("Diagnostic accessible à l'administrateur", r.status_code == 200,
+             r.get_data(as_text=True)[:120])
+    diag = r.get_json() or {}
+    verifier("Il rapporte le moteur de base",
+             diag.get("base", {}).get("moteur") in ("sqlite", "postgres"),
+             str(diag.get("base")))
+    verifier("Il rapporte l'état de l'envoi d'e-mails",
+             "operationnel" in diag.get("email", {}), str(diag.get("email")))
+    verifier("Il rapporte l'état de la connexion Google",
+             "forme_valide" in diag.get("google", {}), str(diag.get("google")))
+    verifier("Il liste les anomalies de configuration",
+             isinstance(diag.get("anomalies"), list))
+
+    # Aucun secret ne doit transiter : ni mot de passe SMTP, ni secret
+    # OAuth, ni chaîne de connexion à la base.
+    brut = r.get_data(as_text=True).lower()
+    verifier("Aucun mot de passe SMTP exposé", "smtp_motdepasse" not in brut)
+    verifier("Aucun secret LinkedIn exposé", "client_secret" not in brut)
+    verifier("Aucune chaîne de connexion exposée",
+             "postgresql://" not in brut and "password" not in brut)
+    verifier("La clé de signature n'est pas exposée",
+             "secret_key" not in brut
+             and str(app.config["SECRET_KEY"]).lower() not in brut)
+
+    # « etu » a été promu administrateur à la section précédente : il
+    # faut un compte réellement ordinaire pour éprouver le refus.
+    simple = app.test_client()
+    simple.post("/api/auth/inscription", json={
+        "prenom": "Sans", "nom": "DROITS", "email": "sans.droits@test.io",
+        "mot_de_passe": "SansDroits2026!", "role": "etudiant"})
+    verifier("Diagnostic refusé à un étudiant (403)",
+             simple.get("/api/admin/diagnostic").status_code == 403)
+    verifier("Diagnostic refusé sans session (401)",
+             app.test_client().get("/api/admin/diagnostic").status_code == 401)
+    verifier("Test d'envoi refusé à un étudiant (403)",
+             simple.post("/api/admin/diagnostic/test-email").status_code == 403)
+
+    r = adm.post("/api/admin/diagnostic/test-email")
+    verifier("Test d'envoi : réponse exploitable sans SMTP configuré",
+             r.status_code == 200
+             and (r.get_json() or {}).get("envoye") is False,
+             r.get_data(as_text=True)[:120])
+
+    print("\n" + "═" * 70)
+    print("  14. AUTHENTIFICATION EXTERNE (OAuth)")
     print("═" * 70)
     cfg = anon.get("/api/auth/config")
     verifier("Configuration OAuth exposée", cfg.status_code == 200)

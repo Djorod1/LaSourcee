@@ -419,3 +419,121 @@ def consulter_audit():
             LIMIT %s""",
         (limite,),
     ))
+
+
+# ============================================================
+# DIAGNOSTIC DE CONFIGURATION
+# ============================================================
+
+@bp_admin.get("/diagnostic")
+@admin_requis
+def diagnostic():
+    """État réel de la configuration, vu par le serveur lui-même.
+
+    Sur un hébergement serverless, les variables d'environnement ne sont
+    lisibles que dans le tableau de bord — et celles enregistrées comme
+    « secret » n'y sont plus consultables du tout après enregistrement.
+    Impossible, alors, de vérifier ce que l'application a réellement reçu
+    : on ne peut que constater qu'une fonctionnalité ne marche pas, sans
+    savoir laquelle des variables est en cause.
+
+    Cette route répond à cette question. Elle est réservée aux
+    administrateurs et ne renvoie aucune valeur secrète : les mots de
+    passe SMTP et les secrets OAuth ne sont jamais exposés, seulement le
+    fait qu'ils soient renseignés ou non.
+    """
+    import os
+    from flask import current_app
+    from config import anomalies_configuration
+    from utils.email import configuration_valide
+    from utils.urls import base_publique
+
+    smtp_ok, smtp_motif = configuration_valide()
+    client_google = (os.getenv("GOOGLE_CLIENT_ID") or "").strip()
+
+    # L'identifiant client Google n'est pas un secret : il est deja
+    # publie dans la page et par /api/auth/config. Le montrer ici evite
+    # d'avoir a le rendre lisible dans le tableau de bord.
+    google = {
+        "configure": bool(client_google),
+        "valeur": client_google,
+        "forme_valide": client_google.endswith(".apps.googleusercontent.com"),
+    }
+
+    linkedin = {
+        "client_renseigne": bool(os.getenv("LINKEDIN_CLIENT_ID")),
+        "secret_renseigne": bool(os.getenv("LINKEDIN_CLIENT_SECRET")),
+        "uri_retour": os.getenv("LINKEDIN_REDIRECT_URI", ""),
+    }
+
+    return jsonify({
+        "environnement": current_app.config.get("ENVIRONNEMENT"),
+        "adresse_publique": base_publique(),
+        "base": {
+            "moteur": current_app.config.get("DB_TYPE"),
+            "url_fournie": bool(current_app.config.get("DATABASE_URL")),
+            "comptes": (recuperer_un(
+                "SELECT COUNT(*) AS n FROM utilisateur") or {}).get("n", 0),
+            "administrateurs": (recuperer_un(
+                "SELECT COUNT(*) AS n FROM utilisateur "
+                "WHERE est_admin = 1") or {}).get("n", 0),
+        },
+        "email": {
+            "mode": (os.getenv("EMAIL_MODE", "console") or "console").lower(),
+            "operationnel": smtp_ok,
+            "motif": smtp_motif,
+            "expediteur": os.getenv("SMTP_EXPEDITEUR", ""),
+            "hote": os.getenv("SMTP_HOTE", ""),
+            "confirmation_obligatoire": bool(
+                current_app.config.get("VERIFICATION_EMAIL_OBLIGATOIRE")),
+        },
+        "google": google,
+        "linkedin": linkedin,
+        "cle_signature_fournie": bool(
+            current_app.config.get("SECRET_KEY_FOURNIE")),
+        "anomalies": [{"gravite": g, "message": m}
+                      for g, m in anomalies_configuration()],
+    })
+
+
+@bp_admin.post("/diagnostic/test-email")
+@admin_requis
+def tester_envoi_email():
+    """Envoie un message d'essai pour valider la configuration SMTP.
+
+    Vérifier l'envoi en créant de vrais comptes laisserait des traces en
+    base et n'indiquerait pas la cause d'un échec. Ici, le motif exact
+    remonte : authentification refusée, hôte injoignable, port bloqué.
+    """
+    from utils.email import envoyer, configuration_valide
+
+    destinataire = (g.utilisateur.get("email") or "").strip()
+    if not destinataire:
+        return jsonify({"erreur": "Votre compte n'a pas d'adresse."}), 400
+
+    ok, motif = configuration_valide()
+    if not ok:
+        return jsonify({"envoye": False, "motif": motif}), 200
+
+    try:
+        envoye = envoyer(
+            destinataire,
+            "LaSourcee — test de configuration",
+            "Ce message confirme que l'envoi d'e-mails fonctionne.\n\n"
+            "Les confirmations d'inscription et les réinitialisations de "
+            "mot de passe partiront donc correctement.\n\n"
+            "— LaSourcee",
+        )
+    except Exception as exc:
+        journaliser(g.utilisateur["id_utilisateur"], "test_email_echec",
+                    details=str(exc)[:200])
+        return jsonify({"envoye": False, "motif": str(exc)[:200]}), 200
+
+    journaliser(g.utilisateur["id_utilisateur"], "test_email",
+                details=destinataire)
+    return jsonify({
+        "envoye": bool(envoye),
+        "destinataire": destinataire,
+        "motif": "" if envoye else
+                 "L'envoi a échoué. Consultez les journaux du serveur.",
+    })
