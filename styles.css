@@ -1688,3 +1688,13 @@ img, svg, video { max-width: 100%; height: auto; }
   font-size: 13px;
   margin-top: 8px;
 }
+
+/* Message affiché quand la plateforme n'a pas encore de contenu :
+   mieux vaut l'assumer qu'afficher un bloc vide ou inventé. */
+.hero-vide {
+  color: var(--texte-doux);
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 14px 2px;
+  margin: 0;
+}

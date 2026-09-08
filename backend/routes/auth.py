@@ -144,13 +144,13 @@ def _envoyer_email_verification(id_user: int, email: str, prenom: str):
         lien = url_publique("/verifier-email.html?jeton=" + jeton)
         parti = envoyer(
             email,
-            "Bienvenue sur LaSourcee — confirmez votre adresse",
+            "Bienvenue sur LaSourcee, confirmez votre adresse",
             f"Bonjour {prenom},\n\n"
             f"Bienvenue sur LaSourcee. Pour activer votre compte,\n"
             f"cliquez sur le lien ci-dessous (valable 24 heures) :\n\n"
             f"{lien}\n\n"
             f"Si vous n'avez pas créé ce compte, ignorez ce message.\n\n"
-            f"— L'équipe LaSourcee",
+            f"L'équipe LaSourcee",
         )
         if not parti:
             logger.error(
@@ -315,7 +315,7 @@ def demander_reinitialisation():
                 f"{lien}\n\n"
                 f"Si vous n'avez pas demandé cette réinitialisation, "
                 f"ignorez ce message.\n\n"
-                f"— L'équipe LaSourcee",
+                f"L'équipe LaSourcee",
             )
         except Exception:
             # On reste silencieux côté client (énumération)

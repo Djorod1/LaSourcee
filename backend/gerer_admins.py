@@ -135,7 +135,7 @@ def _envoyer_invitation(prenom, nom, email, mot_de_passe, nouveau=True):
         f"Pour votre sécurité, changez ce mot de passe dès votre première\n"
         f"connexion (menu profil → Paramètres → Sécurité).\n"
         f"Ne transmettez ces identifiants à personne.\n\n"
-        f"— L'équipe LaSourcee"
+        f"L'équipe LaSourcee"
     )
 
     return mod_email.envoyer(email, titre, texte, corps_html=html)
@@ -284,7 +284,7 @@ def commande_tester_email(destinataire):
         note_bas="Message de test envoyé depuis gerer_admins.py",
     )
     ok = mod_email.envoyer(
-        destinataire, "LaSourcee — test d'envoi",
+        destinataire, "LaSourcee, test d'envoi",
         "Si vous lisez ce message, l'envoi d'e-mails fonctionne.",
         corps_html=html,
     )

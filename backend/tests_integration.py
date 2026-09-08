@@ -697,7 +697,57 @@ def executer_tests():
              r.get_data(as_text=True)[:120])
 
     print("\n" + "═" * 70)
-    print("  14. AUTHENTIFICATION EXTERNE (OAuth)")
+    print("  14. CHIFFRES ET QUESTIONS DE LA PAGE D'ACCUEIL")
+    print("═" * 70)
+    public = app.test_client()
+
+    r = public.get("/api/profil/statistiques")
+    verifier("Statistiques accessibles sans session", r.status_code == 200)
+    stats = r.get_json() or {}
+    for cle in ("membres", "mentors", "questions", "reponses"):
+        verifier(f"Le compteur « {cle} » est présent",
+                 isinstance(stats.get(cle), int), str(stats))
+
+    # Les chiffres doivent refléter la base, pas des valeurs écrites en dur.
+    verifier("Le nombre de membres correspond à la base",
+             stats["membres"] == jeton_sql(
+                 "SELECT COUNT(*) FROM utilisateur WHERE est_actif = 1"),
+             str(stats))
+    verifier("Le nombre de questions correspond à la base",
+             stats["questions"] == jeton_sql(
+                 "SELECT COUNT(*) FROM question"), str(stats))
+
+    # Une inscription supplémentaire doit faire bouger le compteur : c'est
+    # tout l'intérêt d'un chiffre réel.
+    avant = stats["membres"]
+    nouveau = app.test_client()
+    nouveau.post("/api/auth/inscription", json={
+        "prenom": "Compteur", "nom": "TEST", "email": "compteur@test.io",
+        "mot_de_passe": "Compteur2026!", "role": "etudiant"})
+    apres = (public.get("/api/profil/statistiques").get_json() or {})
+    verifier("Une inscription incrémente le compteur de membres",
+             apres.get("membres") == avant + 1,
+             f"{avant} -> {apres.get('membres')}")
+
+    r = public.get("/api/questions/vedette")
+    verifier("Questions en vedette accessibles sans session",
+             r.status_code == 200)
+    vedette = r.get_json() or []
+    verifier("Au plus trois questions renvoyées", len(vedette) <= 3)
+    if vedette:
+        verifier("Chaque entrée porte un titre et un compte de réponses",
+                 all("titre" in q and "nb_reponses" in q for q in vedette))
+        verifier("Le nom de famille est réduit à son initiale",
+                 all(len(q.get("auteur", "").split(" ")[-1]) <= 2
+                     for q in vedette if " " in q.get("auteur", "")),
+                 str(vedette)[:150])
+
+    brut = r.get_data(as_text=True)
+    verifier("Aucune adresse e-mail dans les questions publiques",
+             "@" not in brut, brut[:120])
+
+    print("\n" + "═" * 70)
+    print("  15. AUTHENTIFICATION EXTERNE (OAuth)")
     print("═" * 70)
     cfg = anon.get("/api/auth/config")
     verifier("Configuration OAuth exposée", cfg.status_code == 200)

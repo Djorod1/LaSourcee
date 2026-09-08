@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LaSourcee — Plateforme de mentorat</title>
+  <title>LaSourcee, plateforme de mentorat</title>
   <meta name="description" content="LaSourcee met en relation étudiants et mentors expérimentés. Posez vos questions, partagez votre expertise." />
   <link rel="canonical" href="https://lasourcee.org/" />
   <meta name="theme-color" content="#1E3A8A" />
@@ -17,14 +17,14 @@
   <meta property="og:site_name" content="LaSourcee" />
   <meta property="og:locale" content="fr_FR" />
   <meta property="og:url" content="https://lasourcee.org/" />
-  <meta property="og:title" content="LaSourcee — Plateforme de mentorat" />
+  <meta property="og:title" content="LaSourcee, plateforme de mentorat" />
   <meta property="og:description" content="Posez vos questions d'orientation, de carrière et d'éducation financière à des mentors expérimentés." />
   <meta property="og:image" content="https://lasourcee.org/assets/lasource-partage.png" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="LaSourcee — plateforme de mentorat" />
+  <meta property="og:image:alt" content="LaSourcee, plateforme de mentorat" />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="LaSourcee — Plateforme de mentorat" />
+  <meta name="twitter:title" content="LaSourcee, plateforme de mentorat" />
   <meta name="twitter:description" content="Posez vos questions d'orientation, de carrière et d'éducation financière à des mentors expérimentés." />
   <meta name="twitter:image" content="https://lasourcee.org/assets/lasource-partage.png" />
 
@@ -38,7 +38,7 @@
     "@context": "https://schema.org",
     "@type": "WebSite",
     "name": "LaSourcee",
-    "alternateName": "LaSourcee — Plateforme de mentorat",
+    "alternateName": "LaSourcee, plateforme de mentorat",
     "url": "https://lasourcee.org/",
     "inLanguage": "fr-FR",
     "description": "LaSourcee met en relation étudiants et mentors expérimentés autour du mentorat académique, de l'orientation de carrière et de l'éducation financière.",
@@ -86,7 +86,7 @@
 <section class="vue active" id="vue-accueil">
   <div class="hero">
     <nav class="hero-nav">
-      <a class="marque" href="#" aria-label="LaSourcee — Accueil">
+      <a class="marque" href="#" aria-label="LaSourcee, accueil">
         <span class="logo-zone logo-zone-navbar">
           <img src="assets/lasource-symbole.png" alt="" class="logo-img"
                onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
@@ -141,17 +141,8 @@
           </span>
           <h2>Questions populaires</h2>
         </div>
-        <div class="mini-q">
-          <strong>Comment décrocher un stage en finance à Londres ?</strong>
-          <p>Sophie M. — Étudiante en M1 Finance · 8 réponses</p>
-        </div>
-        <div class="mini-q">
-          <strong>Faut-il un doctorat pour faire de la recherche en IA ?</strong>
-          <p>Karim B. — Étudiant en informatique · 12 réponses</p>
-        </div>
-        <div class="mini-q">
-          <strong>Lancer une SaaS sans co-fondateur, est-ce viable ?</strong>
-          <p>Léa T. — Étudiante en entrepreneuriat · 5 réponses</p>
+        <div id="hero-questions">
+          <p class="hero-vide">Chargement des dernières questions…</p>
         </div>
         </div>
     </div>
@@ -161,15 +152,15 @@
         <div class="hero-stats-grid">
           <div class="hero-stat">
             <span class="hero-stat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
-            <div><strong>+12 000</strong><span>Membres</span></div>
+            <div><strong id="stat-membres">…</strong><span>Membres</span></div>
           </div>
           <div class="hero-stat">
             <span class="hero-stat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
-            <div><strong>+24 000</strong><span>Questions posées</span></div>
+            <div><strong id="stat-questions">…</strong><span>Questions posées</span></div>
           </div>
           <div class="hero-stat">
             <span class="hero-stat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg></span>
-            <div><strong>+18 000</strong><span>Réponses partagées</span></div>
+            <div><strong id="stat-reponses">…</strong><span>Réponses partagées</span></div>
           </div>
           <div class="hero-stat hero-stat-note">
             <span class="hero-stat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></span>
@@ -333,7 +324,7 @@
           <select id="select-pays"></select>
         </div>
         <div class="champ"><label>Niveau d'études / Profession</label>
-          <input type="text" placeholder="Ex : Master 2 — École Polytechnique" />
+          <input type="text" placeholder="Ex : Master 2, École Polytechnique" />
         </div>
         <div class="champ"><label>Courte présentation</label>
           <textarea placeholder="Quelques mots sur vous (facultatif)"></textarea>
@@ -402,7 +393,7 @@
      ============================================================ -->
 <section class="vue" id="vue-app">
   <nav class="navbar">
-    <a class="marque" href="#" onclick="naviguerApp('fil'); return false;" aria-label="LaSourcee — Accueil">
+    <a class="marque" href="#" onclick="naviguerApp('fil'); return false;" aria-label="LaSourcee, accueil">
       <span class="logo-zone logo-zone-navbar">
         <img src="assets/lasource-symbole.png" alt="" class="logo-img"
              onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">

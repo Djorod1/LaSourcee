@@ -228,3 +228,35 @@ def signaler(id_q):
         commit=True,
     )
     return jsonify({"ok": True})
+
+
+@bp_questions.get("/vedette")
+def vedette():
+    """Quelques questions pour la page d'accueil, sans authentification.
+
+    Le fil complet reste réservé aux membres ; cette route n'expose que
+    ce que la page d'accueil affiche déjà : un titre, l'auteur et le
+    nombre de réponses. Le nom de famille est réduit à son initiale —
+    montrer une identité complète à un visiteur anonyme n'apporterait
+    rien et exposerait les membres.
+
+    Les questions les plus commentées d'abord : ce sont celles qui
+    montrent le mieux ce que la plateforme apporte.
+    """
+    lignes = recuperer_tous(
+        """SELECT q.id_question, q.titre, u.prenom, u.nom,
+                  (SELECT COUNT(*) FROM reponse r
+                    WHERE r.id_question = q.id_question) AS nb_reponses
+             FROM question q
+             JOIN utilisateur u ON u.id_utilisateur = q.id_auteur
+            WHERE u.est_actif = 1
+         ORDER BY nb_reponses DESC, q.publiee_le DESC
+            LIMIT 3"""
+    )
+    return jsonify([{
+        "id_question": l["id_question"],
+        "titre": l["titre"],
+        "auteur": (l["prenom"] or "").strip()
+                  + ((" " + l["nom"].strip()[0] + ".") if l.get("nom") else ""),
+        "nb_reponses": l["nb_reponses"] or 0,
+    } for l in lignes])

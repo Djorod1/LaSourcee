@@ -518,7 +518,7 @@ def tester_envoi_email():
     try:
         envoye = envoyer(
             destinataire,
-            "LaSourcee — test de configuration",
+            "LaSourcee, test de configuration",
             "Ce message confirme que l'envoi d'e-mails fonctionne.\n\n"
             "Les confirmations d'inscription et les réinitialisations de "
             "mot de passe partiront donc correctement.\n\n"

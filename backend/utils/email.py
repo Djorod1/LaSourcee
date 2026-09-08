@@ -207,7 +207,7 @@ def gabarit_html(titre, paragraphes, bouton_texte=None, bouton_lien=None,
         <tr><td style="background:#faf9f7;padding:18px 32px;
                        border-top:1px solid #e6e6e6;">
           <p style="margin:0;font-size:12px;color:#888888;">
-            LaSourcee — la plateforme de mentorat qui connecte étudiants
+            LaSourcee, la plateforme de mentorat qui connecte étudiants
             et professionnels.
           </p>
         </td></tr>

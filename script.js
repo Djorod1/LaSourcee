@@ -6,7 +6,7 @@
 const etat = {
   utilisateur: {
     prenom: 'Marie', nom: 'Dupont', initiales: 'MD',
-    role: 'etudiant', pays: 'France', etudes: 'Master 2 — Sciences Po Paris',
+    role: 'etudiant', pays: 'France', etudes: 'Master 2, Sciences Po Paris',
     bio: "Étudiante curieuse, passionnée par la finance durable et l'entrepreneuriat à impact.",
     secteurs: ['Finance', 'Entrepreneuriat', 'Technologie'],
     estAdmin: true,
@@ -410,7 +410,7 @@ function remplirSelectPays() {
   const sel = document.getElementById('select-pays');
   if (!sel || sel.dataset.remp === '1') return;
   sel.dataset.remp = '1';
-  sel.innerHTML = '<option value="">— Sélectionnez votre pays —</option>' +
+  sel.innerHTML = '<option value="">Sélectionnez votre pays</option>' +
     LISTE_PAYS.map(p => `<option value="${p}">${p}</option>`).join('');
 }
 async function seDeconnecter() {
@@ -617,7 +617,7 @@ function rendreFil() {
   const conteneur = document.getElementById('fil-questions');
   const banniere = etat.rechercheTerme
     ? `<div class="carte" style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
-         <span>Résultats pour <strong>« ${echapper(etat.rechercheTerme)} »</strong> — ${liste.length} question(s)</span>
+         <span>Résultats pour <strong>« ${echapper(etat.rechercheTerme)} »</strong> : ${liste.length} question(s)</span>
          <button class="btn btn-fantome btn-petit" onclick="effacerRecherche()">${ic('croix','ic ic-s')} Effacer</button>
        </div>` : '';
   if (!liste.length) {
@@ -950,7 +950,7 @@ function majSimilaires() {
   if (!scored.length) { bloc.style.display = 'none'; return; }
   liste.innerHTML = scored.map(({q}) =>
     `<li>• <a href="#" onclick="event.preventDefault(); fermerModal('modalPublier'); ouvrirQuestion(${q.id});">${q.titre}</a>
-       <span style="color:var(--texte-doux); font-size:12px;"> — ${q.repCount} réponse(s)</span></li>`
+       <span style="color:var(--texte-doux); font-size:12px;"> · ${q.repCount} réponse(s)</span></li>`
   ).join('');
   bloc.style.display = 'block';
 }
@@ -1532,7 +1532,7 @@ function panneauCompte() {
     </div>
     <div class="champ"><label>E-mail</label><input id="pc-email" type="email" value="${echapper(u.email || (u.prenom.toLowerCase() + '.' + u.nom.toLowerCase() + '@email.com'))}" /></div>
     <div class="champ"><label>Pays</label>
-      <select id="pc-pays"><option value="">— Sélectionnez votre pays —</option>${optsPays}</select>
+      <select id="pc-pays"><option value="">Sélectionnez votre pays</option>${optsPays}</select>
     </div>
     <div class="champ"><label>Biographie</label>
       <textarea id="pc-bio" maxlength="500" oninput="document.getElementById('bio-cnt').textContent=this.value.length">${echapper(u.bio)}</textarea>
@@ -2081,7 +2081,7 @@ async function adminAudit() {
         <td>${new Date(a.cree_le).toLocaleString('fr-FR')}</td>
         <td>${echapper(a.prenom + ' ' + a.nom)}</td>
         <td><span class="tag">${echapper(a.action)}</span></td>
-        <td>${a.type_cible ? echapper(a.type_cible) + ' #' + a.id_cible : '—'}</td>
+        <td>${a.type_cible ? echapper(a.type_cible) + ' #' + a.id_cible : '·'}</td>
         <td style="font-size:12px; color:var(--texte-doux);">${echapper(a.details || '')}</td>
       </tr>`).join('')}</tbody>
     </table>`;
@@ -2122,7 +2122,7 @@ document.addEventListener('click', (e) => {
 const MESSAGES_RETOUR = {
   linkedin_adresse_non_verifiee:
     "LinkedIn n'a pas confirmé votre adresse e-mail. Validez-la dans "
-    + "votre compte LinkedIn, puis réessayez — ou créez un compte avec "
+    + "votre compte LinkedIn, puis réessayez, ou créez un compte avec "
     + 'un mot de passe.',
   linkedin_profil_incomplet:
     "LinkedIn n'a pas transmis votre adresse e-mail. Autorisez le "
@@ -2154,6 +2154,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Bannière cookies (affichée tant qu'aucun choix n'a été fait)
   initialiserCookies();
   traiterRetourExterne();
+  chargerAccueil();
 
   // Contacte le serveur et charge la session courante
   await initialiserApi();
@@ -2301,7 +2302,7 @@ async function adminDiagnostic() {
     <div class="carte" style="margin-bottom:14px;">
       <h3 class="titre-param">Base de données</h3>
       ${_ligneDiag('Moteur', d.base.moteur === 'postgres',
-                   `${d.base.moteur} — ${d.base.comptes} compte(s), `
+                   `${d.base.moteur} · ${d.base.comptes} compte(s), `
                    + `${d.base.administrateurs} administrateur(s)`,
                    'Sur cet hébergement, seul PostgreSQL conserve les données.')}
     </div>
@@ -2332,8 +2333,8 @@ async function adminDiagnostic() {
           'Forme de l\'identifiant', d.google.forme_valide,
           d.google.valeur,
           'Un identifiant client se termine par '
-          + '« .apps.googleusercontent.com ». Une autre valeur — le secret '
-          + 'client, par exemple — provoque « invalid_client ».') : ''}
+          + '« .apps.googleusercontent.com ». Une autre valeur, le secret '
+          + 'client par exemple, provoque « invalid_client ».') : ''}
       <p class="desc" style="margin-top:8px;">
         Pensez aussi à déclarer ${echapper(d.adresse_publique)} dans les
         origines JavaScript autorisées de la console Google.</p>
@@ -2370,4 +2371,87 @@ async function testerEnvoiEmail(bouton) {
     bouton.disabled = false;
     bouton.textContent = libelle;
   }
+}
+
+/* ============================================================
+   PAGE D'ACCUEIL : CHIFFRES ET QUESTIONS RÉELS
+   ------------------------------------------------------------
+   La page annonçait « +12 000 membres » et trois questions écrites en
+   dur, sans rapport avec la base. Sur un site public, des chiffres
+   inventés engagent la crédibilité du projet : quelqu'un qui s'inscrit
+   après les avoir lus découvre autre chose.
+   ============================================================ */
+
+function _formaterNombre(n) {
+  return Number(n || 0).toLocaleString('fr-FR');
+}
+
+async function chargerAccueil() {
+  await Promise.all([chargerStatistiques(), chargerQuestionsAccueil()]);
+}
+
+async function chargerStatistiques() {
+  const cases = {
+    membres: document.getElementById('stat-membres'),
+    questions: document.getElementById('stat-questions'),
+    reponses: document.getElementById('stat-reponses'),
+  };
+  if (!cases.membres) return;
+
+  let s;
+  try {
+    s = await API.get('/profil/statistiques');
+  } catch {
+    // Serveur injoignable : on retire le bloc plutôt que d'afficher des
+    // tirets, qui laisseraient croire à une communauté vide.
+    const bloc = document.querySelector('.hero-stats-wrap');
+    if (bloc) bloc.style.display = 'none';
+    return;
+  }
+
+  cases.membres.textContent = _formaterNombre(s.membres);
+  cases.questions.textContent = _formaterNombre(s.questions);
+  cases.reponses.textContent = _formaterNombre(s.reponses);
+
+  // Une plateforme qui vient d'ouvrir affiche forcément de petits
+  // nombres. Les présenter comme « une communauté grandissante »
+  // sonnerait faux ; mieux vaut assumer le démarrage, c'est même un
+  // argument pour rejoindre les premiers.
+  const titre = document.querySelector('.hero-stats-titre');
+  if (titre && (s.membres || 0) < 25) {
+    titre.textContent = 'Une plateforme qui démarre, rejoignez les premiers';
+  }
+}
+
+async function chargerQuestionsAccueil() {
+  const zone = document.getElementById('hero-questions');
+  if (!zone) return;
+
+  let questions = [];
+  try {
+    // Route publique : le fil complet exige une session, mais la page
+    // d'accueil s'adresse d'abord à des visiteurs non connectés.
+    questions = await API.get('/questions/vedette');
+  } catch {
+    questions = [];
+  }
+
+  if (!Array.isArray(questions) || !questions.length) {
+    zone.innerHTML = `<p class="hero-vide">
+      Aucune question pour l'instant. La première pourrait être la vôtre.
+    </p>`;
+    return;
+  }
+
+  zone.innerHTML = questions.map(q => {
+    const auteur = q.auteur || 'Membre';
+    const nb = q.nb_reponses || 0;
+    const reponses = nb === 0 ? 'aucune réponse'
+                   : nb === 1 ? '1 réponse'
+                   : `${nb} réponses`;
+    return `<div class="mini-q">
+      <strong>${echapper(q.titre || '')}</strong>
+      <p>${echapper(auteur || 'Membre')} · ${reponses}</p>
+    </div>`;
+  }).join('');
 }

@@ -132,3 +132,30 @@ def _charger_profil(id_user, public=False):
         (id_user,),
     )
     return base
+
+
+@bp_profil.get("/statistiques")
+def statistiques_publiques():
+    """Chiffres réels de la plateforme, pour la page d'accueil.
+
+    La page annonçait des nombres écrits en dur, sans rapport avec la
+    base. Afficher des chiffres inventés sur un site public engage la
+    crédibilité du projet, et un visiteur qui s'inscrit après avoir lu
+    « 12 000 membres » découvre autre chose.
+
+    Seuls des agrégats sont exposés : aucun nom, aucune adresse. Les
+    comptes désactivés sont exclus, sans quoi une suspension gonflerait
+    encore le total.
+    """
+    def compter(requete):
+        return (recuperer_un(requete) or {}).get("n", 0) or 0
+
+    return jsonify({
+        "membres": compter(
+            "SELECT COUNT(*) AS n FROM utilisateur WHERE est_actif = 1"),
+        "mentors": compter(
+            "SELECT COUNT(*) AS n FROM utilisateur "
+            "WHERE role = 'mentor' AND est_actif = 1"),
+        "questions": compter("SELECT COUNT(*) AS n FROM question"),
+        "reponses": compter("SELECT COUNT(*) AS n FROM reponse"),
+    })
