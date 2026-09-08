@@ -1,0 +1,13 @@
+# LaSourcee — https://lasourcee.org
+
+User-agent: *
+Allow: /
+
+# L'API et les pages de jeton n'ont rien à faire dans un index de
+# moteur de recherche : elles ne servent qu'à l'application et aux
+# liens reçus par e-mail.
+Disallow: /api/
+Disallow: /verifier-email.html
+Disallow: /reinitialiser.html
+
+Sitemap: https://lasourcee.org/sitemap.xml

@@ -1,0 +1,510 @@
+#!/usr/bin/env python3
+"""Tests d'intégration de LaSourcee.
+
+Vérifie les parcours complets sur une base neuve, sans dépendance
+externe (aucun serveur ni compte e-mail requis).
+
+    cd backend && python tests_integration.py
+
+Un code de sortie 0 signifie que tous les tests passent.
+"""
+
+import logging
+import os
+import re
+import sqlite3
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Moteur testé : sqlite par défaut, postgres si DB_TYPE le demande.
+#   DB_TYPE=postgres DATABASE_URL=postgresql://... python tests_integration.py
+_MOTEUR = (os.environ.get("DB_TYPE") or "sqlite").lower()
+
+if _MOTEUR in ("postgres", "postgresql", "pg"):
+    os.environ["DB_TYPE"] = "postgres"
+else:
+    # Base temporaire dédiée aux tests, jamais celle de production
+    _BASE = os.path.join(tempfile.gettempdir(), "lasource_tests.db")
+    if os.path.exists(_BASE):
+        os.remove(_BASE)
+    os.environ["DB_TYPE"] = "sqlite"
+    os.environ["DB_PATH"] = _BASE
+os.environ.setdefault("EMAIL_MODE", "console")
+
+from app import creer_application  # noqa: E402
+
+logging.getLogger("lasource.email").setLevel(logging.CRITICAL)
+logging.getLogger("lasource").setLevel(logging.CRITICAL)
+logging.getLogger("werkzeug").setLevel(logging.CRITICAL)
+
+_resultats = []
+
+
+def verifier(intitule, condition, detail=""):
+    _resultats.append((intitule, bool(condition), detail))
+    marque = "OK  " if condition else "ÉCHEC"
+    ligne = f"  [{marque}] {intitule}"
+    if detail and not condition:
+        ligne += f"\n           → {detail}"
+    print(ligne)
+    return bool(condition)
+
+
+def jeton_sql(requete, params=()):
+    """Lecture directe en base, quel que soit le moteur testé."""
+    if os.environ["DB_TYPE"] == "postgres":
+        import psycopg2
+        cx = psycopg2.connect(os.environ["DATABASE_URL"])
+        try:
+            cur = cx.cursor()
+            cur.execute(requete.replace("?", "%s"), params)
+            r = cur.fetchone()
+            return r[0] if r else None
+        finally:
+            cx.close()
+    cx = sqlite3.connect(_BASE)
+    try:
+        r = cx.execute(requete, params).fetchone()
+        return r[0] if r else None
+    finally:
+        cx.close()
+
+
+def executer_tests():
+    app = creer_application()
+
+    print("\n" + "═" * 70)
+    print("  1. DÉMARRAGE ET RESSOURCES")
+    print("═" * 70)
+    c = app.test_client()
+    r = c.get("/api/sante")
+    verifier("Sonde de santé répond 200", r.status_code == 200)
+    verifier("Page d'accueil servie", c.get("/").status_code == 200)
+    verifier("Feuille de styles servie", c.get("/styles.css").status_code == 200)
+    verifier("Script applicatif servi", c.get("/script.js").status_code == 200)
+    verifier("Logo complet servi",
+             c.get("/assets/lasource-logo.png").status_code == 200)
+    verifier("Symbole servi",
+             c.get("/assets/lasource-symbole.png").status_code == 200)
+    verifier("Favicon servi", c.get("/assets/favicon.png").status_code == 200)
+    verifier("Route inconnue renvoie 404",
+             c.get("/api/inexistant").status_code == 404)
+    verifier("Le code du backend n'est pas servi",
+             c.get("/backend/config.py").status_code == 404)
+    verifier("Les schémas SQL ne sont pas servis",
+             c.get("/database/schema_sqlite.sql").status_code == 404)
+    verifier("Remontée d'arborescence refusée",
+             c.get("/assets/../backend/app.py").status_code in (400, 404))
+
+    print("\n" + "═" * 70)
+    print("  2. ABSENCE DE DONNÉES DE DÉMONSTRATION")
+    print("═" * 70)
+    verifier("Aucun compte de démonstration en base",
+             jeton_sql("SELECT COUNT(*) FROM utilisateur WHERE email LIKE ? "
+                       "OR email LIKE ?",
+                       ("%@lasource.io", "%@test.io")) == 0)
+    verifier("Aucune question préchargée",
+             jeton_sql("SELECT COUNT(*) FROM question") == 0)
+    verifier("Référentiel des secteurs présent",
+             jeton_sql("SELECT COUNT(*) FROM secteur") > 0)
+    verifier("Référentiel des pays présent",
+             jeton_sql("SELECT COUNT(*) FROM pays") > 0)
+
+    print("\n" + "═" * 70)
+    print("  3. INSCRIPTION ET CONNEXION")
+    print("═" * 70)
+    etu = app.test_client()
+    r = etu.post("/api/auth/inscription", json={
+        "prenom": "Aminata", "nom": "TRAORE", "email": "aminata@test.io",
+        "mot_de_passe": "Aminata2026!", "role": "etudiant"})
+    verifier("Inscription d'un étudiant", r.status_code == 201,
+             f"reçu {r.status_code} : {r.get_data(as_text=True)[:90]}")
+
+    r = etu.post("/api/auth/inscription", json={
+        "prenom": "Autre", "nom": "Personne", "email": "aminata@test.io",
+        "mot_de_passe": "Autre2026!", "role": "etudiant"})
+    verifier("E-mail en double refusé (409)", r.status_code == 409)
+
+    r = etu.post("/api/auth/inscription", json={
+        "prenom": "Faible", "nom": "Mdp", "email": "faible@test.io",
+        "mot_de_passe": "123", "role": "etudiant"})
+    verifier("Mot de passe trop faible refusé", r.status_code == 400)
+
+    r = etu.post("/api/auth/connexion",
+                 json={"email": "aminata@test.io", "mot_de_passe": "Aminata2026!"})
+    verifier("Connexion réussie", r.status_code == 200)
+    verifier("Cookie de session posé",
+             "ls_session" in r.headers.get("Set-Cookie", ""))
+
+    r = etu.get("/api/profil/moi")
+    verifier("Profil accessible une fois connecté", r.status_code == 200)
+
+    anon = app.test_client()
+    verifier("Profil refusé sans session (401)",
+             anon.get("/api/profil/moi").status_code == 401)
+    verifier("Mauvais mot de passe refusé (401)",
+             anon.post("/api/auth/connexion",
+                       json={"email": "aminata@test.io",
+                             "mot_de_passe": "faux"}).status_code == 401)
+
+    print("\n" + "═" * 70)
+    print("  4. VÉRIFICATION D'ADRESSE E-MAIL")
+    print("═" * 70)
+    jeton = jeton_sql(
+        "SELECT v.id_jeton FROM verification_email v "
+        "JOIN utilisateur u ON u.id_utilisateur = v.id_utilisateur "
+        "WHERE u.email = ?", ("aminata@test.io",))
+    verifier("Jeton de vérification créé à l'inscription", bool(jeton))
+    r = anon.post("/api/auth/verifier-email", json={"jeton": jeton})
+    verifier("Vérification acceptée", r.status_code == 200)
+    verifier("Adresse marquée vérifiée en base",
+             jeton_sql("SELECT email_verifie FROM utilisateur WHERE email = ?",
+                       ("aminata@test.io",)) == 1)
+    r = anon.post("/api/auth/verifier-email", json={"jeton": jeton})
+    verifier("Jeton non réutilisable (410)", r.status_code == 410)
+
+    print("\n" + "═" * 70)
+    print("  5. RÉINITIALISATION DE MOT DE PASSE")
+    print("═" * 70)
+    r = anon.post("/api/auth/oubli-mdp", json={"email": "aminata@test.io"})
+    verifier("Demande acceptée", r.status_code == 200)
+    r = anon.post("/api/auth/oubli-mdp", json={"email": "inconnu@nulle.part"})
+    verifier("Adresse inconnue : réponse identique (anti-énumération)",
+             r.status_code == 200)
+    jr = jeton_sql(
+        "SELECT r.id_jeton FROM reinitialisation_mdp r "
+        "JOIN utilisateur u ON u.id_utilisateur = r.id_utilisateur "
+        "WHERE u.email = ? AND r.utilise_le IS NULL "
+        "ORDER BY r.cree_le DESC LIMIT 1", ("aminata@test.io",))
+    verifier("Jeton de réinitialisation créé", bool(jr))
+    r = anon.post("/api/auth/reinitialiser-mdp",
+                  json={"jeton": jr, "nouveau_mot_de_passe": "Nouveau2026!"})
+    verifier("Réinitialisation acceptée", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+    verifier("Connexion avec le nouveau mot de passe",
+             anon.post("/api/auth/connexion",
+                       json={"email": "aminata@test.io",
+                             "mot_de_passe": "Nouveau2026!"}).status_code == 200)
+    verifier("Ancien mot de passe rejeté",
+             anon.post("/api/auth/connexion",
+                       json={"email": "aminata@test.io",
+                             "mot_de_passe": "Aminata2026!"}).status_code == 401)
+    verifier("Jeton de réinitialisation non réutilisable",
+             anon.post("/api/auth/reinitialiser-mdp",
+                       json={"jeton": jr,
+                             "nouveau_mot_de_passe": "Encore2026!"}
+                       ).status_code == 410)
+
+    # Le changement de mot de passe révoque toutes les sessions actives
+    # (comportement de sécurité voulu) : le client de test doit se
+    # reconnecter avec le nouveau mot de passe pour la suite.
+    verifier("Sessions révoquées après changement de mot de passe",
+             etu.get("/api/profil/moi").status_code == 401)
+    etu.post("/api/auth/connexion",
+             json={"email": "aminata@test.io",
+                   "mot_de_passe": "Nouveau2026!"})
+    verifier("Reconnexion après réinitialisation",
+             etu.get("/api/profil/moi").status_code == 200)
+
+    print("\n" + "═" * 70)
+    print("  6. COMPTES ADMINISTRATEURS")
+    print("═" * 70)
+    env = {**os.environ, "EMAIL_MODE": "console"}
+    sortie = subprocess.run(
+        [sys.executable, "gerer_admins.py", "creer"],
+        capture_output=True, text=True, env=env,
+        cwd=os.path.dirname(os.path.abspath(__file__)),
+    ).stdout
+    for adresse in ("toyohounsogbe1@gmail.com", "theophiledounon@gmail.com",
+                    "espoirmariano@gmail.com", "rodriguedjossou93@gmail.com"):
+        verifier(f"Compte créé : {adresse}",
+                 jeton_sql("SELECT role FROM utilisateur WHERE email = ?",
+                           (adresse,)) == "super_admin")
+
+    mdps = re.findall(r"Mot de passe : (\S+)", sortie)
+    verifier("Mots de passe temporaires générés", len(mdps) == 4,
+             f"{len(mdps)} trouvé(s)")
+    verifier("Mots de passe tous différents", len(set(mdps)) == len(mdps))
+
+    adm = app.test_client()
+    r = adm.post("/api/auth/connexion",
+                 json={"email": "rodriguedjossou93@gmail.com",
+                       "mot_de_passe": mdps[-1]})
+    verifier("Connexion administrateur", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+    verifier("Mot de passe temporaire signalé à la connexion",
+             (r.get_json() or {}).get("doit_changer_mdp") is True,
+             r.get_data(as_text=True)[:110])
+    r = adm.get("/api/admin/dashboard")
+    verifier("Tableau de bord accessible à l'admin", r.status_code == 200)
+    verifier("Tableau de bord refusé à l'étudiant (403)",
+             etu.get("/api/admin/dashboard").status_code == 403)
+    verifier("Tableau de bord refusé sans session (401)",
+             app.test_client().get("/api/admin/dashboard").status_code == 401)
+
+    print("\n" + "═" * 70)
+    print("  7. CANDIDATURE ET VALIDATION D'UN MENTOR")
+    print("═" * 70)
+    r = etu.post("/api/mentors/candidature", json={
+        "profession": "Ingénieure logiciel", "organisation": "Orange",
+        "annees_experience": 7,
+        "bio": "Ingénieure logiciel depuis sept ans, je guide les étudiants en informatique.",
+        "motivation": "Je veux transmettre ce que j'aurais aimé qu'on m'explique "
+                      "quand j'ai commencé mes études d'informatique à Bamako.",
+        "secteurs": [1, 6]})
+    verifier("Candidature déposée", r.status_code == 201,
+             r.get_data(as_text=True)[:110])
+    verifier("Statut « en attente »",
+             etu.get("/api/mentors/ma-candidature").get_json().get("statut")
+             == "en_attente")
+
+    incomplet = app.test_client()
+    incomplet.post("/api/auth/inscription", json={
+        "prenom": "Bref", "nom": "Dossier", "email": "bref@test.io",
+        "mot_de_passe": "BrefTest2026!", "role": "etudiant"})
+    r = incomplet.post("/api/mentors/candidature",
+                       json={"profession": "X", "bio": "court",
+                             "motivation": "court", "annees_experience": 1,
+                             "secteurs": [1]})
+    verifier("Candidature incomplète refusée (400)", r.status_code == 400)
+
+    attente = adm.get("/api/admin/mentors-a-verifier").get_json()
+    ida = next((m["id_utilisateur"] for m in attente
+                if m["email"] == "aminata@test.io"), None)
+    verifier("Candidate visible par l'administrateur", ida is not None)
+
+    r = adm.post(f"/api/admin/mentors/{ida}/verifier", json={})
+    verifier("Validation par l'administrateur", r.status_code == 200)
+    verifier("E-mail de décision envoyé",
+             r.get_json().get("email_envoye") is True)
+    verifier("Statut passé à « validée »",
+             etu.get("/api/mentors/ma-candidature").get_json().get("statut")
+             == "validee")
+    p = etu.get("/api/profil/moi").get_json()
+    verifier("Rôle devenu « mentor »", p.get("role") == "mentor")
+    verifier("Badge vérifié attribué", p.get("est_verifie") == 1)
+    annuaire = etu.get("/api/mentors").get_json()
+    verifier("Présente dans l'annuaire des mentors",
+             isinstance(annuaire, list)
+             and any(m.get("nom") == "TRAORE" for m in annuaire),
+             f"réponse inattendue : {str(annuaire)[:110]}")
+
+    restants = adm.get("/api/admin/mentors-a-verifier").get_json()
+    if restants:
+        r = adm.post(f"/api/admin/mentors/{restants[0]['id_utilisateur']}/refuser",
+                     json={"motif": "Parcours à préciser."})
+        verifier("Refus motivé accepté", r.status_code == 200)
+
+    print("\n" + "═" * 70)
+    print("  8. CONTENUS ET INTERACTIONS")
+    print("═" * 70)
+    r = etu.get("/api/questions?limite=5")
+    verifier("Fil des questions accessible", r.status_code == 200)
+    ref = etu.get("/api/profil/referentiels").get_json()
+    verifier("Référentiels disponibles (secteurs et pays)",
+             len(ref.get("secteurs", [])) > 0 and len(ref.get("pays", [])) > 0)
+    id_sec = ref["secteurs"][0]["id_secteur"]
+    r = etu.post("/api/questions", json={
+        "titre": "Comment préparer un entretien de stage ?",
+        "corps": "Je passe un entretien la semaine prochaine et je cherche "
+                 "des conseils concrets de préparation.",
+        "id_secteur": id_sec})
+    verifier("Publication d'une question", r.status_code == 201)
+    idq = r.get_json().get("id_question")
+    verifier("La question publiée apparaît dans le fil",
+             any(q.get("id_question") == idq
+                 for q in etu.get("/api/questions?limite=20").get_json()))
+    r = etu.post(f"/api/questions/{idq}/utile", json={})
+    verifier("Mise en favori", r.status_code == 200)
+    verifier("Retrait du favori",
+             etu.post(f"/api/questions/{idq}/utile", json={}).status_code == 200)
+    r = etu.post("/api/reponses",
+                 json={"id_question": idq,
+                       "contenu": "Préparez trois exemples concrets de projets "
+                                  "et renseignez-vous sur l'entreprise."})
+    verifier("Publication d'une réponse", r.status_code == 201)
+    verifier("Recherche fonctionnelle",
+             etu.get("/api/recherche?q=stage").status_code == 200)
+    verifier("Notifications accessibles",
+             etu.get("/api/notifications").status_code == 200)
+
+    print("\n" + "═" * 70)
+    print("  9. MOT DE PASSE ET APPAREILS CONNECTÉS")
+    print("═" * 70)
+
+    # -- Sessions actives ------------------------------------------------
+    sessions = adm.get("/api/auth/sessions")
+    verifier("Liste des sessions accessible", sessions.status_code == 200)
+    liste = sessions.get_json() or []
+    verifier("La session courante y figure",
+             any(s.get("courante") for s in liste), str(liste)[:150])
+    verifier("Le jeton complet n'est jamais exposé",
+             all(len(s.get("reference", "")) == 16 for s in liste),
+             str(liste)[:150])
+    verifier("L'appareil est décrit lisiblement",
+             all(s.get("appareil") for s in liste), str(liste)[:150])
+    verifier("Sessions refusées sans authentification",
+             app.test_client().get("/api/auth/sessions").status_code == 401)
+
+    # Un second appareil, pour vérifier la révocation ciblée.
+    autre = app.test_client()
+    autre.post("/api/auth/connexion",
+               json={"email": "rodriguedjossou93@gmail.com",
+                     "mot_de_passe": mdps[-1]})
+    verifier("Deux appareils connectés",
+             len(adm.get("/api/auth/sessions").get_json() or []) == 2)
+
+    r = adm.post("/api/auth/sessions/revoquer-autres")
+    verifier("Révocation des autres appareils",
+             r.status_code == 200 and (r.get_json() or {}).get("revoquees") == 1,
+             r.get_data(as_text=True)[:110])
+    verifier("L'appareil révoqué est déconnecté",
+             autre.get("/api/profil/moi").status_code == 401)
+    verifier("L'appareil courant reste connecté",
+             adm.get("/api/profil/moi").status_code == 200)
+
+    verifier("Référence de session invalide refusée (400)",
+             adm.delete("/api/auth/sessions/pasunereference").status_code == 400)
+    verifier("Référence inconnue refusée (404)",
+             adm.delete("/api/auth/sessions/" + "0" * 16).status_code == 404)
+
+    # Une session ne doit pas pouvoir en révoquer une d'un autre compte.
+    ref_etudiant = (etu.get("/api/auth/sessions").get_json() or [{}])[0] \
+        .get("reference", "")
+    verifier("Impossible de révoquer la session d'autrui",
+             adm.delete("/api/auth/sessions/" + ref_etudiant).status_code == 404,
+             ref_etudiant)
+
+    # -- Changement du mot de passe temporaire ---------------------------
+    r = adm.post("/api/auth/changer-mdp",
+                 json={"mot_de_passe_actuel": "faux",
+                       "nouveau_mot_de_passe": "Definitif2026!"})
+    verifier("Mot de passe actuel erroné refusé (401)", r.status_code == 401)
+
+    r = adm.post("/api/auth/changer-mdp",
+                 json={"mot_de_passe_actuel": mdps[-1],
+                       "nouveau_mot_de_passe": "court"})
+    verifier("Nouveau mot de passe trop faible refusé (400)",
+             r.status_code == 400)
+
+    r = adm.post("/api/auth/changer-mdp",
+                 json={"mot_de_passe_actuel": mdps[-1],
+                       "nouveau_mot_de_passe": "Definitif2026!"})
+    verifier("Changement de mot de passe accepté", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+    verifier("L'obligation de changement est levée",
+             jeton_sql("SELECT doit_changer_mdp FROM utilisateur "
+                       "WHERE email = ?",
+                       ("rodriguedjossou93@gmail.com",)) == 0)
+
+    verif = app.test_client()
+    r = verif.post("/api/auth/connexion",
+                   json={"email": "rodriguedjossou93@gmail.com",
+                         "mot_de_passe": "Definitif2026!"})
+    verifier("Connexion avec le nouveau mot de passe", r.status_code == 200)
+    verifier("Plus d'obligation signalée à la connexion",
+             (r.get_json() or {}).get("doit_changer_mdp") is False,
+             r.get_data(as_text=True)[:110])
+    verifier("L'ancien mot de passe temporaire est refusé",
+             app.test_client().post(
+                 "/api/auth/connexion",
+                 json={"email": "rodriguedjossou93@gmail.com",
+                       "mot_de_passe": mdps[-1]}).status_code == 401)
+    verifier("Le profil ne divulgue pas l'état du mot de passe d'autrui",
+             "doit_changer_mdp" not in (
+                 etu.get("/api/profil/1").get_json() or {}))
+
+    print("\n" + "═" * 70)
+    print("  10. LIMITATION DU DÉBIT (anti-force-brute)")
+    print("═" * 70)
+    from utils import securite
+
+    verifier("Les tentatives sont comptées en base, pas en mémoire",
+             jeton_sql("SELECT COUNT(*) FROM tentative_auth") >= 0)
+
+    # -- Connexion : blocage après le seuil ------------------------------
+    victime = app.test_client()
+    victime.post("/api/auth/inscription", json={
+        "prenom": "Cible", "nom": "DEBIT", "email": "cible.debit@test.io",
+        "mot_de_passe": "MotDePasse2026!", "role": "etudiant"})
+
+    forceur = app.test_client()
+    codes = [forceur.post("/api/auth/connexion",
+                          json={"email": "cible.debit@test.io",
+                                "mot_de_passe": f"faux{i}"}).status_code
+             for i in range(securite._MAX_TENTATIVES + 1)]
+    verifier("Les premières tentatives renvoient 401",
+             codes[:securite._MAX_TENTATIVES] ==
+             [401] * securite._MAX_TENTATIVES, str(codes))
+    verifier("Le seuil dépassé renvoie 429", codes[-1] == 429, str(codes))
+    verifier("Le bon mot de passe reste refusé pendant le blocage",
+             forceur.post("/api/auth/connexion",
+                          json={"email": "cible.debit@test.io",
+                                "mot_de_passe": "MotDePasse2026!"}
+                          ).status_code == 429)
+    verifier("Les échecs sont bien persistés en base",
+             jeton_sql("SELECT COUNT(*) FROM tentative_auth WHERE cle LIKE ?",
+                       ("cible.debit@test.io|%",))
+             >= securite._MAX_TENTATIVES)
+
+    # Le compteur est propre à l'identifiant : un autre compte passe.
+    verifier("Un autre compte n'est pas affecté par ce blocage",
+             app.test_client().post(
+                 "/api/auth/connexion",
+                 json={"email": "aminata@test.io",
+                       "mot_de_passe": "Nouveau2026!"}).status_code == 200)
+
+    # -- Demande de réinitialisation : débit borné -----------------------
+    demandeur = app.test_client()
+    for _ in range(securite.MAX_DEMANDES_MDP + 2):
+        r = demandeur.post("/api/auth/oubli-mdp",
+                           json={"email": "cible.debit@test.io"})
+    verifier("La demande de mot de passe reste silencieuse une fois bornée",
+             r.status_code == 200, r.get_data(as_text=True)[:90])
+    verifier("Le nombre de jetons de réinitialisation est plafonné",
+             jeton_sql("SELECT COUNT(*) FROM reinitialisation_mdp r "
+                       "JOIN utilisateur u ON u.id_utilisateur = r.id_utilisateur "
+                       "WHERE u.email = ?", ("cible.debit@test.io",))
+             <= securite.MAX_DEMANDES_MDP,
+             "au-delà du seuil, plus aucun e-mail ne doit partir")
+
+    # -- Réinitialisation du compteur ------------------------------------
+    with app.app_context():
+        securite.reinitialiser(f"cible.debit@test.io|{None}")
+    verifier("Le seuil d'inscription tolère une salle entière",
+             securite.MAX_INSCRIPTIONS >= 20,
+             f"MAX_INSCRIPTIONS={securite.MAX_INSCRIPTIONS}")
+
+    print("\n" + "═" * 70)
+    print("  11. AUTHENTIFICATION EXTERNE (OAuth)")
+    print("═" * 70)
+    cfg = anon.get("/api/auth/config")
+    verifier("Configuration OAuth exposée", cfg.status_code == 200)
+    verifier("Google signalé non configuré (503) au lieu d'une erreur 500",
+             anon.post("/api/auth/google",
+                       json={"credential": "faux"}).status_code == 503)
+    verifier("LinkedIn signalé non configuré (503)",
+             anon.get("/api/auth/linkedin").status_code == 503)
+
+    # ---- Bilan -----------------------------------------------------------
+    total = len(_resultats)
+    reussis = sum(1 for _, ok, _ in _resultats if ok)
+    print("\n" + "═" * 70)
+    print(f"  BILAN : {reussis}/{total} tests réussis")
+    print("═" * 70)
+    if reussis < total:
+        print("\n  Tests en échec :")
+        for intitule, ok, detail in _resultats:
+            if not ok:
+                print(f"    - {intitule}")
+                if detail:
+                    print(f"      {detail}")
+    print()
+    return reussis == total
+
+
+if __name__ == "__main__":
+    sys.exit(0 if executer_tests() else 1)

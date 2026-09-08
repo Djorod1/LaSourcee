@@ -1,0 +1,31 @@
+# Fichiers inutiles à l'exécution : ils alourdiraient la fonction
+# serverless sans rien apporter.
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Base SQLite locale : sur Vercel c'est PostgreSQL qui est utilisé.
+*.db
+*.db-wal
+*.db-shm
+
+# Secrets locaux — les variables d'environnement sont configurées dans
+# le tableau de bord Vercel.
+.env
+backend/.env
+
+# Documentation et outillage de développement
+*.md
+!README.md
+backend/tests_integration.py
+backend/tests_deploiement.py
+demarrer.sh
+.github/
+
+# Divers
+.git/
+.DS_Store
+*.log

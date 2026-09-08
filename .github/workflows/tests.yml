@@ -1,0 +1,75 @@
+name: Tests
+
+# Rien ne vérifiait le code automatiquement : les suites ne tournaient
+# que lancées à la main. Ce workflow les exécute sur chaque pull request
+# et sur chaque poussée vers main, sur les deux moteurs de base réellement
+# utilisés — SQLite en développement, PostgreSQL en production.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Suites d'intégration et de déploiement
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lasource_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Installer les dépendances
+        run: pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Contrôler la syntaxe du frontend
+        run: node --check script.js && node --check api.js
+
+      - name: Contrôler la syntaxe de la configuration
+        run: |
+          python -c "import json; json.load(open('vercel.json'))"
+          python -c "import xml.dom.minidom; xml.dom.minidom.parse('sitemap.xml')"
+          bash -n demarrer.sh
+
+      - name: Tests d'intégration — SQLite
+        working-directory: backend
+        run: python tests_integration.py
+
+      - name: Tests d'intégration — PostgreSQL
+        working-directory: backend
+        env:
+          DB_TYPE: postgres
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lasource_test
+        run: python tests_integration.py
+
+      # La suite de déploiement exige une base vierge : elle vérifie
+      # entre autres qu'aucun compte n'existe après création du schéma.
+      - name: Préparer une base vierge pour la vérification de déploiement
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -c 'CREATE DATABASE lasource_deploi;'
+
+      - name: Vérification de déploiement — conditions Vercel
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lasource_deploi
+        run: python tests_deploiement.py

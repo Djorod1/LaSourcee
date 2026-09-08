@@ -1,0 +1,11 @@
+# La liste des dépendances est tenue à la racine du dépôt, à l'endroit
+# où Vercel la cherche pour construire la fonction serverless. Ce fichier
+# y renvoie afin qu'il n'existe qu'une seule liste à maintenir.
+#
+#   pip install -r backend/requirements.txt
+#
+# installe donc exactement la même chose que
+#
+#   pip install -r requirements.txt
+
+-r ../requirements.txt

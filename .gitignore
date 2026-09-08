@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Environnement local (ne pas commiter les secrets)
+backend/.env
+*.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Base SQLite locale (les données de développement ne se versionnent pas)
+*.db
+*.db-wal
+*.db-shm
+
+# Vercel
+.vercel/

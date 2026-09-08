@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LaSourcee — Vérification de l'adresse e-mail</title>
+  <link rel="icon" type="image/png" href="assets/favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="toasts" id="zoneToasts"></div>
+
+<main class="page-auth">
+  <div class="boite-auth" style="text-align:center;">
+    <div class="logo-auth">
+      <span class="logo-zone logo-zone-auth">
+        <img src="assets/lasource-logo.png" alt="LaSourcee" class="logo-img"
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+        <span class="logo-placeholder logo-placeholder-grand" aria-hidden="true">
+          <span class="logo-placeholder-letter">L</span>
+          <span class="logo-placeholder-nom">LaSourcee</span>
+        </span>
+      </span>
+    </div>
+
+    <div id="zone-attente">
+      <h1>Vérification en cours…</h1>
+      <p class="sous-titre">Nous activons votre compte.</p>
+    </div>
+
+    <div id="zone-succes" style="display:none;">
+      <h1>Compte activé</h1>
+      <p class="sous-titre">Votre adresse e-mail est confirmée. Vous pouvez vous connecter.</p>
+      <a href="index.html" class="btn btn-primaire btn-bloc">Aller à la connexion</a>
+    </div>
+
+    <div id="zone-erreur" style="display:none;">
+      <h1>Lien invalide ou expiré</h1>
+      <p class="sous-titre" id="msg-erreur">Demandez un nouveau lien depuis la page d'accueil.</p>
+      <a href="index.html" class="btn btn-primaire btn-bloc">Retour à l'accueil</a>
+    </div>
+  </div>
+</main>
+
+<script src="api.js"></script>
+<script>
+(async function() {
+  const p = new URLSearchParams(window.location.search);
+  const jeton = p.get('jeton');
+  const attente = document.getElementById('zone-attente');
+  const succes  = document.getElementById('zone-succes');
+  const erreur  = document.getElementById('zone-erreur');
+  const msg     = document.getElementById('msg-erreur');
+
+  if (!jeton || jeton.length !== 64) {
+    attente.style.display = 'none';
+    erreur.style.display = 'block';
+    return;
+  }
+  try {
+    await API.post('/auth/verifier-email', { jeton });
+    attente.style.display = 'none';
+    succes.style.display = 'block';
+  } catch (err) {
+    attente.style.display = 'none';
+    erreur.style.display = 'block';
+    if (err.message) msg.textContent = err.message;
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LaSourcee — Réinitialisation du mot de passe</title>
+  <link rel="icon" type="image/png" href="assets/favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<div class="toasts" id="zoneToasts"></div>
+
+<main class="page-auth">
+  <div class="boite-auth">
+    <div class="logo-auth">
+      <span class="logo-zone logo-zone-auth">
+        <img src="assets/lasource-logo.png" alt="LaSourcee" class="logo-img"
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+        <span class="logo-placeholder logo-placeholder-grand" aria-hidden="true">
+          <span class="logo-placeholder-letter">L</span>
+          <span class="logo-placeholder-nom">LaSourcee</span>
+        </span>
+      </span>
+    </div>
+    <h1>Nouveau mot de passe</h1>
+    <p class="sous-titre">
+      Choisissez un nouveau mot de passe pour votre compte LaSourcee.
+      Le lien que vous avez reçu est valable 1 heure.
+    </p>
+
+    <div id="zone-formulaire">
+      <div class="champ">
+        <label for="nouveau-mdp">Nouveau mot de passe</label>
+        <input type="password" id="nouveau-mdp" autocomplete="new-password" />
+        <p class="aide-mdp">Au moins 8 caractères, mélange lettres et chiffres.</p>
+      </div>
+      <div class="champ">
+        <label for="confirmer-mdp">Confirmer</label>
+        <input type="password" id="confirmer-mdp" autocomplete="new-password" />
+      </div>
+      <button class="btn btn-primaire btn-bloc" onclick="reinitialiser()">
+        Définir le nouveau mot de passe
+      </button>
+    </div>
+
+    <div id="zone-succes" style="display:none; text-align:center;">
+      <p style="color:var(--vert-fonce); margin-bottom:14px;">
+        ✓ Mot de passe mis à jour. Vous pouvez maintenant vous connecter.
+      </p>
+      <a href="index.html" class="btn btn-primaire btn-bloc">Aller à la connexion</a>
+    </div>
+
+    <p class="lien-bas"><a href="index.html">← Retour à l'accueil</a></p>
+  </div>
+</main>
+
+<script src="api.js"></script>
+<script>
+function toast(message, type) {
+  const z = document.getElementById('zoneToasts');
+  const t = document.createElement('div');
+  t.className = 'toast' + (type === 'erreur' ? ' erreur' : '');
+  t.textContent = message;
+  z.appendChild(t);
+  setTimeout(() => t.remove(), 4000);
+}
+
+function lireJeton() {
+  const p = new URLSearchParams(window.location.search);
+  return p.get('jeton');
+}
+
+async function reinitialiser() {
+  const jeton = lireJeton();
+  if (!jeton || jeton.length !== 64) {
+    return toast('Lien invalide. Demandez un nouveau lien depuis la page de connexion.', 'erreur');
+  }
+  const mdp = document.getElementById('nouveau-mdp').value;
+  const mdp2 = document.getElementById('confirmer-mdp').value;
+  if (mdp.length < 8) return toast('Mot de passe : 8 caractères minimum.', 'erreur');
+  if (!/[a-zA-Z]/.test(mdp) || !/\d/.test(mdp)) return toast('Mélangez lettres et chiffres.', 'erreur');
+  if (mdp !== mdp2) return toast('Les deux mots de passe ne correspondent pas.', 'erreur');
+
+  try {
+    await API.post('/auth/reinitialiser-mdp', {
+      jeton, nouveau_mot_de_passe: mdp,
+    });
+    document.getElementById('zone-formulaire').style.display = 'none';
+    document.getElementById('zone-succes').style.display = 'block';
+  } catch (err) {
+    toast(err.message || 'Réinitialisation impossible.', 'erreur');
+  }
+}
+
+// Si le jeton n'est pas dans l'URL, afficher un message clair
+if (!lireJeton()) {
+  document.getElementById('zone-formulaire').innerHTML =
+    '<p style="color:var(--rouge); text-align:center;">' +
+    'Lien invalide ou expiré. Demandez un nouveau lien depuis la page de connexion.' +
+    '</p>';
+}
+</script>
+</body>
+</html>
