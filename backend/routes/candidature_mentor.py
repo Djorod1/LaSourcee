@@ -126,7 +126,7 @@ def deposer_candidature():
         # Parcours : poste actuel puis expériences complémentaires
         cur.execute("DELETE FROM experience WHERE id_utilisateur = %s",
                     (id_user,))
-        intitule = profession + (f" — {organisation}" if organisation else "")
+        intitule = profession + (f", {organisation}" if organisation else "")
         cur.execute(
             "INSERT INTO experience "
             "(id_utilisateur, type_experience, intitule, periode, ordre) "
@@ -231,7 +231,7 @@ def _prevenir_administrateurs(profil, profession, organisation, annees,
             f"Validez ou refusez depuis l'espace d'administration :\n{lien_admin}\n"
         )
         mod_email.envoyer(admin["email"],
-                          f"Candidature mentor — {candidat}", texte,
+                          f"Candidature mentor : {candidat}", texte,
                           corps_html=html)
 
 
@@ -255,10 +255,10 @@ def _accuser_reception(profil):
         f"sur LaSourcee.\n\n"
         f"Un administrateur va l'examiner. Vous recevrez un e-mail des qu'une "
         f"decision sera prise.\n\n"
-        f"— L'equipe LaSourcee"
+        f"L'equipe LaSourcee"
     )
     mod_email.envoyer(profil["email"],
-                      "Votre candidature de mentor — LaSourcee", texte,
+                      "Votre candidature de mentor sur LaSourcee", texte,
                       corps_html=html)
 
 
@@ -293,9 +293,9 @@ def notifier_decision(id_mentor, acceptee, motif=""):
             f"Felicitations {u['prenom']},\n\n"
             f"Votre candidature de mentor a ete acceptee. Votre compte porte "
             f"desormais le badge Mentor verifie.\n\n"
-            f"Connectez-vous : {lien}\n\n— L'equipe LaSourcee"
+            f"Connectez-vous : {lien}\n\nL'equipe LaSourcee"
         )
-        sujet = "Votre candidature de mentor est acceptée — LaSourcee"
+        sujet = "Votre candidature de mentor est acceptée"
     else:
         raison = (f"<br><br><b>Motif :</b> {motif}" if motif else "")
         html = mod_email.gabarit_html(
@@ -315,8 +315,8 @@ def notifier_decision(id_mentor, acceptee, motif=""):
             f"Apres examen, votre candidature au statut de mentor verifie n'a "
             f"pas ete retenue pour le moment."
             + (f"\n\nMotif : {motif}" if motif else "")
-            + f"\n\nVotre compte reste actif.\n\n— L'equipe LaSourcee"
+            + f"\n\nVotre compte reste actif.\n\nL'equipe LaSourcee"
         )
-        sujet = "Suite à votre candidature de mentor — LaSourcee"
+        sujet = "Suite à votre candidature de mentor"
 
     return mod_email.envoyer(u["email"], sujet, texte, corps_html=html)

@@ -87,7 +87,7 @@ def connexion_google():
         return jsonify({
             "erreur": "Google n'a pas confirmé cette adresse e-mail. "
                       "Validez-la dans votre compte Google, puis "
-                      "réessayez — ou créez un compte avec un mot de passe."
+                      "réessayez, ou créez un compte avec un mot de passe."
         }), 403
     return _terminer_connexion(id_user)
 

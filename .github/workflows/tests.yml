@@ -50,6 +50,10 @@ jobs:
           python -c "import xml.dom.minidom; xml.dom.minidom.parse('sitemap.xml')"
           bash -n demarrer.sh
 
+      - name: Contrôler la rédaction des textes visibles
+        working-directory: backend
+        run: python tests_redaction.py
+
       - name: Tests d'intégration — SQLite
         working-directory: backend
         run: python tests_integration.py

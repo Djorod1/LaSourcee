@@ -522,7 +522,7 @@ def tester_envoi_email():
             "Ce message confirme que l'envoi d'e-mails fonctionne.\n\n"
             "Les confirmations d'inscription et les réinitialisations de "
             "mot de passe partiront donc correctement.\n\n"
-            "— LaSourcee",
+            "L'équipe LaSourcee",
         )
     except Exception as exc:
         journaliser(g.utilisateur["id_utilisateur"], "test_email_echec",

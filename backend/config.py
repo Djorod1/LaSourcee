@@ -178,7 +178,7 @@ def anomalies_configuration():
             "ni POSTGRES_URL n'est présente, et le système de fichiers y est "
             "éphémère et en lecture seule. L'application ne pourra ni lire "
             "ni écrire. Ajoutez DATABASE_URL dans les variables "
-            "d'environnement, puis redéployez — les variables ne sont lues "
+            "d'environnement, puis redéployez : les variables ne sont lues "
             "qu'au déploiement.",
         ))
 
@@ -197,7 +197,7 @@ def anomalies_configuration():
             "EMAIL_MODE n'est pas « smtp » : les messages de vérification "
             "d'adresse et de réinitialisation ne partiront pas réellement. "
             "La confirmation d'adresse reste donc facultative, faute de "
-            "pouvoir envoyer le lien — n'importe qui peut s'inscrire avec "
+            "pouvoir envoyer le lien : n'importe qui peut s'inscrire avec "
             "l'adresse d'un tiers.",
         ))
 

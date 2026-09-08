@@ -189,7 +189,7 @@ def commande_creer():
     if ok_smtp:
         print("  Envoi des e-mails : SMTP configuré, les invitations partiront.")
     else:
-        print(f"  Envoi des e-mails : MODE CONSOLE — {raison}")
+        print(f"  Envoi des e-mails : MODE CONSOLE. {raison}")
         print("  Les mots de passe s'afficheront ci-dessous, à transmettre")
         print("  manuellement. Configurez SMTP dans backend/.env pour un envoi réel.")
     print("=" * 66 + "\n")
