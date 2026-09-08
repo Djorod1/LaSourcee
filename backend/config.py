@@ -133,6 +133,20 @@ class Config:
                           if os.getenv("VERCEL_URL") else "")
                       or "http://localhost:5000").rstrip("/")
 
+    # ---- Confirmation d'adresse e-mail -----------------------------------
+    # Exiger la confirmation avant la première connexion empêche de créer
+    # un compte avec l'adresse de quelqu'un d'autre. Ce n'est activé par
+    # défaut que là où le message peut réellement partir : en production
+    # ET avec un envoi SMTP configuré. L'imposer sans SMTP rendrait
+    # l'inscription impossible, personne ne recevant jamais le lien.
+    # VERIFICATION_EMAIL_OBLIGATOIRE tranche explicitement si elle est
+    # renseignée.
+    VERIFICATION_EMAIL_OBLIGATOIRE = _booleen(
+        "VERIFICATION_EMAIL_OBLIGATOIRE",
+        EST_PRODUCTION
+        and (os.getenv("EMAIL_MODE", "console") or "console").lower() == "smtp",
+    )
+
     # ---- Frontend --------------------------------------------------------
     # Racine du dépôt : index.html, script.js, styles.css, assets/...
     DOSSIER_FRONTEND = DOSSIER_BACKEND.parent.resolve()
@@ -181,7 +195,10 @@ def anomalies_configuration():
         problemes.append((
             "avertissement",
             "EMAIL_MODE n'est pas « smtp » : les messages de vérification "
-            "d'adresse et de réinitialisation ne partiront pas réellement.",
+            "d'adresse et de réinitialisation ne partiront pas réellement. "
+            "La confirmation d'adresse reste donc facultative, faute de "
+            "pouvoir envoyer le lien — n'importe qui peut s'inscrire avec "
+            "l'adresse d'un tiers.",
         ))
 
     if Config.EST_PRODUCTION and Config.URL_PLATEFORME.startswith("http://"):

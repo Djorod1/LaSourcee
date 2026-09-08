@@ -79,9 +79,16 @@ def connexion_google():
     if not sub or not email:
         return jsonify({"erreur": "Profil Google incomplet."}), 400
 
-    id_user = _trouver_ou_creer_compte_externe(
-        "google", sub, email, email_verifie, prenom, nom, photo
-    )
+    try:
+        id_user = _trouver_ou_creer_compte_externe(
+            "google", sub, email, email_verifie, prenom, nom, photo
+        )
+    except AdresseNonVerifiee:
+        return jsonify({
+            "erreur": "Google n'a pas confirmé cette adresse e-mail. "
+                      "Validez-la dans votre compte Google, puis "
+                      "réessayez — ou créez un compte avec un mot de passe."
+        }), 403
     return _terminer_connexion(id_user)
 
 
@@ -175,9 +182,12 @@ def retour_linkedin():
     if not sub or not email:
         return redirect("/?erreur=linkedin_profil_incomplet")
 
-    id_user = _trouver_ou_creer_compte_externe(
-        "linkedin", sub, email, email_verifie, prenom, nom, photo
-    )
+    try:
+        id_user = _trouver_ou_creer_compte_externe(
+            "linkedin", sub, email, email_verifie, prenom, nom, photo
+        )
+    except AdresseNonVerifiee:
+        return redirect("/?erreur=linkedin_adresse_non_verifiee")
     # La réponse DOIT être celle qui porte le cookie : renvoyer une
     # redirection construite à part perdrait la session.
     return _terminer_connexion(id_user, redirection="/?connexion=linkedin")
@@ -187,6 +197,10 @@ def retour_linkedin():
 # Helpers internes
 # ============================================================
 
+class AdresseNonVerifiee(Exception):
+    """Le fournisseur externe ne garantit pas l'adresse annoncée."""
+
+
 def _trouver_ou_creer_compte_externe(fournisseur, sub_externe,
                                      email, email_verifie,
                                      prenom, nom, photo_url):
@@ -194,6 +208,14 @@ def _trouver_ou_creer_compte_externe(fournisseur, sub_externe,
       1. Si identité externe (fournisseur, sub) existe → connecter ce compte.
       2. Sinon si un compte existe avec cet e-mail → lier l'identité externe.
       3. Sinon créer un nouveau compte (mdp aléatoire long).
+
+    L'étape 2 n'est franchie que si le fournisseur atteste avoir vérifié
+    l'adresse. Sans ce contrôle, il suffirait de créer chez le
+    fournisseur un compte portant l'adresse de quelqu'un d'autre, sans
+    la confirmer, pour se retrouver rattaché à SON compte LaSourcee dès
+    la première connexion. C'est une prise de contrôle de compte, et
+    c'est pour cela que Google demande explicitement de ne se fier au
+    champ ``email`` que si ``email_verified`` est vrai.
     """
     existe = recuperer_un(
         "SELECT id_utilisateur FROM identite_externe "
@@ -203,14 +225,26 @@ def _trouver_ou_creer_compte_externe(fournisseur, sub_externe,
     if existe:
         return existe["id_utilisateur"]
 
+    if not email_verifie:
+        raise AdresseNonVerifiee(email)
+
     compte = recuperer_un(
-        "SELECT id_utilisateur FROM utilisateur WHERE email = %s",
+        "SELECT id_utilisateur, email_verifie FROM utilisateur "
+        "WHERE email = %s",
         (email,),
     )
 
     with curseur(commit=True) as cur:
         if compte:
             id_user = compte["id_utilisateur"]
+            # Le fournisseur vient de prouver l'adresse : un compte créé
+            # par mot de passe et jamais confirmé le devient ici.
+            if not compte.get("email_verifie"):
+                cur.execute(
+                    "UPDATE utilisateur SET email_verifie = 1 "
+                    "WHERE id_utilisateur = %s",
+                    (id_user,),
+                )
         else:
             # Création : mdp aléatoire (l'utilisateur ne s'en sert pas, OAuth seul)
             import bcrypt as _b

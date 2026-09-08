@@ -1,9 +1,8 @@
 """Inscription, connexion et déconnexion."""
 
-import os
 import re
 
-from flask import Blueprint, g, request, jsonify, make_response
+from flask import Blueprint, current_app, g, request, jsonify, make_response
 
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from utils.auth_helpers import (
@@ -91,7 +90,7 @@ def inscription():
     _envoyer_email_verification(id_user, email, prenom)
 
     # Si vérification obligatoire, on NE connecte PAS automatiquement
-    obligatoire = os.getenv("VERIFICATION_EMAIL_OBLIGATOIRE", "0") == "1"
+    obligatoire = current_app.config["VERIFICATION_EMAIL_OBLIGATOIRE"]
     if obligatoire:
         return jsonify({
             "id_utilisateur": id_user,
@@ -169,7 +168,7 @@ def connexion():
     if not user["est_actif"]:
         return _erreur("Compte désactivé.", 403)
     # Bloquer la connexion si l'e-mail n'est pas vérifié et que c'est requis
-    obligatoire = os.getenv("VERIFICATION_EMAIL_OBLIGATOIRE", "0") == "1"
+    obligatoire = current_app.config["VERIFICATION_EMAIL_OBLIGATOIRE"]
     if obligatoire and not user.get("email_verifie"):
         return _erreur(
             "Adresse e-mail non vérifiée. Consultez votre boîte mail "

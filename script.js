@@ -2114,9 +2114,45 @@ document.addEventListener('click', (e) => {
 /* ============================================================
    DÉMARRAGE
    ============================================================ */
+/* Messages rapportés par un retour de connexion externe.
+   LinkedIn ramène le visiteur sur l'accueil avec ?erreur=... : sans
+   cette lecture, l'échec serait totalement silencieux et la personne
+   croirait s'être connectée. */
+const MESSAGES_RETOUR = {
+  linkedin_adresse_non_verifiee:
+    "LinkedIn n'a pas confirmé votre adresse e-mail. Validez-la dans "
+    + "votre compte LinkedIn, puis réessayez — ou créez un compte avec "
+    + 'un mot de passe.',
+  linkedin_profil_incomplet:
+    "LinkedIn n'a pas transmis votre adresse e-mail. Autorisez le "
+    + 'partage de l\'adresse, ou créez un compte avec un mot de passe.',
+  linkedin: 'La connexion LinkedIn a échoué. Réessayez dans un instant.',
+  access_denied: 'Connexion annulée.',
+};
+
+function traiterRetourExterne() {
+  const params = new URLSearchParams(window.location.search);
+  const erreur = params.get('erreur');
+  const connexion = params.get('connexion');
+  if (!erreur && !connexion) return;
+
+  if (erreur) {
+    toast(MESSAGES_RETOUR[erreur] || 'La connexion externe a échoué.',
+          'erreur');
+  } else if (connexion) {
+    toast('Connexion réussie. Bienvenue !');
+  }
+
+  // Nettoie l'adresse : le paramètre ne doit pas survivre à un
+  // rechargement ni se retrouver dans un lien partagé.
+  const propre = window.location.pathname + window.location.hash;
+  window.history.replaceState({}, '', propre);
+}
+
 window.addEventListener('DOMContentLoaded', async () => {
   // Bannière cookies (affichée tant qu'aucun choix n'a été fait)
   initialiserCookies();
+  traiterRetourExterne();
 
   // Contacte le serveur et charge la session courante
   await initialiserApi();

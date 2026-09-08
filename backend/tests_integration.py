@@ -479,7 +479,62 @@ def executer_tests():
              f"MAX_INSCRIPTIONS={securite.MAX_INSCRIPTIONS}")
 
     print("\n" + "═" * 70)
-    print("  11. AUTHENTIFICATION EXTERNE (OAuth)")
+    print("  11. RATTACHEMENT D'UNE IDENTITÉ EXTERNE")
+    print("═" * 70)
+    from routes.oauth import (_trouver_ou_creer_compte_externe,
+                              AdresseNonVerifiee)
+
+    with app.app_context():
+        # Une adresse non confirmée par le fournisseur ne doit jamais
+        # rattacher qui que ce soit à un compte existant : ce serait une
+        # prise de contrôle du compte de la victime.
+        try:
+            _trouver_ou_creer_compte_externe(
+                "google", "sub-usurpateur", "aminata@test.io",
+                False, "Faux", "Profil", None)
+            verifier("Adresse non vérifiée refusée", False,
+                     "aucune exception levée")
+        except AdresseNonVerifiee:
+            verifier("Adresse non vérifiée refusée", True)
+
+        verifier("Aucune identité externe créée dans ce cas",
+                 jeton_sql("SELECT COUNT(*) FROM identite_externe "
+                           "WHERE identifiant = ?", ("sub-usurpateur",)) == 0)
+        verifier("Le compte visé reste intact",
+                 jeton_sql("SELECT COUNT(*) FROM utilisateur WHERE email = ?",
+                           ("aminata@test.io",)) == 1)
+
+        # Adresse confirmée : le rattachement se fait, sans doublon.
+        avant = jeton_sql("SELECT COUNT(*) FROM utilisateur")
+        id_lie = _trouver_ou_creer_compte_externe(
+            "google", "sub-legitime", "aminata@test.io",
+            True, "Aminata", "TRAORE", None)
+        verifier("Adresse vérifiée : rattachement au compte existant",
+                 id_lie == jeton_sql(
+                     "SELECT id_utilisateur FROM utilisateur WHERE email = ?",
+                     ("aminata@test.io",)))
+        verifier("Aucun compte en double n'est créé",
+                 jeton_sql("SELECT COUNT(*) FROM utilisateur") == avant)
+
+        # Deuxième passage : on reconnaît l'identité, sans rien recréer.
+        verifier("La même identité reconnue au second passage",
+                 _trouver_ou_creer_compte_externe(
+                     "google", "sub-legitime", "aminata@test.io",
+                     True, "Aminata", "TRAORE", None) == id_lie)
+
+        # Un compte neuf par un fournisseur qui a vérifié l'adresse.
+        id_neuf = _trouver_ou_creer_compte_externe(
+            "google", "sub-nouveau", "nouvelle.venue@test.io",
+            True, "Nouvelle", "VENUE", None)
+        verifier("Compte créé pour une adresse inconnue mais vérifiée",
+                 bool(id_neuf))
+        verifier("Le compte créé est marqué vérifié",
+                 jeton_sql("SELECT email_verifie FROM utilisateur "
+                           "WHERE email = ?",
+                           ("nouvelle.venue@test.io",)) == 1)
+
+    print("\n" + "═" * 70)
+    print("  12. AUTHENTIFICATION EXTERNE (OAuth)")
     print("═" * 70)
     cfg = anon.get("/api/auth/config")
     verifier("Configuration OAuth exposée", cfg.status_code == 200)
