@@ -539,7 +539,8 @@ def executer_tests():
     from services.amorcage import creer_admin_initial
 
     garde = {c: os.environ.get(c)
-             for c in ("ADMIN_EMAIL", "ADMIN_MOTDEPASSE", "ADMIN_PRENOM")}
+             for c in ("ADMIN_EMAIL", "ADMIN_MOTDEPASSE", "ADMIN_PRENOM",
+                       "ADMIN_REINITIALISER_MDP")}
     try:
         os.environ.update({"ADMIN_EMAIL": "chef@test.io",
                            "ADMIN_MOTDEPASSE": "AmorcageSolide2026!",
@@ -591,6 +592,39 @@ def executer_tests():
                      "/api/auth/connexion",
                      json={"email": "aminata@test.io",
                            "mot_de_passe": "Nouveau2026!"}
+                 ).status_code == 200)
+
+        # Le compte promu doit être utilisable même si la confirmation
+        # d'adresse est devenue obligatoire : sinon l'exploitant se
+        # verrouille lui-même hors de son propre site.
+        verifier("Le compte promu est marqué vérifié",
+                 jeton_sql("SELECT email_verifie FROM utilisateur "
+                           "WHERE email = ?", ("aminata@test.io",)) == 1)
+
+        # Remise à zéro explicite du mot de passe d'un compte existant.
+        os.environ.update({"ADMIN_EMAIL": "chef@test.io",
+                           "ADMIN_MOTDEPASSE": "RepriseEnMain2026!",
+                           "ADMIN_REINITIALISER_MDP": "1"})
+        creer_admin_initial(app)
+        verifier("ADMIN_REINITIALISER_MDP remplace le mot de passe",
+                 app.test_client().post(
+                     "/api/auth/connexion",
+                     json={"email": "chef@test.io",
+                           "mot_de_passe": "RepriseEnMain2026!"}
+                 ).status_code == 200)
+        verifier("Le changement est de nouveau imposé après remise à zéro",
+                 jeton_sql("SELECT doit_changer_mdp FROM utilisateur "
+                           "WHERE email = ?", ("chef@test.io",)) == 1)
+        os.environ.pop("ADMIN_REINITIALISER_MDP", None)
+
+        # Sans le drapeau, un redémarrage laisse le mot de passe en place.
+        os.environ["ADMIN_MOTDEPASSE"] = "EncoreUnAutre2026!"
+        creer_admin_initial(app)
+        verifier("Sans le drapeau, le mot de passe reste inchangé",
+                 app.test_client().post(
+                     "/api/auth/connexion",
+                     json={"email": "chef@test.io",
+                           "mot_de_passe": "RepriseEnMain2026!"}
                  ).status_code == 200)
 
         # Un mot de passe faible est refusé plutôt que haché tel quel.
