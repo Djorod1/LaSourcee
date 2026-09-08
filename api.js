@@ -11,7 +11,7 @@
 const API_BASE = '/api';
 
 /* État de la connexion au serveur, déterminé au démarrage. */
-const Backend = { verifie: false, disponible: false };
+const Backend = { verifie: false, disponible: false, raison: '' };
 
 class ApiErreur extends Error {
   constructor(statut, message, donnees) {
@@ -88,14 +88,30 @@ const MODE = {
   set utilisateur(v) { SESSION.utilisateur = v; },
 };
 
-/* Vérifie que le serveur répond. */
+/* Vérifie que le serveur répond, et retient pourquoi il ne répond pas.
+   Sans ce détail, un diagnostic exige d'ouvrir /api/sante à la main. */
 async function verifierServeur() {
+  Backend.raison = '';
   try {
     const r = await fetch(API_BASE + '/sante', { credentials: 'same-origin' });
-    const j = r.ok ? await r.json() : null;
+    let j = null;
+    try { j = await r.json(); } catch { j = null; }
+
     Backend.disponible = !!(j && j.statut === 'ok');
-  } catch {
+    if (!Backend.disponible) {
+      if (j && j.erreur) {
+        Backend.raison = j.erreur;
+      } else if (!j) {
+        // Réponse non-JSON : la fonction serveur n'a pas été atteinte.
+        Backend.raison = "L'API n'est pas déployée sur ce domaine "
+          + `(réponse ${r.status} sans contenu JSON).`;
+      } else {
+        Backend.raison = `Le serveur répond « ${j.statut} ».`;
+      }
+    }
+  } catch (err) {
     Backend.disponible = false;
+    Backend.raison = 'Le serveur est injoignable depuis ce navigateur.';
   }
   Backend.verifie = true;
   return Backend.disponible;
@@ -121,9 +137,13 @@ function afficherServeurIndisponible() {
   b.id = 'bandeauServeur';
   b.className = 'bandeau-serveur';
   b.setAttribute('role', 'alert');
-  b.innerHTML =
-    "<strong>Serveur indisponible.</strong> "
-    + "La connexion et l'inscription sont momentanément impossibles. "
-    + "Réessayez dans quelques instants.";
+  const detail = Backend.raison ? ' ' + Backend.raison : '';
+  b.textContent = '';
+  const titre = document.createElement('strong');
+  titre.textContent = 'Serveur indisponible.';
+  b.appendChild(titre);
+  b.appendChild(document.createTextNode(
+    " La connexion et l'inscription sont momentanément impossibles."
+    + " Réessayez dans quelques instants." + detail));
   document.body.prepend(b);
 }

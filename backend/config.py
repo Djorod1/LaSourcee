@@ -41,7 +41,21 @@ def _booleen_ou_auto(nom):
 
 
 def _moteur():
-    valeur = (os.getenv("DB_TYPE", "sqlite") or "sqlite").strip().lower()
+    """Moteur de base à utiliser.
+
+    Quand ``DB_TYPE`` n'est pas renseigné mais qu'une URL PostgreSQL est
+    présente, c'est elle qui fait foi. Les intégrations d'hébergeurs
+    (Vercel Postgres, Neon, Supabase) injectent l'URL automatiquement
+    mais pas ``DB_TYPE`` : sans cette déduction, l'application
+    retomberait sur SQLite, tenterait d'écrire dans un système de
+    fichiers en lecture seule, et le site afficherait « serveur
+    indisponible » alors que la base est pourtant là.
+    """
+    valeur = (os.getenv("DB_TYPE") or "").strip().lower()
+    if not valeur:
+        if os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL"):
+            return "postgres"
+        return "sqlite"
     if valeur in ("postgresql", "pg"):
         return "postgres"
     return valeur
@@ -146,9 +160,12 @@ def anomalies_configuration():
     if Config.DB_TYPE == "sqlite" and Config.SUR_VERCEL:
         problemes.append((
             "bloquant",
-            "DB_TYPE=sqlite sur Vercel : le système de fichiers y est "
-            "éphémère et en lecture seule, toutes les données seraient "
-            "perdues. Utilisez DB_TYPE=postgres avec DATABASE_URL.",
+            "Aucune base PostgreSQL configurée sur Vercel : ni DATABASE_URL "
+            "ni POSTGRES_URL n'est présente, et le système de fichiers y est "
+            "éphémère et en lecture seule. L'application ne pourra ni lire "
+            "ni écrire. Ajoutez DATABASE_URL dans les variables "
+            "d'environnement, puis redéployez — les variables ne sont lues "
+            "qu'au déploiement.",
         ))
 
     if Config.DB_TYPE == "postgres" and not (
