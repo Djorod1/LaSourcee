@@ -1,5 +1,6 @@
 """Inscription, connexion et déconnexion."""
 
+import logging
 import re
 
 from flask import Blueprint, current_app, g, request, jsonify, make_response
@@ -24,6 +25,8 @@ from utils.securite import (
     MAX_INSCRIPTIONS,
     MAX_DEMANDES_MDP,
 )
+
+logger = logging.getLogger("lasourcee.auth")
 
 bp_auth = Blueprint("auth", __name__, url_prefix="/api/auth")
 
@@ -87,7 +90,7 @@ def inscription():
     enregistrer_echec(cle_debit)   # ici : compte le débit, pas un échec
 
     # Envoi de l'e-mail de vérification (jeton 24h)
-    _envoyer_email_verification(id_user, email, prenom)
+    email_parti = _envoyer_email_verification(id_user, email, prenom)
 
     # Si vérification obligatoire, on NE connecte PAS automatiquement
     obligatoire = current_app.config["VERIFICATION_EMAIL_OBLIGATOIRE"]
@@ -96,18 +99,34 @@ def inscription():
             "id_utilisateur": id_user,
             "role": role,
             "verification_requise": True,
-            "message": "Un e-mail de confirmation vous a été envoyé.",
+            "email_envoye": email_parti,
+            "message": (
+                "Un e-mail de confirmation vous a été envoyé." if email_parti
+                else "Votre compte est créé, mais l'e-mail de confirmation "
+                     "n'a pas pu être envoyé. Contactez un administrateur "
+                     "pour activer votre accès."),
         }), 201
 
     # Sinon (mode souple), on connecte immédiatement comme avant
     token = creer_session(id_user, request.headers.get("User-Agent"))
-    reponse = jsonify({"id_utilisateur": id_user, "role": role})
+    reponse = jsonify({
+        "id_utilisateur": id_user,
+        "role": role,
+        "email_envoye": email_parti,
+    })
     _poser_cookie(reponse, token)
     return reponse, 201
 
 
 def _envoyer_email_verification(id_user: int, email: str, prenom: str):
-    """Génère un jeton de vérification (24h) et envoie le lien par e-mail."""
+    """Génère un jeton de vérification (24h) et envoie le lien par e-mail.
+
+    Renvoie True si le message est réellement parti. L'inscription ne
+    doit pas échouer parce que l'envoi a échoué — mais l'échec ne doit
+    pas non plus disparaître : sans trace, un serveur SMTP mal configuré
+    se traduit par « je ne reçois pas toujours les e-mails », sans
+    aucun moyen de savoir pourquoi.
+    """
     import secrets
     from datetime import datetime, timedelta
     from utils.email import envoyer
@@ -123,7 +142,7 @@ def _envoyer_email_verification(id_user: int, email: str, prenom: str):
             commit=True,
         )
         lien = url_publique("/verifier-email.html?jeton=" + jeton)
-        envoyer(
+        parti = envoyer(
             email,
             "Bienvenue sur LaSourcee — confirmez votre adresse",
             f"Bonjour {prenom},\n\n"
@@ -133,8 +152,15 @@ def _envoyer_email_verification(id_user: int, email: str, prenom: str):
             f"Si vous n'avez pas créé ce compte, ignorez ce message.\n\n"
             f"— L'équipe LaSourcee",
         )
-    except Exception:
-        pass   # Ne casse pas l'inscription si la verif échoue
+        if not parti:
+            logger.error(
+                "E-mail de confirmation non envoyé à %s : l'envoi a échoué. "
+                "Vérifiez EMAIL_MODE et les paramètres SMTP.", email)
+        return bool(parti)
+    except Exception as exc:
+        logger.error("E-mail de confirmation impossible pour %s : %s",
+                     email, exc)
+        return False
 
 
 @bp_auth.post("/connexion")

@@ -201,6 +201,24 @@ def anomalies_configuration():
             "l'adresse d'un tiers.",
         ))
 
+    # Un identifiant client Google se termine toujours par
+    # « .apps.googleusercontent.com ». Une valeur d'une autre forme —
+    # le secret client collé par erreur, une valeur tronquée, des
+    # guillemets ou une espace résiduelle — produit chez Google une
+    # erreur 401 « invalid_client : The OAuth client was not found »,
+    # dont rien dans l'application ne laisse deviner l'origine.
+    client_google = (os.getenv("GOOGLE_CLIENT_ID") or "").strip()
+    if client_google and not client_google.endswith(
+            ".apps.googleusercontent.com"):
+        problemes.append((
+            "bloquant",
+            "GOOGLE_CLIENT_ID ne ressemble pas à un identifiant client "
+            "Google : il devrait se terminer par "
+            "« .apps.googleusercontent.com ». Google refusera la connexion "
+            "avec « invalid_client ». Vérifiez que vous avez copié "
+            "l'identifiant client, et non le secret client.",
+        ))
+
     if Config.EST_PRODUCTION and Config.URL_PLATEFORME.startswith("http://"):
         problemes.append((
             "avertissement",

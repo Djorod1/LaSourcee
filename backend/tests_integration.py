@@ -534,7 +534,89 @@ def executer_tests():
                            ("nouvelle.venue@test.io",)) == 1)
 
     print("\n" + "═" * 70)
-    print("  12. AUTHENTIFICATION EXTERNE (OAuth)")
+    print("  12. COMPTE D'ADMINISTRATION AMORCÉ PAR L'ENVIRONNEMENT")
+    print("═" * 70)
+    from services.amorcage import creer_admin_initial
+
+    garde = {c: os.environ.get(c)
+             for c in ("ADMIN_EMAIL", "ADMIN_MOTDEPASSE", "ADMIN_PRENOM")}
+    try:
+        os.environ.update({"ADMIN_EMAIL": "chef@test.io",
+                           "ADMIN_MOTDEPASSE": "AmorcageSolide2026!",
+                           "ADMIN_PRENOM": "Chef"})
+        creer_admin_initial(app)
+        verifier("Compte d'administration créé",
+                 jeton_sql("SELECT role FROM utilisateur WHERE email = ?",
+                           ("chef@test.io",)) == "super_admin")
+        verifier("Changement de mot de passe imposé",
+                 jeton_sql("SELECT doit_changer_mdp FROM utilisateur "
+                           "WHERE email = ?", ("chef@test.io",)) == 1)
+
+        chef = app.test_client()
+        r = chef.post("/api/auth/connexion",
+                      json={"email": "chef@test.io",
+                            "mot_de_passe": "AmorcageSolide2026!"})
+        verifier("Connexion avec le mot de passe d'amorçage",
+                 r.status_code == 200)
+        verifier("Accès au tableau de bord d'administration",
+                 chef.get("/api/admin/dashboard").status_code == 200)
+
+        # Le compte change son mot de passe, puis l'application redémarre :
+        # l'amorçage ne doit surtout pas le remettre à la valeur initiale.
+        chef.post("/api/auth/changer-mdp",
+                  json={"mot_de_passe_actuel": "AmorcageSolide2026!",
+                        "nouveau_mot_de_passe": "ChoisiParMoi2026!"})
+        creer_admin_initial(app)
+        verifier("Un redémarrage ne réinitialise pas le mot de passe",
+                 app.test_client().post(
+                     "/api/auth/connexion",
+                     json={"email": "chef@test.io",
+                           "mot_de_passe": "ChoisiParMoi2026!"}
+                 ).status_code == 200)
+        verifier("L'ancien mot de passe d'amorçage ne fonctionne plus",
+                 app.test_client().post(
+                     "/api/auth/connexion",
+                     json={"email": "chef@test.io",
+                           "mot_de_passe": "AmorcageSolide2026!"}
+                 ).status_code == 401)
+
+        # Un compte ordinaire déjà présent reçoit les droits, sans que son
+        # mot de passe soit remplacé.
+        os.environ["ADMIN_EMAIL"] = "aminata@test.io"
+        creer_admin_initial(app)
+        verifier("Un compte existant est promu sans perdre son mot de passe",
+                 jeton_sql("SELECT est_admin FROM utilisateur WHERE email = ?",
+                           ("aminata@test.io",)) == 1
+                 and app.test_client().post(
+                     "/api/auth/connexion",
+                     json={"email": "aminata@test.io",
+                           "mot_de_passe": "Nouveau2026!"}
+                 ).status_code == 200)
+
+        # Un mot de passe faible est refusé plutôt que haché tel quel.
+        os.environ.update({"ADMIN_EMAIL": "faible@test.io",
+                           "ADMIN_MOTDEPASSE": "1234"})
+        creer_admin_initial(app)
+        verifier("Mot de passe d'amorçage trop faible refusé",
+                 jeton_sql("SELECT COUNT(*) FROM utilisateur WHERE email = ?",
+                           ("faible@test.io",)) == 0)
+
+        # Sans variables, l'amorçage ne fait rien.
+        avant = jeton_sql("SELECT COUNT(*) FROM utilisateur")
+        os.environ.pop("ADMIN_EMAIL", None)
+        os.environ.pop("ADMIN_MOTDEPASSE", None)
+        creer_admin_initial(app)
+        verifier("Sans variables, aucun compte n'est créé",
+                 jeton_sql("SELECT COUNT(*) FROM utilisateur") == avant)
+    finally:
+        for cle, valeur in garde.items():
+            if valeur is None:
+                os.environ.pop(cle, None)
+            else:
+                os.environ[cle] = valeur
+
+    print("\n" + "═" * 70)
+    print("  13. AUTHENTIFICATION EXTERNE (OAuth)")
     print("═" * 70)
     cfg = anon.get("/api/auth/config")
     verifier("Configuration OAuth exposée", cfg.status_code == 200)

@@ -155,6 +155,15 @@ def creer_application():
         except Exception as exc:
             logger.error("Initialisation de la base impossible : %s", exc)
 
+    # Compte d'administration : décrit par variables d'environnement,
+    # puisqu'un hébergement serverless n'offre aucune console pour lancer
+    # gerer_admins.py. Sans effet si les variables sont absentes.
+    try:
+        from services.amorcage import creer_admin_initial
+        creer_admin_initial(app)
+    except Exception as exc:
+        logger.error("Amorçage du compte d'administration ignoré : %s", exc)
+
     logger.info("Base de données : %s | environnement : %s",
                 app.config.get("DB_TYPE"), app.config.get("ENVIRONNEMENT"))
 
@@ -210,10 +219,19 @@ def creer_application():
         """
         from models.db import recuperer_un
 
+        # Le mode d'envoi et l'état d'OAuth figurent ici parce que leur
+        # absence est la cause la plus fréquente des pannes constatées
+        # (« je ne reçois pas l'e-mail », « le bouton Google ne marche
+        # pas ») : les lire d'un coup d'œil évite d'ouvrir le tableau de
+        # bord de l'hébergeur. Aucune valeur secrète n'est exposée.
         details = {
             "statut": "ok",
             "base": app.config.get("DB_TYPE"),
             "environnement": app.config.get("ENVIRONNEMENT"),
+            "envoi_email": (os.getenv("EMAIL_MODE", "console") or "console").lower(),
+            "google_configure": bool(os.getenv("GOOGLE_CLIENT_ID")),
+            "confirmation_obligatoire": bool(
+                app.config.get("VERIFICATION_EMAIL_OBLIGATOIRE")),
         }
         try:
             recuperer_un("SELECT 1 AS ok")
