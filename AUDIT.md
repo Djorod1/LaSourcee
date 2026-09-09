@@ -4,6 +4,12 @@
 > Méthode : lecture exhaustive des sources + tests réels d'appel HTTP
 > contre le backend en venv, pas de présomption.
 
+> **État figé, conservé tel quel.** Ce document décrit la plateforme
+> avant les corrections qu'il a lui-même déclenchées. Ses chiffres, 31
+> routes et 18 tables, valaient à cette date et ne valent plus : le
+> `README.md` porte l'état courant. Le mettre à jour effacerait ce qu'il
+> servait à établir, et l'on ne saurait plus d'où l'on est parti.
+
 ## Sommaire
 
 1. [Constat global brutal](#1-constat-global-brutal)

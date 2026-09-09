@@ -133,9 +133,9 @@ DATABASE_URL="postgresql://..." ./demarrer.sh tests   # ajoute PostgreSQL
 | Suite | Portée |
 |---|---|
 | `tests_redaction.py` | aucun tiret cadratin dans les 18 fichiers dont le texte atteint un utilisateur |
-| `tests_contraste.py` | 11 couples de couleurs au niveau WCAG AA, en clair comme en sombre |
-| `tests_integration.py` | 198 tests fonctionnels, sur SQLite puis sur PostgreSQL |
-| `tests_deploiement.py` | 70 vérifications de mise en ligne |
+| `tests_contraste.py` | 15 couples de couleurs au niveau WCAG AA, en clair comme en sombre |
+| `tests_integration.py` | 311 tests fonctionnels, sur SQLite puis sur PostgreSQL |
+| `tests_deploiement.py` | 79 vérifications de mise en ligne |
 
 Sans `DATABASE_URL`, les deux dernières lignes sont annoncées comme non
 lancées plutôt que passées sous silence.
@@ -155,7 +155,7 @@ puis sur PostgreSQL 16.
 | Couche | Choix |
 |---|---|
 | Frontend | HTML / CSS / JavaScript, sans framework |
-| Backend | Python 3.10+ — Flask 3, 70 routes HTTP |
+| Backend | Python 3.10+ — Flask 3, 78 routes HTTP |
 | Base | SQLite, PostgreSQL ou MySQL selon `DB_TYPE` (tests automatisés sur les deux premiers) |
 | Authentification | Sessions serveur, bcrypt 12 tours, OAuth Google et LinkedIn |
 
@@ -194,8 +194,8 @@ frontend et pourrait servir une autre interface sans modification.
 │   ├── app.py                Application Flask, erreurs, fichiers statiques
 │   ├── config.py             Configuration et diagnostic de démarrage
 │   ├── gerer_admins.py       Gestion des comptes administrateurs
-│   ├── tests_integration.py  198 tests fonctionnels
-│   ├── tests_deploiement.py  70 vérifications de mise en ligne
+│   ├── tests_integration.py  311 tests fonctionnels
+│   ├── tests_deploiement.py  79 vérifications de mise en ligne
 │   ├── tests_redaction.py    absence de tiret dans les textes visibles
 │   ├── tests_contraste.py    lisibilité des couleurs (WCAG AA)
 │   ├── models/db.py          Accès uniforme SQLite / PostgreSQL / MySQL
@@ -206,6 +206,7 @@ frontend et pourrait servir une autre interface sans modification.
 │   │   ├── email.py            envoi SMTP réel (ou console en dev)
 │   │   ├── urls.py             URL publiques des liens d'e-mail
 │   │   ├── dates.py            comparaison de dates multi-moteurs
+│   │   ├── permissions.py      droits d'administration par domaine
 │   │   └── audit.py            journal des actions d'administration
 │   ├── routes/
 │   │   ├── auth.py             inscription, connexion, mot de passe
@@ -308,7 +309,43 @@ un gain nul côté utilisateur, qui ne voit jamais ces chaînes.
 
 Un référent n'est pas un administrateur : il ne dispose d'aucun droit sur
 les comptes ni sur les contenus des autres. Le passage au rôle référent
-suppose une candidature validée par un administrateur.
+suppose une candidature validée par un administrateur : **le dépôt seul
+ne l'accorde pas**, et l'annuaire ne présente que des dossiers examinés.
+
+### Droits d'administration
+
+Un seul drapeau ouvrait autrefois tous les écrans. Confier la modération
+revenait donc à confier aussi le journal d'audit, les adresses de tous
+les membres et la configuration du serveur. Huit droits se donnent
+maintenant un par un :
+
+| Droit | Ce qu'il ouvre |
+|---|---|
+| `utilisateurs` | consulter et gérer les comptes |
+| `referents` | examiner les candidatures |
+| `signalements` | modérer les contenus signalés |
+| `categories` | gérer les secteurs d'activité |
+| `audit` | consulter le journal des actions d'administration |
+| `diagnostic` | voir la configuration du serveur |
+| `export` | télécharger les données de la plateforme |
+| `administrateurs` | nommer des administrateurs et fixer leurs droits |
+
+Deux règles gouvernent le reste. Le **super administrateur a tout**, sans
+qu'on ait à l'écrire : lui retirer un droit par mégarde fermerait la
+porte à la seule personne capable de la rouvrir. Une **liste vide
+n'accorde rien** ; un compte antérieur à ces droits, dont la colonne vaut
+`NULL`, les conserve tous, faute de quoi une mise à jour verrouillerait
+l'équipe hors de son propre site.
+
+Le menu n'affiche que les écrans réellement accessibles : proposer un
+onglet qui répondra 403 fait passer un refus de droits pour une panne.
+
+### Export des données
+
+Sept jeux s'exportent en CSV ou en JSON depuis l'administration, plus le
+dossier complet d'une personne. Aucun mot de passe ni jeton de session
+n'y figure : un export circule et s'oublie. Le CSV porte un BOM et un
+point-virgule, pour s'ouvrir directement dans un tableur francophone.
 
 ---
 

@@ -340,6 +340,41 @@ def executer():
     verifier("Aucune question inventée sur la page",
              "Sophie M." not in page and "Karim B." not in page)
 
+    # -----------------------------------------------------------------
+    titre("8bis. COHÉRENCE DES TROIS SCHÉMAS")
+    # -----------------------------------------------------------------
+    # Une colonne ajoutée à un seul schéma ne se voit pas : les tests
+    # tournent sur SQLite et PostgreSQL, et MySQL part en silence. La
+    # divergence n'apparaît qu'à l'installation, chez quelqu'un d'autre.
+    import re as _re
+
+    def _colonnes(fichier, table):
+        texte = (RACINE / "database" / fichier).read_text(encoding="utf-8")
+        m = _re.search(r"CREATE TABLE " + table + r"\s*\((.*?)\n\)",
+                       texte, _re.S)
+        if not m:
+            return None
+        noms = set()
+        for ligne in m.group(1).split("\n"):
+            ligne = ligne.strip()
+            if not ligne or ligne.startswith("--") or ligne.upper().startswith(
+                    ("PRIMARY", "FOREIGN", "CONSTRAINT", "UNIQUE", "KEY",
+                     "CHECK", "INDEX")):
+                continue
+            mm = _re.match(r"([a-z_]+)\s", ligne)
+            if mm:
+                noms.add(mm.group(1))
+        return noms
+
+    for _table in ("utilisateur", "mentor_details", "signalement",
+                   "question", "reponse"):
+        _s = _colonnes("schema_sqlite.sql", _table)
+        _p = _colonnes("schema_postgres.sql", _table)
+        _m = _colonnes("schema.sql", _table)
+        _ecart = ((_s or set()) ^ (_p or set())) | ((_s or set()) ^ (_m or set()))
+        verifier(f"Colonnes identiques dans les 3 schémas ({_table})",
+                 _s and _s == _p == _m, sorted(_ecart)[:5])
+
     for libelle, marque in [
         ("Bouton de thème présent", "bouton-theme"),
         ("Thème appliqué avant le rendu", "lasourcee-theme"),
