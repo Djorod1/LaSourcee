@@ -352,6 +352,78 @@ def executer():
              "Sophie M." not in page and "Karim B." not in page)
 
     # -----------------------------------------------------------------
+    titre("8ter. MISE À NIVEAU D'UNE BASE DÉJÀ EN SERVICE")
+    # -----------------------------------------------------------------
+    # Un fichier de schéma ne s'applique qu'à la création. Une base déjà
+    # en place ne le rejoue jamais : chaque colonne et chaque table
+    # ajoutées depuis y manquent définitivement, et le site tombe en
+    # erreur serveur sur la première route qui les touche. C'est arrivé.
+    #
+    # On reproduit donc le cas : une base au schéma complet, dont on
+    # retire ce qui a été ajouté après coup, puis un démarrage.
+    from models.db import COLONNES_ATTENDUES, TABLES_ATTENDUES
+
+    try:
+        import psycopg2 as _pg
+        _cx = _pg.connect(os.environ["DATABASE_URL"])
+        _cx.autocommit = True
+        _c = _cx.cursor()
+
+        # Retirer les tables et colonnes de la liste de mise à niveau.
+        for _table, _ in TABLES_ATTENDUES:
+            _c.execute(f"DROP TABLE IF EXISTS {_table} CASCADE")
+        for _table, _colonne, _ in COLONNES_ATTENDUES:
+            try:
+                _c.execute(f"ALTER TABLE {_table} "
+                           f"DROP COLUMN IF EXISTS {_colonne} CASCADE")
+            except Exception:
+                pass
+
+        _c.execute("SELECT COUNT(*) FROM information_schema.tables "
+                   "WHERE table_name = %s", (TABLES_ATTENDUES[0][0],))
+        verifier("La table récente est bien absente au départ",
+                 _c.fetchone()[0] == 0)
+
+        # Le démarrage doit tout rétablir, sans intervention.
+        from models.db import completer_colonnes
+        completer_colonnes(application)
+
+        _c.execute("SELECT COUNT(*) FROM information_schema.tables "
+                   "WHERE table_name = %s", (TABLES_ATTENDUES[0][0],))
+        verifier("Le démarrage recrée la table manquante",
+                 _c.fetchone()[0] == 1,
+                 "sans elle, le journal d'activité échoue en silence")
+
+        _absentes = []
+        for _table, _colonne, _ in COLONNES_ATTENDUES:
+            _c.execute("SELECT COUNT(*) FROM information_schema.columns "
+                       "WHERE table_name = %s AND column_name = %s",
+                       (_table, _colonne))
+            if _c.fetchone()[0] == 0:
+                _absentes.append(f"{_table}.{_colonne}")
+        verifier("Le démarrage rétablit toutes les colonnes",
+                 not _absentes, _absentes[:5])
+        _cx.close()
+
+        # Et le site répond ensuite, sur les routes qui touchent
+        # justement ces colonnes.
+        _r = client.post("/api/auth/inscription", headers=ENTETES_PROXY, json={
+            "prenom": "Migration", "nom": "ESSAI",
+            "email": "migration.essai@exemple.org",
+            "mot_de_passe": "Migration2026!", "role": "etudiant"})
+        verifier("Une inscription aboutit après mise à niveau",
+                 _r.status_code == 201, _r.get_data(as_text=True)[:90])
+        client.post("/api/auth/connexion", headers=ENTETES_PROXY, json={
+            "email": "migration.essai@exemple.org",
+            "mot_de_passe": "Migration2026!"})
+        _r = client.put("/api/profil/moi", headers=ENTETES_PROXY,
+                        json={"telephone": "0155040432"})
+        verifier("Le profil s'enregistre après mise à niveau",
+                 _r.status_code == 200, _r.get_data(as_text=True)[:90])
+    except ImportError:
+        verifier("Mise à niveau vérifiable (psycopg2 requis)", False)
+
+    # -----------------------------------------------------------------
     titre("8bis. COHÉRENCE DES TROIS SCHÉMAS")
     # -----------------------------------------------------------------
     # Une colonne ajoutée à un seul schéma ne se voit pas : les tests

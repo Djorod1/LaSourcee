@@ -345,6 +345,11 @@ COLONNES_ATTENDUES = [
     # Droits d'administration par domaine. NULL distingue un compte
     # antérieur, qui garde tout, d'une liste vide, qui n'accorde rien.
     ("utilisateur", "permissions", "TEXT"),
+    # Présente depuis l'origine, donc jamais inscrite ici. Elle n'a
+    # commencé à servir que bien plus tard : une installation ancienne
+    # ou incomplète la manquerait sans que rien ne le signale, et la
+    # mise à jour du profil échouerait en erreur serveur.
+    ("utilisateur", "telephone", "TEXT"),
     # Code court de confirmation, saisi a la main quand le lien
     # n'aboutit pas.
     # Mesures d'usage, qui servent aussi de variables d'analyse.

@@ -315,7 +315,7 @@ cd backend
 DATABASE_URL="postgresql://..." python tests_deploiement.py
 ```
 
-Il doit afficher `80/80 vérifications réussies`.
+Il doit afficher `85/85 vérifications réussies`.
 
 Et la suite fonctionnelle complète, sur les deux moteurs :
 
@@ -324,7 +324,7 @@ python tests_integration.py                                    # SQLite
 DB_TYPE=postgres DATABASE_URL="postgresql://..." python tests_integration.py
 ```
 
-Elle doit afficher `325/383 tests réussis` dans les deux cas.
+Elle doit afficher `383/383 tests réussis` dans les deux cas.
 
 ---
 
