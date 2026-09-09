@@ -2,8 +2,12 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+# Les formes sans barre oblique couvrent aussi le cas d'un venv place
+# ailleurs et relie par lien symbolique : « .venv/ » seul ne l'attrape pas.
 .venv/
+.venv
 venv/
+venv
 env/
 
 # Environnement local (ne pas commiter les secrets)

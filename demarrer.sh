@@ -12,7 +12,7 @@
 #   ./demarrer.sh reset       Supprime la base SQLite et la recharge
 #   ./demarrer.sh postgres    Démarre en mode PostgreSQL (DATABASE_URL requis)
 #   ./demarrer.sh mysql       Démarre en mode MySQL (DB_TYPE=mysql)
-#   ./demarrer.sh tests       Lance la suite de tests d'intégration
+#   ./demarrer.sh tests       Lance toutes les suites de vérification
 #   ./demarrer.sh aide        Affiche cette aide
 # =====================================================================
 
@@ -37,8 +37,15 @@ LaSourcee — démarrage en quelques secondes
   ./demarrer.sh reset       supprime la base et la recrée (perte des données)
   ./demarrer.sh postgres    mode PostgreSQL (DATABASE_URL requis)
   ./demarrer.sh mysql       mode MySQL (nécessite serveur MySQL + .env configuré)
-  ./demarrer.sh tests       lance la suite de tests d'intégration
+  ./demarrer.sh tests       lance toutes les vérifications (voir plus bas)
   ./demarrer.sh aide        affiche cette aide
+
+Ce que « tests » vérifie :
+  rédaction des textes visibles, contraste des couleurs, et les
+  198 tests d'intégration sur SQLite. Ajoutez DATABASE_URL pour lancer
+  en plus l'intégration sur PostgreSQL et les 70 vérifications de mise
+  en ligne :
+      DATABASE_URL=postgresql://... ./demarrer.sh tests
 
 Premier lancement (3 commandes suffisent) :
   1. ./demarrer.sh installer
@@ -138,13 +145,65 @@ demarrer_postgres() {
   exec "$VENV/bin/python" app.py
 }
 
+# Une verification que personne ne lance n'en est pas une. Les quatre
+# suites tournent donc ensemble : la redaction et le contraste sont
+# instantanes, et ce sont precisement ceux qu'on oublierait.
 lancer_tests() {
   if [ ! -d "$VENV" ]; then
     err "venv manquant. Lancez d'abord : ./demarrer.sh installer"
     exit 1
   fi
   cd "$DOSSIER/backend"
-  exec "$VENV/bin/python" tests_integration.py
+
+  local python="$VENV/bin/python"
+
+  # Les echecs s'accumulent dans une chaine et non un tableau : sous
+  # « set -u », lire un tableau vide fait echouer bash 3.2, celui que
+  # macOS installe encore par defaut.
+  ECHECS=""
+
+  lancer() {                     # $1 = libelle, reste = commande
+    local libelle="$1"; shift
+    echo
+    info "$libelle"
+    if "$@"; then
+      ok "$libelle"
+    else
+      err "$libelle : echec"
+      ECHECS="$ECHECS
+  - $libelle"
+    fi
+  }
+
+  lancer "Redaction des textes visibles" "$python" tests_redaction.py
+  lancer "Contraste des couleurs"        "$python" tests_contraste.py
+
+  # DB_TYPE est impose a chaque appel plutot que laisse a l'environnement.
+  # La suite choisit son moteur d'apres cette seule variable et retombe sur
+  # SQLite quand elle est absente : un DATABASE_URL exporte donnerait alors
+  # deux passages SQLite annonces comme SQLite puis PostgreSQL.
+  lancer "Integration (SQLite)" env DB_TYPE=sqlite "$python" tests_integration.py
+
+  # Les deux dernieres exigent une vraie base PostgreSQL. Sans
+  # DATABASE_URL on le dit clairement plutot que de faire croire que
+  # tout a ete verifie.
+  if [ -n "${DATABASE_URL:-}" ]; then
+    lancer "Integration (PostgreSQL)" env DB_TYPE=postgres "$python" tests_integration.py
+    lancer "Mise en ligne"            "$python" tests_deploiement.py
+  else
+    echo
+    info "PostgreSQL non verifie : definissez DATABASE_URL pour lancer"
+    info "les suites PostgreSQL et de mise en ligne."
+  fi
+
+  echo
+  echo "──────────────────────────────────────────────────────────"
+  if [ -z "$ECHECS" ]; then
+    ok "Toutes les suites lancees sont passees."
+  else
+    err "Suites en echec :$ECHECS"
+    exit 1
+  fi
 }
 
 demarrer_mysql() {

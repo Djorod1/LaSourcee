@@ -3,9 +3,9 @@
 > Plateforme de mentorat pour la jeunesse.
 > Une question, une réponse, un acte de mentorat.
 
-LaSourcee met en relation des étudiants en demande d'orientation avec des
-mentors expérimentés, autour de trois axes : **mentorat académique**,
-**orientation de carrière** et **éducation financière**.
+LaSourcee met en relation des **bénéficiaires** en demande d'orientation
+avec des **référents** expérimentés, autour de trois axes : **mentorat
+académique**, **orientation de carrière** et **éducation financière**.
 
 Adresse publique : **[lasourcee.org](https://lasourcee.org)**
 
@@ -32,7 +32,7 @@ vous créerez depuis la page d'accueil.
 Autres sous-commandes :
 
 ```bash
-./demarrer.sh tests      # suite de tests d'intégration (98 tests)
+./demarrer.sh tests      # toutes les vérifications (voir « Vérifications »)
 ./demarrer.sh reset      # supprime la base locale et la recrée
 ./demarrer.sh postgres   # démarre sur PostgreSQL (DATABASE_URL requis)
 ./demarrer.sh aide
@@ -121,19 +121,30 @@ GitHub Pages ne sert que des fichiers. C'est la cause de l'erreur
 `405 Method Not Allowed` obtenue lors des premiers essais d'inscription :
 il n'y avait aucun serveur pour traiter la requête.
 
-Deux scripts vérifient l'application avant mise en ligne :
+### Vérifications
+
+Une seule commande les lance toutes :
 
 ```bash
-cd backend
-python tests_integration.py     # 98 tests fonctionnels
-DATABASE_URL="postgresql://..." python tests_deploiement.py   # 49 vérifications
+./demarrer.sh tests
+DATABASE_URL="postgresql://..." ./demarrer.sh tests   # ajoute PostgreSQL
 ```
+
+| Suite | Portée |
+|---|---|
+| `tests_redaction.py` | aucun tiret cadratin dans les 18 fichiers dont le texte atteint un utilisateur |
+| `tests_contraste.py` | 11 couples de couleurs au niveau WCAG AA, en clair comme en sombre |
+| `tests_integration.py` | 198 tests fonctionnels, sur SQLite puis sur PostgreSQL |
+| `tests_deploiement.py` | 70 vérifications de mise en ligne |
+
+Sans `DATABASE_URL`, les deux dernières lignes sont annoncées comme non
+lancées plutôt que passées sous silence.
 
 `tests_deploiement.py` reproduit les conditions de Vercel : point d'entrée
 serverless, PostgreSQL, proxy HTTPS, cookies, adresse IP réelle du
 visiteur, en-têtes de sécurité, non-exposition du code source.
 
-Les deux suites tournent automatiquement sur chaque pull request et sur
+Les suites tournent automatiquement sur chaque pull request et sur
 chaque poussée vers `main` (`.github/workflows/tests.yml`), sur SQLite
 puis sur PostgreSQL 16.
 
@@ -144,7 +155,7 @@ puis sur PostgreSQL 16.
 | Couche | Choix |
 |---|---|
 | Frontend | HTML / CSS / JavaScript, sans framework |
-| Backend | Python 3.10+ — Flask 3, 60 routes HTTP |
+| Backend | Python 3.10+ — Flask 3, 70 routes HTTP |
 | Base | SQLite, PostgreSQL ou MySQL selon `DB_TYPE` (tests automatisés sur les deux premiers) |
 | Authentification | Sessions serveur, bcrypt 12 tours, OAuth Google et LinkedIn |
 
@@ -183,9 +194,12 @@ frontend et pourrait servir une autre interface sans modification.
 │   ├── app.py                Application Flask, erreurs, fichiers statiques
 │   ├── config.py             Configuration et diagnostic de démarrage
 │   ├── gerer_admins.py       Gestion des comptes administrateurs
-│   ├── tests_integration.py  98 tests fonctionnels
-│   ├── tests_deploiement.py  49 vérifications de mise en ligne
+│   ├── tests_integration.py  198 tests fonctionnels
+│   ├── tests_deploiement.py  70 vérifications de mise en ligne
+│   ├── tests_redaction.py    absence de tiret dans les textes visibles
+│   ├── tests_contraste.py    lisibilité des couleurs (WCAG AA)
 │   ├── models/db.py          Accès uniforme SQLite / PostgreSQL / MySQL
+│   │                         + ajout des colonnes manquantes au démarrage
 │   ├── utils/
 │   │   ├── auth_helpers.py     bcrypt, sessions, cookies, décorateurs
 │   │   ├── securite.py         politique mdp, anti-force-brute, en-têtes
@@ -205,14 +219,25 @@ frontend et pourrait servir une autre interface sans modification.
 │   │   ├── notifications.py    notifications
 │   │   ├── recherche.py        recherche globale
 │   │   └── admin.py            tableau de bord et modération
-│   └── services/suggestions.py  suggestion de mentors
+│   └── services/
+│       ├── suggestions.py      suggestion de référents
+│       ├── notifications.py    dépôt des notifications
+│       └── amorcage.py         création du premier admin par variables
 │
 └── database/
-    ├── schema_sqlite.sql      22 tables — développement
-    ├── schema_postgres.sql    22 tables — production
-    ├── schema.sql             22 tables — MySQL
-    └── migration_v2.sql
+    ├── schema_sqlite.sql      23 tables — développement
+    ├── schema_postgres.sql    23 tables — production
+    ├── schema.sql             23 tables — MySQL
+    ├── migration_v2.sql
+    └── migration_v3.sql       profils enrichis, préférences, vérification
 ```
+
+Les fichiers de schéma ne s'appliquent qu'à la **création** de la base :
+une base déjà en service ne les rejoue jamais. C'est pourquoi les
+colonnes attendues sont aussi listées dans `models/db.py` et ajoutées au
+démarrage si elles manquent. Sans cela, tout déploiement introduisant une
+colonne casserait la production, alors que les tests, sur une base neuve,
+resteraient verts.
 
 ---
 
@@ -249,22 +274,40 @@ frontend et pourrait servir une autre interface sans modification.
 - **le code source n'est jamais servi** : seuls les fichiers du frontend
   sont accessibles, les tentatives de remontée d'arborescence sont
   refusées ;
+- **identité externe vérifiée avant rattachement** : une connexion Google
+  ou LinkedIn n'est reliée à un compte existant que si le fournisseur
+  atteste que l'adresse est vérifiée. Sans ce contrôle, quiconque
+  créerait chez un fournisseur une identité portant l'adresse d'un membre
+  entrerait dans son compte ;
 - `DEBUG` derrière une variable d'environnement, jamais actif par défaut.
+
+### Données personnelles
+
+- **suppression du compte en libre-service**, protégée par la saisie du
+  mot de passe et une confirmation explicite ;
+- **export de ses propres données** au format JSON, depuis le profil ;
+- réglages de notification respectés à l'émission, et non filtrés à
+  l'affichage : une case décochée empêche la notification d'exister.
 
 ---
 
 ## Rôles
 
-| Rôle | Capacités |
-|---|---|
-| `visiteur` | consulter le fil public |
-| `etudiant` | publier des questions, commenter, mettre en favori, suivre des mentors |
-| `mentor` | répondre aux questions, statut de vérification, profil public enrichi |
-| `admin` | modération, suspension, validation des candidatures de mentor |
-| `super_admin` | création d'autres administrateurs, journal d'audit complet |
+L'interface parle de **Référent** et de **Bénéficiaire**. En base, les
+valeurs historiques `mentor` et `etudiant` ont été conservées : les
+renommer aurait imposé une migration de toutes les lignes existantes pour
+un gain nul côté utilisateur, qui ne voit jamais ces chaînes.
 
-Un mentor n'est pas un administrateur : il ne dispose d'aucun droit sur
-les comptes ni sur les contenus des autres. Le passage au rôle mentor
+| Rôle en base | Nom affiché | Capacités |
+|---|---|---|
+| `visiteur` | Visiteur | consulter le fil public |
+| `etudiant` | Bénéficiaire | publier des questions, commenter, mettre en favori, suivre des référents |
+| `mentor` | Référent | répondre aux questions, statut de vérification, profil public enrichi |
+| `admin` | Administrateur | modération, suspension, validation des candidatures |
+| `super_admin` | Administrateur principal | création d'autres administrateurs, journal d'audit complet |
+
+Un référent n'est pas un administrateur : il ne dispose d'aucun droit sur
+les comptes ni sur les contenus des autres. Le passage au rôle référent
 suppose une candidature validée par un administrateur.
 
 ---
@@ -275,6 +318,7 @@ suppose une candidature validée par un administrateur.
 |---|---|
 | [`DEPLOIEMENT.md`](DEPLOIEMENT.md) | mise en ligne sur Vercel, pas à pas |
 | [`HOSTINGER.md`](HOSTINGER.md) | domaine acheté chez Hostinger : où héberger l'application |
+| [`REFERENCEMENT.md`](REFERENCEMENT.md) | référencement : ce qui est en place, ce qui reste à faire |
 | [`MISE_EN_SERVICE.md`](MISE_EN_SERVICE.md) | configuration SMTP, OAuth, administration |
 | [`AUDIT.md`](AUDIT.md) | audit technique complet |
 | [`STRATEGIE.md`](STRATEGIE.md) | vision produit et analyse comparative |
