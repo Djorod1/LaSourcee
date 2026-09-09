@@ -262,7 +262,62 @@ def executer():
                  str(r.status_code))
 
     # -----------------------------------------------------------------
-    titre("8. CONFIGURATION DE DÉPLOIEMENT")
+    titre("8. RÉFÉRENCEMENT ET MÉTADONNÉES DE LA PAGE")
+    # -----------------------------------------------------------------
+    # Ces balises se perdent facilement : elles ne cassent rien en
+    # disparaissant, aucun test fonctionnel ne les touche, et personne ne
+    # s'en aperçoit avant de constater des mois plus tard que le site ne
+    # ressort nulle part.
+    import json as _json
+    import re as _re
+
+    page = (RACINE / "index.html").read_text(encoding="utf-8")
+
+    for libelle, marque in [
+        ("Titre de page", "<title>"),
+        ("Description", 'name="description"'),
+        ("URL canonique", 'rel="canonical"'),
+        ("Mots-clés", 'name="keywords"'),
+        ("Directive robots", 'name="robots"'),
+        ("Auteur", 'name="author"'),
+        ("Aperçu de partage (Open Graph)", 'property="og:image"'),
+        ("Aperçu Twitter", 'name="twitter:card"'),
+        ("Couleur de thème", 'name="theme-color"'),
+        ("Langue déclarée", 'lang="fr"'),
+    ]:
+        verifier(libelle, marque in page)
+
+    blocs = _re.findall(
+        r'<script type="application/ld\+json">(.*?)</script>', page, _re.S)
+    verifier("Trois blocs de données structurées", len(blocs) == 3,
+             str(len(blocs)))
+    types = []
+    for bloc in blocs:
+        try:
+            types.append(_json.loads(bloc).get("@type"))
+        except ValueError as exc:
+            verifier("Données structurées valides", False, str(exc))
+    verifier("Données structurées valides", len(types) == len(blocs))
+    verifier("Fiche du site déclarée", "WebSite" in types, str(types))
+    verifier("Questions fréquentes déclarées", "FAQPage" in types, str(types))
+
+    verifier("L'adresse canonique désigne le domaine définitif",
+             'href="https://lasourcee.org/"' in page)
+    verifier("Aucun chiffre inventé sur la page",
+             "+12 000" not in page and "+24 000" not in page)
+    verifier("Aucune question inventée sur la page",
+             "Sophie M." not in page and "Karim B." not in page)
+
+    for libelle, marque in [
+        ("Bouton de thème présent", 'class="bouton-theme"'),
+        ("Thème appliqué avant le rendu", "lasourcee-theme"),
+        ("Pied de page présent", 'class="pied-page"'),
+        ("Signature du développeur", "Coding_DJOROD"),
+    ]:
+        verifier(libelle, marque in page)
+
+    # -----------------------------------------------------------------
+    titre("9. CONFIGURATION DE DÉPLOIEMENT")
     # -----------------------------------------------------------------
     import json
     fichier = RACINE / "vercel.json"
