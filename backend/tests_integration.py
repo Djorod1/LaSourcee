@@ -1007,8 +1007,81 @@ def executer_tests():
              jeton_sql("SELECT COUNT(*) FROM notification") == avant,
              "sinon le réglage ne servirait à rien")
 
+    # ---------------------------------------------------------------
     print("\n" + "═" * 70)
-    print("  19. AUTHENTIFICATION EXTERNE (OAuth)")
+    print("  19. PARCOURS : NIVEAU, DOMAINE ET ÉTABLISSEMENT")
+    print("═" * 70)
+
+    ref = etu.get("/api/profil/referentiels-profil").get_json() or {}
+    verifier("Les niveaux d'études sont servis par le serveur",
+             len(ref.get("niveaux_etudes") or []) >= 5)
+    verifier("Les domaines sont servis par le serveur",
+             len(ref.get("domaines") or []) >= 10)
+    verifier("Des établissements sont suggérés",
+             len(ref.get("etablissements") or []) >= 5)
+
+    # Le point de la demande : un metier manuel doit se choisir aussi
+    # simplement qu'une filiere universitaire, sans passer par « autre ».
+    domaines = ref.get("domaines") or []
+    verifier("La soudure figure parmi les domaines proposés",
+             any("Soudure" in d for d in domaines))
+    verifier("La mécanique figure parmi les domaines proposés",
+             any("Mécanique" in d for d in domaines))
+    niveaux = ref.get("niveaux_etudes") or []
+    verifier("Un titre professionnel figure parmi les niveaux",
+             any("CAP" in n for n in niveaux))
+    verifier("« Sans diplôme » est un choix possible",
+             any("Sans diplôme" in n for n in niveaux))
+
+    r = etu.put("/api/profil/moi", json={
+        "niveau_etudes": "CAP, CQP ou CQM (métier)",
+        "domaine": "Soudure et métallerie",
+        "etablissement": "Atelier de maître soudeur, Porto-Novo"})
+    verifier("Un parcours de métier s'enregistre", r.status_code == 200)
+    p = r.get_json() or {}
+    verifier("Le niveau est relu tel quel",
+             p.get("niveau_etudes") == "CAP, CQP ou CQM (métier)")
+    verifier("Le domaine est relu tel quel",
+             p.get("domaine") == "Soudure et métallerie")
+    verifier("L'établissement libre est conservé",
+             p.get("etablissement") == "Atelier de maître soudeur, Porto-Novo")
+
+    r = etu.put("/api/profil/moi", json={"niveau_etudes": "Bac+42"})
+    verifier("Un niveau inventé est refusé", r.status_code == 400)
+    r = etu.put("/api/profil/moi", json={"domaine": "Sorcellerie appliquée"})
+    verifier("Un domaine inventé est refusé", r.status_code == 400)
+
+    # Les listes s'ecrivaient sans accent a l'origine ; les comptes
+    # crees a ce moment la ont ces valeurs en base. Les refuser
+    # empecherait ces personnes d'enregistrer leur profil.
+    r = etu.put("/api/profil/moi", json={"situation": "Jeune diplome"})
+    verifier("Une ancienne valeur sans accent reste acceptée",
+             r.status_code == 200)
+    verifier("Elle est réécrite avec ses accents",
+             (r.get_json() or {}).get("situation") == "Jeune diplômé",
+             "la base ne doit garder qu'une orthographe par intitulé")
+
+    # Le champ etait recueilli puis jete : la requete ne le portait pas.
+    ref_pub = etu.get("/api/profil/referentiels").get_json() or {}
+    id_p = (ref_pub.get("pays") or [{}])[0].get("id_pays")
+    ids_s = [s["id_secteur"] for s in (ref_pub.get("secteurs") or [])[:2]]
+    r = etu.put("/api/profil/moi", json={"id_pays": id_p, "secteurs": ids_s})
+    verifier("Le pays choisi est bien enregistré",
+             (r.get_json() or {}).get("id_pays") == id_p)
+    verifier("Les secteurs choisis sont bien enregistrés",
+             len((r.get_json() or {}).get("secteurs") or []) == len(ids_s))
+
+    # Un export qui annonce « tout ce que la plateforme conserve » et en
+    # omet une partie vaut moins que pas d'export du tout.
+    exp = (etu.get("/api/profil/moi/donnees").get_json() or {}).get("profil", {})
+    verifier("L'export contient le parcours complet",
+             all(c in exp for c in
+                 ("niveau_etudes", "domaine", "etablissement",
+                  "situation", "objectif", "langues", "profil_pro")),
+             "clés présentes : %s" % sorted(exp)[:6])
+
+    print("\n" + "═" * 70)
+    print("  20. AUTHENTIFICATION EXTERNE (OAuth)")
     print("═" * 70)
     cfg = anon.get("/api/auth/config")
     verifier("Configuration OAuth exposée", cfg.status_code == 200)

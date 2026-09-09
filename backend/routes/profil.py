@@ -1,5 +1,7 @@
 """Lecture et mise à jour du profil utilisateur."""
 
+import unicodedata
+
 from flask import Blueprint, g, jsonify, request
 
 from models.db import recuperer_un, recuperer_tous, executer, curseur
@@ -12,12 +14,13 @@ bp_profil = Blueprint("profil", __name__, url_prefix="/api/profil")
 # situation reelle, pas un niveau administratif : « en reconversion »
 # eclaire une question mieux que « bac+3 ».
 SITUATIONS = [
-    "Au lycee",
+    "Au lycée",
     "En licence",
     "En master",
     "En doctorat",
-    "Jeune diplome",
-    "En activite",
+    "En apprentissage",
+    "Jeune diplômé",
+    "En activité",
     "En reconversion",
     "En recherche d'emploi",
 ]
@@ -25,14 +28,108 @@ SITUATIONS = [
 # Ce que la personne cherche, ou ce qu'un referent propose. C'est ce
 # champ qui permet d'apparier les deux cotes de la plateforme.
 OBJECTIFS = [
-    "Choisir ma filiere",
-    "Preparer mes etudes a l'etranger",
+    "Choisir ma filière",
+    "Préparer mes études à l'étranger",
+    "Apprendre un métier",
     "Trouver un stage",
-    "Decrocher mon premier emploi",
+    "Décrocher mon premier emploi",
     "Changer de voie",
-    "Gerer mon argent",
+    "Gérer mon argent",
     "Accompagner d'autres membres",
 ]
+
+# Diplome le plus eleve obtenu. La liste suit le systeme beninois et
+# place les titres professionnels au milieu du parcours, la ou ils sont
+# reellement : un CAP n'est pas une case « autre » en bas de liste.
+NIVEAUX_ETUDES = [
+    "Sans diplôme",
+    "CEP (primaire)",
+    "BEPC (collège)",
+    "CAP, CQP ou CQM (métier)",
+    "Baccalauréat",
+    "BTS, DUT ou DT (bac+2)",
+    "Licence (bac+3)",
+    "Master (bac+5)",
+    "Doctorat",
+]
+
+# Domaine d'etudes ou de metier. Les filieres universitaires et les
+# metiers manuels figurent dans la meme liste, sans hierarchie : la
+# soudure et le droit s'y choisissent de la meme facon.
+DOMAINES = [
+    "Informatique et numérique",
+    "Ingénierie et industrie",
+    "Bâtiment et travaux publics",
+    "Mécanique et automobile",
+    "Soudure et métallerie",
+    "Électricité et électronique",
+    "Froid et climatisation",
+    "Agriculture et agroalimentaire",
+    "Santé et soins",
+    "Commerce et vente",
+    "Gestion, comptabilité et finance",
+    "Droit et administration",
+    "Enseignement et éducation",
+    "Communication, arts et culture",
+    "Couture, mode et esthétique",
+    "Hôtellerie et restauration",
+    "Transport et logistique",
+    "Sciences humaines et sociales",
+    "Autre domaine",
+]
+
+# Suggestions, et non liste fermee : aucune liste ne contiendra jamais
+# tous les etablissements du pays, encore moins les ateliers ou se fait
+# l'apprentissage. Le champ reste libre, ces valeurs ne font que rendre
+# la saisie plus rapide pour les cas frequents.
+ETABLISSEMENTS_SUGGERES = [
+    "Université d'Abomey-Calavi (UAC)",
+    "Université de Parakou (UP)",
+    "UNSTIM (Abomey)",
+    "Université Nationale d'Agriculture (UNA)",
+    "IFRI (Informatique, UAC)",
+    "EPAC (École Polytechnique d'Abomey-Calavi)",
+    "ENEAM (Économie Appliquée et Management)",
+    "ENSET (Lokossa)",
+    "INSTI (Lokossa)",
+    "ESGIS Bénin",
+    "Institut CERCO",
+    "HECM (Commerce et Management)",
+    "IRGIB Africa",
+    "Lycée technique Coulibaly (Cotonou)",
+    "Centre de formation professionnelle",
+    "Atelier ou maître artisan",
+]
+
+LONGUEUR_ETABLISSEMENT = 120
+
+
+def _sans_accent(texte):
+    """Version comparable d'un libelle : sans accent, en minuscules."""
+    decompose = unicodedata.normalize("NFD", str(texte))
+    return "".join(c for c in decompose
+                   if unicodedata.category(c) != "Mn").strip().lower()
+
+
+def _canoniser(valeur, liste):
+    """Ramene une valeur a l'intitule exact de la liste, ou None.
+
+    La comparaison ignore les accents. Les premieres versions de ces
+    listes s'ecrivaient sans accent, et « Jeune diplome » est encore
+    stocke dans les comptes crees a ce moment la : le refuser
+    empecherait ces personnes d'enregistrer leur profil, pour un
+    changement dont elles ne sont pas responsables.
+    """
+    if valeur is None:
+        return None
+    brut = str(valeur).strip()
+    if not brut:
+        return ""
+    cible = _sans_accent(brut)
+    for officiel in liste:
+        if _sans_accent(officiel) == cible:
+            return officiel
+    return None
 
 
 @bp_profil.get("/referentiels-profil")
@@ -42,7 +139,13 @@ def referentiels_profil():
     Servies par le serveur plutot qu'ecrites dans la page : la liste
     validee et la liste affichee ne peuvent alors pas diverger.
     """
-    return jsonify({"situations": SITUATIONS, "objectifs": OBJECTIFS})
+    return jsonify({
+        "situations": SITUATIONS,
+        "objectifs": OBJECTIFS,
+        "niveaux_etudes": NIVEAUX_ETUDES,
+        "domaines": DOMAINES,
+        "etablissements": ETABLISSEMENTS_SUGGERES,
+    })
 
 
 @bp_profil.get("/referentiels")
@@ -91,16 +194,36 @@ def modifier_profil():
         "objectif": d.get("objectif"),
         "langues": d.get("langues"),
         "profil_pro": d.get("profil_pro"),
+        "niveau_etudes": d.get("niveau_etudes"),
+        "domaine": d.get("domaine"),
+        "etablissement": d.get("etablissement"),
     }
     champs = {k: v for k, v in champs.items() if v is not None}
 
     # Les valeurs a choix ferme sont verifiees cote serveur : un client
     # peut envoyer ce qu'il veut, et une valeur inventee remonterait
-    # telle quelle sur les profils publics.
-    if champs.get("situation") and champs["situation"] not in SITUATIONS:
-        return jsonify({"erreur": "Situation inconnue."}), 400
-    if champs.get("objectif") and champs["objectif"] not in OBJECTIFS:
-        return jsonify({"erreur": "Objectif inconnu."}), 400
+    # telle quelle sur les profils publics. La valeur retenue est celle
+    # de la liste, pas celle recue : la base ne garde ainsi qu'une seule
+    # orthographe par intitule.
+    A_CHOIX_FERME = (
+        ("situation", SITUATIONS, "Situation inconnue."),
+        ("objectif", OBJECTIFS, "Objectif inconnu."),
+        ("niveau_etudes", NIVEAUX_ETUDES, "Niveau d'études inconnu."),
+        ("domaine", DOMAINES, "Domaine inconnu."),
+    )
+    for cle, liste, message in A_CHOIX_FERME:
+        if cle not in champs:
+            continue
+        retenu = _canoniser(champs[cle], liste)
+        if retenu is None:
+            return jsonify({"erreur": message}), 400
+        champs[cle] = retenu
+
+    # L'etablissement reste libre : aucune liste ne contiendra l'atelier
+    # ou quelqu'un apprend son metier.
+    if "etablissement" in champs:
+        champs["etablissement"] = \
+            str(champs["etablissement"]).strip()[:LONGUEUR_ETABLISSEMENT]
     if champs.get("profil_pro"):
         lien = champs["profil_pro"].strip()
         if lien and not lien.startswith(("https://", "http://")):
@@ -159,6 +282,7 @@ def _charger_profil(id_user, public=False):
                   u.id_pays, p.libelle AS pays,
                   u.est_admin, u.doit_changer_mdp, u.cree_le,
                   u.situation, u.objectif, u.langues, u.profil_pro,
+                  u.niveau_etudes, u.domaine, u.etablissement,
                   u.email_verifie,
                   md.est_verifie, md.dispo, md.anciennete,
                   md.delai_reponse, md.note_moyenne, md.nb_reponses
@@ -376,9 +500,14 @@ def exporter_mes_donnees():
     """
     id_user = g.utilisateur["id_utilisateur"]
 
+    # Toutes les colonnes du profil, sans exception : un export qui
+    # annonce « tout ce que la plateforme conserve » et en omet une
+    # partie vaut moins que pas d'export du tout.
     profil = recuperer_un(
         """SELECT prenom, nom, email, role, bio, etudes, ville,
-                  photo_url, cree_le, derniere_co, email_verifie
+                  photo_url, cree_le, derniere_co, email_verifie,
+                  situation, objectif, langues, profil_pro,
+                  niveau_etudes, domaine, etablissement
              FROM utilisateur WHERE id_utilisateur = %s""", (id_user,))
 
     return jsonify({

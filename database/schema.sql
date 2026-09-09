@@ -57,6 +57,12 @@ CREATE TABLE utilisateur (
     objectif         VARCHAR(60)  NULL,
     langues          VARCHAR(120) NULL,
     profil_pro       VARCHAR(255) NULL,
+    -- Parcours en trois champs distincts. Un champ libre unique mêlait
+    -- le diplôme, la filière et l'école, et ne se recherchait pas.
+    niveau_etudes    VARCHAR(60)  NULL,
+    domaine          VARCHAR(60)  NULL,
+    -- Libre : aucune liste ne contient l'atelier où s'apprend un métier.
+    etablissement    VARCHAR(120) NULL,
     cree_le          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     maj_le           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
                                   ON UPDATE CURRENT_TIMESTAMP,

@@ -110,3 +110,27 @@ ALTER TABLE utilisateur ADD COLUMN situation  VARCHAR(40)  NULL;
 ALTER TABLE utilisateur ADD COLUMN objectif   VARCHAR(60)  NULL;
 ALTER TABLE utilisateur ADD COLUMN langues    VARCHAR(120) NULL;
 ALTER TABLE utilisateur ADD COLUMN profil_pro VARCHAR(255) NULL;
+
+
+-- ----- 7. Le parcours, en trois champs plutôt qu'un -----
+--
+-- « Niveau d'études / Profession » était un seul champ libre. On y
+-- lisait aussi bien « Master 2 » que « mécanicien depuis 8 ans » ou
+-- « bac G2 Cotonou » : trois informations différentes mêlées dans une
+-- phrase, impossibles à filtrer et impossibles à comparer.
+--
+--   niveau_etudes : le diplôme le plus élevé obtenu. La liste va de
+--                   « sans diplôme » au doctorat et place le CAP, le
+--                   CQP et le CQM au milieu du parcours, là où ils
+--                   sont. Un soudeur n'a pas à se ranger dans « autre ».
+--   domaine       : la filière ou le métier. Les filières universitaires
+--                   et les métiers manuels figurent dans la même liste,
+--                   sans hiérarchie.
+--   etablissement : université, école, centre de formation ou atelier.
+--                   Reste un champ libre, avec des suggestions : aucune
+--                   liste fermée ne contiendrait l'atelier où quelqu'un
+--                   apprend son métier auprès d'un maître artisan.
+
+ALTER TABLE utilisateur ADD COLUMN niveau_etudes VARCHAR(60)  NULL;
+ALTER TABLE utilisateur ADD COLUMN domaine       VARCHAR(60)  NULL;
+ALTER TABLE utilisateur ADD COLUMN etablissement VARCHAR(120) NULL;

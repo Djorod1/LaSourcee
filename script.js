@@ -4,13 +4,18 @@
 
 /* ---------- État global ---------- */
 const etat = {
+  // Aucune identite par defaut. Ce bloc decrivait une etudiante fictive,
+  // administratrice de surcroit : de quoi faire clignoter le nom de
+  // quelqu'un qui n'existe pas, et afficher un instant des commandes
+  // d'administration a un visiteur. appliquerUtilisateur() remplace
+  // l'objet entier des que le serveur a repondu.
   utilisateur: {
-    prenom: 'Marie', nom: 'Dupont', initiales: 'MD',
-    role: 'etudiant', pays: 'France', etudes: 'Master 2, Sciences Po Paris',
-    bio: "Étudiante curieuse, passionnée par la finance durable et l'entrepreneuriat à impact.",
-    secteurs: ['Finance', 'Entrepreneuriat', 'Technologie'],
-    estAdmin: true,
-    questionsPosees: 12, mentorsSuivis: 5,
+    prenom: '', nom: '', initiales: '',
+    role: 'etudiant', pays: '', etudes: '',
+    bio: '',
+    secteurs: [],
+    estAdmin: false,
+    questionsPosees: 0, mentorsSuivis: 0,
     photo: null // base64 dataURL
   },
   tri: 'recent',
@@ -257,6 +262,9 @@ function appliquerUtilisateur(u) {
     objectif: u.objectif || '',
     langues: u.langues || '',
     profil_pro: u.profil_pro || '',
+    niveau_etudes: u.niveau_etudes || '',
+    domaine: u.domaine || '',
+    etablissement: u.etablissement || '',
   };
   majRappelMotDePasse();
   majRappelConfirmation();
@@ -282,6 +290,7 @@ function commencerOnboarding() {
   majEtapeOnboarding();
   afficherVue('vue-onboarding');
   remplirSelectPays();
+  remplirListesParcours();
 }
 async function naviguerEtape(delta) {
   // Validation des champs OBLIGATOIRES avant d'avancer
@@ -298,13 +307,28 @@ async function naviguerEtape(delta) {
   majEtapeOnboarding();
 }
 
+/* Informations saisies a l'etape 1, lues par identifiant.
+
+   Les selecteurs de position (« le premier select de l'etape ») se
+   trompaient de champ des qu'on en ajoutait un, sans rien signaler. */
+function infosEtape1() {
+  const val = id => (document.getElementById(id)?.value || '').trim();
+  return {
+    pays: val('select-pays'),
+    niveau_etudes: val('ob-niveau'),
+    domaine: val('ob-domaine'),
+    etablissement: val('ob-etablissement'),
+    bio: val('ob-bio'),
+  };
+}
+
 /* Vérifie que les informations obligatoires d'une étape sont remplies. */
 function validerEtapeOnboarding(etape) {
   if (etape === 1) {
-    const pays = document.querySelector('#etape-1 select')?.value;
-    const etudes = (document.querySelector('#etape-1 input')?.value || '').trim();
-    if (!pays) { toast('Le pays est obligatoire.', 'erreur'); return false; }
-    if (!etudes) { toast('Le niveau d\'études / la profession est obligatoire.', 'erreur'); return false; }
+    const d = infosEtape1();
+    if (!d.pays) { toast('Le pays est obligatoire.', 'erreur'); return false; }
+    if (!d.niveau_etudes) { toast('Indiquez votre diplôme le plus élevé.', 'erreur'); return false; }
+    if (!d.domaine) { toast('Indiquez votre domaine ou votre métier.', 'erreur'); return false; }
   }
   if (etape === 2) {
     const n = document.querySelectorAll('#etape-2 .chip-select.actif').length;
@@ -322,11 +346,9 @@ async function finaliserInscription() {
   const mdp = document.getElementById('mdp-ins')?.value || '';
 
   // Données collectées pendant l'onboarding
-  const secteurs = [...document.querySelectorAll('#etape-2 .chip-select.actif')]
+  const secteursChoisis = [...document.querySelectorAll('#etape-2 .chip-select.actif')]
     .map(c => c.textContent.trim().replace(/\s*×$/, '').replace(/^\+\s*Autre$/, '')).filter(Boolean);
-  const pays = document.querySelector('#etape-1 select')?.value || '';
-  const etudes = (document.querySelector('#etape-1 input')?.value || '').trim();
-  const bio = (document.querySelector('#etape-1 textarea')?.value || '').trim();
+  const d = infosEtape1();
 
   try {
     const photoOnboarding = etat.utilisateur && etat.utilisateur.photo;
@@ -335,8 +357,23 @@ async function finaliserInscription() {
       role: etat.roleChoisi || 'etudiant',
     });
     MODE.utilisateur = await API.get('/profil/moi');
-    if (pays || etudes || bio) {
-      await API.put('/profil/moi', { bio, etudes }).catch(() => {});
+
+    // Le pays et les secteurs etaient recueillis puis jetes : la
+    // requete ne les portait pas. On demandait donc une information
+    // pour la perdre aussitot, et le profil s'ouvrait vide juste apres
+    // l'avoir rempli.
+    const id_pays = d.pays ? await _idPaysDepuisLibelle(d.pays) : null;
+    const secteurs = await _idsSecteursDepuisLibelles(secteursChoisis);
+    const aEnvoyer = {
+      bio: d.bio,
+      niveau_etudes: d.niveau_etudes,
+      domaine: d.domaine,
+      etablissement: d.etablissement,
+    };
+    if (id_pays) aEnvoyer.id_pays = id_pays;
+    if (secteurs.length) aEnvoyer.secteurs = secteurs;
+    if (Object.values(aEnvoyer).some(Boolean)) {
+      await API.put('/profil/moi', aEnvoyer).catch(() => {});
       MODE.utilisateur = await API.get('/profil/moi');
     }
     appliquerUtilisateur(MODE.utilisateur);
@@ -368,6 +405,15 @@ function majEtapeOnboarding() {
   document.getElementById('ob-label').textContent = labels[e-1];
   document.getElementById('ob-prec').disabled = (e === 1);
   document.getElementById('ob-suiv').textContent = (e === 4) ? "Accéder à la plateforme →" : 'Suivant →';
+  // L'avatar de l'etape photo portait des initiales ecrites en dur,
+  // celles d'une personne fictive. Il montre desormais celles que la
+  // personne vient de saisir, tant qu'aucune photo n'est choisie.
+  const avOb = document.getElementById('avatar-onboarding');
+  if (avOb && !etat.utilisateur.photo) {
+    const p = (document.getElementById('prenom-ins')?.value || '').trim();
+    const n = (document.getElementById('nom-ins')?.value || '').trim();
+    avOb.textContent = ((p[0] || '') + (n[0] || '')).toUpperCase();
+  }
   // Brancher le bouton photo de l'étape 3
   const etape3 = document.getElementById('etape-3');
   if (etape3 && !etape3.dataset.cable) {
@@ -448,6 +494,37 @@ function remplirSelectPays() {
   sel.dataset.remp = '1';
   sel.innerHTML = '<option value="">Sélectionnez votre pays</option>' +
     LISTE_PAYS.map(p => `<option value="${p}">${p}</option>`).join('');
+}
+
+/* Remplit les listes du parcours avec les valeurs du serveur.
+
+   Elles viennent du serveur et ne sont pas ecrites dans la page : la
+   liste proposee et la liste acceptee a l'enregistrement ne peuvent
+   alors pas diverger, ce qui donnerait un choix refuse apres coup. */
+async function remplirListesParcours() {
+  if (!etat.referentielsProfil) {
+    try {
+      etat.referentielsProfil = await API.get('/profil/referentiels-profil');
+    } catch (_) { return; }
+  }
+  const r = etat.referentielsProfil || {};
+  const options = (valeurs, choisi) =>
+    '<option value="">Choisissez…</option>' + (valeurs || []).map(v =>
+      `<option value="${echapper(v)}"${v === choisi ? ' selected' : ''}>${echapper(v)}</option>`
+    ).join('');
+
+  const niveau = document.getElementById('ob-niveau');
+  if (niveau) niveau.innerHTML = options(r.niveaux_etudes, niveau.value);
+  const domaine = document.getElementById('ob-domaine');
+  if (domaine) domaine.innerHTML = options(r.domaines, domaine.value);
+
+  // Suggestions, pas contrainte : le champ reste libre pour qui apprend
+  // son metier dans un atelier qu'aucune liste ne contiendra.
+  const liste = document.getElementById('liste-etablissements');
+  if (liste) {
+    liste.innerHTML = (r.etablissements || [])
+      .map(e => `<option value="${echapper(e)}"></option>`).join('');
+  }
 }
 async function seDeconnecter() {
   document.getElementById('menuProfil').classList.remove('ouvert');
@@ -1591,6 +1668,32 @@ function panneauCompte() {
       </div>
     </div>
     <div class="champs-cote">
+      <div class="champ"><label for="pc-niveau">Diplôme le plus élevé obtenu</label>
+        <select id="pc-niveau">
+          <option value="">Préférer ne pas dire</option>
+          ${(etat.referentielsProfil?.niveaux_etudes || []).map(n =>
+            `<option value="${echapper(n)}"${n === u.niveau_etudes ? ' selected' : ''}>${echapper(n)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="champ"><label for="pc-domaine">Domaine ou métier</label>
+        <select id="pc-domaine">
+          <option value="">Préférer ne pas dire</option>
+          ${(etat.referentielsProfil?.domaines || []).map(o =>
+            `<option value="${echapper(o)}"${o === u.domaine ? ' selected' : ''}>${echapper(o)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="champ"><label for="pc-etablissement">Établissement ou lieu de formation</label>
+      <input id="pc-etablissement" list="liste-etablissements-pc" maxlength="120"
+             value="${echapper(u.etablissement || '')}"
+             placeholder="Université, école, centre de formation ou atelier" />
+      <datalist id="liste-etablissements-pc">
+        ${(etat.referentielsProfil?.etablissements || []).map(e =>
+          `<option value="${echapper(e)}"></option>`).join('')}
+      </datalist>
+      <p class="aide-champ">Saisissez librement si votre établissement n'est pas proposé.</p>
+    </div>
+    <div class="champs-cote">
       <div class="champ"><label for="pc-langues">Langues parlées</label>
         <input id="pc-langues" value="${echapper(u.langues || '')}" placeholder="Ex : français, anglais, fon" />
       </div>
@@ -1660,6 +1763,9 @@ async function sauverCompte() {
   const objectif = document.getElementById('pc-objectif')?.value || '';
   const langues = (document.getElementById('pc-langues')?.value || '').trim();
   const profilPro = (document.getElementById('pc-profilpro')?.value || '').trim();
+  const niveauEtudes = document.getElementById('pc-niveau')?.value || '';
+  const domaine = document.getElementById('pc-domaine')?.value || '';
+  const etablissement = (document.getElementById('pc-etablissement')?.value || '').trim();
   const secteurs = [...document.querySelectorAll('#pc-chips .chip-select.actif')]
     .map(c => c.textContent.trim().replace(/\s*×$/, '').replace(/^\+\s*Autre$/, ''))
     .filter(Boolean);
@@ -1675,6 +1781,9 @@ async function sauverCompte() {
   etat.utilisateur.objectif = objectif;
   etat.utilisateur.langues = langues;
   etat.utilisateur.profil_pro = profilPro;
+  etat.utilisateur.niveau_etudes = niveauEtudes;
+  etat.utilisateur.domaine = domaine;
+  etat.utilisateur.etablissement = etablissement;
   // Rafraîchir la navigation immédiatement (retour visuel)
   const navAv = document.getElementById('avatar-nav');
   if (navAv && !etat.utilisateur.photo) navAv.textContent = etat.utilisateur.initiales;
@@ -1691,6 +1800,13 @@ async function sauverCompte() {
       // efface un champ. undefined le laisserait inchangé.
       situation, objectif, langues,
       profil_pro: profilPro,
+      niveau_etudes: niveauEtudes,
+      domaine,
+      etablissement,
+      // Les secteurs étaient relevés puis oubliés : la requête ne les
+      // portait pas, et les cases cochées revenaient à leur état
+      // précédent au rechargement de la page.
+      secteurs: await _idsSecteursDepuisLibelles(secteurs),
     });
     SESSION.utilisateur = await API.get('/profil/moi');
     toast('Modifications enregistrées.');
@@ -1711,6 +1827,27 @@ async function _idPaysDepuisLibelle(libelle) {
       .find(x => x.libelle.toLowerCase() === libelle.toLowerCase());
     return p ? p.id_pays : null;
   } catch (_) { return null; }
+}
+
+/* Convertit des libellés de secteurs en identifiants du référentiel.
+
+   Le serveur attend des identifiants ; l'interface manipule des
+   libellés. Les secteurs saisis librement n'existent pas au
+   référentiel et sont ignorés ici plutôt que de faire échouer tout
+   l'enregistrement. */
+async function _idsSecteursDepuisLibelles(libelles) {
+  if (!libelles || !libelles.length) return [];
+  try {
+    if (!_idsSecteursDepuisLibelles._cache) {
+      const ref = await API.get('/profil/referentiels');
+      _idsSecteursDepuisLibelles._cache = ref.secteurs || [];
+    }
+    const connus = _idsSecteursDepuisLibelles._cache;
+    return libelles
+      .map(l => connus.find(s => s.libelle.toLowerCase() === l.toLowerCase()))
+      .filter(Boolean)
+      .map(s => s.id_secteur);
+  } catch (_) { return []; }
 }
 
 /* Les préférences venaient d'une liste écrite en dur : chaque
@@ -3239,7 +3376,13 @@ async function chargerReferentielsProfil() {
   try {
     etat.referentielsProfil = await API.get('/profil/referentiels-profil');
   } catch {
-    etat.referentielsProfil = { situations: [], objectifs: [] };
+    // Toutes les clés, y compris vides : le rendu du panneau les
+    // parcourt, et une clé absente ferait tomber la page entière au
+    // lieu de n'afficher qu'une liste vide.
+    etat.referentielsProfil = {
+      situations: [], objectifs: [],
+      niveaux_etudes: [], domaines: [], etablissements: [],
+    };
   }
   return etat.referentielsProfil;
 }
@@ -3250,7 +3393,11 @@ async function chargerReferentielsProfil() {
 function ligneIdentiteProfil(u) {
   const morceaux = [];
   if (u.situation) morceaux.push(echapper(u.situation));
-  if (u.etudes) morceaux.push(echapper(u.etudes));
+  // Le parcours structuré s'il existe, sinon l'ancien champ libre :
+  // les comptes créés avant la séparation en trois champs ne doivent
+  // pas voir leur parcours disparaître de leur profil.
+  if (u.domaine) morceaux.push(echapper(u.domaine));
+  else if (u.etudes) morceaux.push(echapper(u.etudes));
   if (u.pays) morceaux.push(echapper(u.pays));
   if (!morceaux.length) return '';
   return `<div class="profil-identite">${morceaux.join(' · ')}</div>`;
@@ -3260,6 +3407,12 @@ function detailsProfil(u) {
   const lignes = [];
   if (u.objectif) {
     lignes.push(['Recherche', echapper(u.objectif)]);
+  }
+  if (u.niveau_etudes) {
+    lignes.push(['Niveau d\'études', echapper(u.niveau_etudes)]);
+  }
+  if (u.etablissement) {
+    lignes.push(['Formation', echapper(u.etablissement)]);
   }
   if (u.langues) {
     lignes.push(['Langues', echapper(u.langues)]);

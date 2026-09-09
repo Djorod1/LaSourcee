@@ -191,6 +191,12 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
 .boite-auth .sous-titre { text-align: center; color: var(--texte-doux); margin-bottom: 24px; }
 .champ { margin-bottom: 14px; }
 .champs-cote { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+/* Precision sous un champ : elle dit ce que le libelle seul ne dit pas,
+   par exemple qu'une saisie libre reste acceptee malgre les suggestions. */
+.aide-champ {
+  font-size: 12px; color: var(--texte-doux);
+  margin-top: 6px; line-height: 1.45;
+}
 .sep-ou {
   display: flex; align-items: center; gap: 12px; margin: 20px 0;
   color: var(--texte-doux); font-size: 13px;

@@ -327,6 +327,9 @@ COLONNES_ATTENDUES = [
     ("utilisateur", "objectif", "TEXT"),
     ("utilisateur", "langues", "TEXT"),
     ("utilisateur", "profil_pro", "TEXT"),
+    ("utilisateur", "niveau_etudes", "TEXT"),
+    ("utilisateur", "domaine", "TEXT"),
+    ("utilisateur", "etablissement", "TEXT"),
     ("utilisateur", "doit_changer_mdp", "INTEGER NOT NULL DEFAULT 0"),
     ("utilisateur", "email_verifie", "INTEGER NOT NULL DEFAULT 0"),
 ]
