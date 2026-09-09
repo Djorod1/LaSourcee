@@ -52,6 +52,7 @@ CREATE TABLE utilisateur (
     email_verifie    BOOLEAN      NOT NULL DEFAULT FALSE,
     -- Mot de passe temporaire : impose le changement à la 1re connexion
     doit_changer_mdp BOOLEAN      NOT NULL DEFAULT FALSE,
+    preferences_notif TEXT        NULL,
     cree_le          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     maj_le           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
                                   ON UPDATE CURRENT_TIMESTAMP,

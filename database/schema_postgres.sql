@@ -46,6 +46,8 @@ CREATE TABLE utilisateur (
     email_verifie   SMALLINT NOT NULL DEFAULT 0,
     -- Mot de passe temporaire : impose le changement à la 1re connexion
     doit_changer_mdp SMALLINT NOT NULL DEFAULT 0,
+    -- Préférences de notification, en JSON. NULL = valeurs par défaut.
+    preferences_notif TEXT,
     cree_le         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     maj_le          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     derniere_co     TIMESTAMP,

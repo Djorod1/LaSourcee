@@ -747,7 +747,46 @@ def executer_tests():
              "@" not in brut, brut[:120])
 
     print("\n" + "═" * 70)
-    print("  15. AUTHENTIFICATION EXTERNE (OAuth)")
+    print("  15. PRÉFÉRENCES DE NOTIFICATION")
+    print("═" * 70)
+    r = etu.get("/api/profil/preferences")
+    verifier("Préférences accessibles", r.status_code == 200)
+    prefs = r.get_json() or {}
+    verifier("Les deux canaux sont présents",
+             "app" in prefs and "email" in prefs, str(prefs)[:120])
+    verifier("Valeurs par défaut appliquées sans enregistrement",
+             prefs.get("app", {}).get("reponse_question") is True
+             and prefs.get("app", {}).get("infolettre") is False,
+             str(prefs.get("app")))
+
+    prefs["app"]["infolettre"] = True
+    prefs["email"]["reponse_question"] = False
+    r = etu.put("/api/profil/preferences", json=prefs)
+    verifier("Enregistrement accepté", r.status_code == 200)
+
+    relu = etu.get("/api/profil/preferences").get_json() or {}
+    verifier("Le choix survit à une nouvelle lecture",
+             relu["app"]["infolettre"] is True
+             and relu["email"]["reponse_question"] is False,
+             str(relu))
+    verifier("Les autres préférences sont conservées",
+             relu["app"]["reponse_question"] is True, str(relu["app"]))
+
+    # Une clé inconnue ne doit pas se retrouver en base : sans liste
+    # fermée, n'importe quel client ferait grossir la colonne.
+    etu.put("/api/profil/preferences",
+            json={"app": {"cle_inventee": True, "infolettre": False},
+                  "email": {}})
+    relu = etu.get("/api/profil/preferences").get_json() or {}
+    verifier("Une clé inconnue est ignorée", "cle_inventee" not in relu["app"],
+             str(relu["app"]))
+    verifier("Les clés connues restent traitées",
+             relu["app"]["infolettre"] is False, str(relu["app"]))
+    verifier("Préférences refusées sans session (401)",
+             app.test_client().get("/api/profil/preferences").status_code == 401)
+
+    print("\n" + "═" * 70)
+    print("  16. AUTHENTIFICATION EXTERNE (OAuth)")
     print("═" * 70)
     cfg = anon.get("/api/auth/config")
     verifier("Configuration OAuth exposée", cfg.status_code == 200)

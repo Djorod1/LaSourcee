@@ -53,6 +53,70 @@
     }
   }
   </script>
+
+  <!-- Le champ de recherche interne : Google peut l'afficher
+       directement sous le nom du site dans ses résultats. -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "url": "https://lasourcee.org/",
+    "potentialAction": {
+      "@type": "SearchAction",
+      "target": {
+        "@type": "EntryPoint",
+        "urlTemplate": "https://lasourcee.org/?recherche={search_term_string}"
+      },
+      "query-input": "required name=search_term_string"
+    }
+  }
+  </script>
+
+  <!-- Questions fréquentes : elles peuvent apparaître dépliées dans les
+       résultats de recherche, ce qui occupe plus de place et répond
+       avant même le clic. Les réponses décrivent le fonctionnement réel
+       du site : un contenu structuré qui ne correspond pas à la page
+       est sanctionné par les moteurs. -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "LaSourcee est-elle gratuite ?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Oui. Créer un compte, poser des questions et recevoir des réponses de référents est gratuit."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Qui répond aux questions ?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Des référents : des professionnels et des étudiants avancés dont la candidature a été examinée avant d'obtenir le badge de référent vérifié."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Sur quels sujets peut-on poser une question ?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Orientation et choix de filière, construction de carrière et premier emploi, et éducation financière."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Comment devenir référent ?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Depuis votre espace, déposez une candidature avec votre profession, votre expérience et vos domaines d'expertise. Un administrateur l'examine avant validation."
+        }
+      }
+    ]
+  }
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&display=swap" rel="stylesheet" />
@@ -139,6 +203,10 @@
           vos questions et bénéficiez de retours d'expérience pour mieux avancer.
         </p>
         <div class="cta">
+          <button class="btn btn-primaire" onclick="afficherVue('vue-inscription')">Créer mon compte</button>
+          <button class="btn btn-secondaire" onclick="afficherVue('vue-connexion')">J'ai déjà un compte</button>
+        </div>
+        <div class="hero-actions-mobile">
           <button class="btn btn-primaire" onclick="afficherVue('vue-inscription')">Créer mon compte</button>
           <button class="btn btn-secondaire" onclick="afficherVue('vue-connexion')">J'ai déjà un compte</button>
         </div>

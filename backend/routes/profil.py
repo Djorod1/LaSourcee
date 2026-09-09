@@ -159,3 +159,86 @@ def statistiques_publiques():
         "questions": compter("SELECT COUNT(*) AS n FROM question"),
         "reponses": compter("SELECT COUNT(*) AS n FROM reponse"),
     })
+
+
+# ============================================================
+# PRÉFÉRENCES DE NOTIFICATION
+# ============================================================
+
+# Clés reconnues et valeur par défaut de chacune. Une liste fermée est
+# indispensable : sans elle, n'importe quel client pourrait faire
+# grossir indéfiniment la colonne en y écrivant des clés arbitraires.
+PREFERENCES_CONNUES = {
+    "reponse_question": True,
+    "reactions": True,
+    "questions_secteur": False,
+    "reponses_suivis": True,
+    "infolettre": False,
+}
+CANAUX = ("app", "email")
+
+
+def _preferences_par_defaut():
+    return {canal: dict(PREFERENCES_CONNUES) for canal in CANAUX}
+
+
+def _lire_preferences(id_user):
+    """Préférences enregistrées, complétées par les valeurs par défaut.
+
+    Un compte créé avant l'ajout de la colonne, ou dont le contenu
+    serait illisible, retombe sur les valeurs par défaut plutôt que de
+    faire échouer l'affichage.
+    """
+    import json
+
+    prefs = _preferences_par_defaut()
+    ligne = recuperer_un(
+        "SELECT preferences_notif FROM utilisateur WHERE id_utilisateur = %s",
+        (id_user,),
+    )
+    brut = (ligne or {}).get("preferences_notif")
+    if not brut:
+        return prefs
+    try:
+        enregistre = json.loads(brut)
+    except (ValueError, TypeError):
+        return prefs
+
+    for canal in CANAUX:
+        valeurs = enregistre.get(canal) or {}
+        for cle in PREFERENCES_CONNUES:
+            if cle in valeurs:
+                prefs[canal][cle] = bool(valeurs[cle])
+    return prefs
+
+
+@bp_profil.get("/preferences")
+@connexion_requise
+def lire_preferences():
+    return jsonify(_lire_preferences(g.utilisateur["id_utilisateur"]))
+
+
+@bp_profil.put("/preferences")
+@connexion_requise
+def enregistrer_preferences():
+    """Enregistre les préférences de notification.
+
+    Seules les clés connues sont retenues : le contenu écrit en base est
+    donc borné, quoi qu'envoie le client.
+    """
+    import json
+
+    recu = request.get_json(silent=True) or {}
+    prefs = _preferences_par_defaut()
+    for canal in CANAUX:
+        valeurs = recu.get(canal) or {}
+        for cle in PREFERENCES_CONNUES:
+            if cle in valeurs:
+                prefs[canal][cle] = bool(valeurs[cle])
+
+    executer(
+        "UPDATE utilisateur SET preferences_notif = %s WHERE id_utilisateur = %s",
+        (json.dumps(prefs), g.utilisateur["id_utilisateur"]),
+        commit=True,
+    )
+    return jsonify(prefs)

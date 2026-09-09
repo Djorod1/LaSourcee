@@ -1066,7 +1066,10 @@ function ongletProfil(elem, t) {
   elem.classList.add('actif');
   const c = document.getElementById('contenu-profil');
   if (t === 'questions') {
-    c.innerHTML = questions.slice(0,3).map(q => carteQuestionHTML(q)).join('');
+    // La complétion précède les publications : c'est ce qui manque au
+    // profil qui décide de l'accueil réservé à ce qu'on y publie.
+    c.innerHTML = carteCompletionProfil()
+      + questions.slice(0,3).map(q => carteQuestionHTML(q)).join('');
   } else if (t === 'sauvees') {
     const liste = questions.filter(q => etat.sauvegardees.has(q.id));
     c.innerHTML = liste.length
@@ -1521,7 +1524,7 @@ function changerPanParam(elem, p) {
   elem.classList.add('actif');
   const c = document.getElementById('contenu-param');
   if (p === 'compte') c.innerHTML = panneauCompte();
-  if (p === 'notifs') c.innerHTML = panneauNotifsParam();
+  if (p === 'notifs') { c.innerHTML = panneauNotifsParam(); chargerPreferences(); }
   if (p === 'securite') { c.innerHTML = panneauSecurite(); chargerSessions(); }
   if (p === 'confid') c.innerHTML = panneauConfid();
 }
@@ -1645,20 +1648,89 @@ async function _idPaysDepuisLibelle(libelle) {
   } catch (_) { return null; }
 }
 
+/* Les préférences venaient d'une liste écrite en dur : chaque
+   interrupteur confirmait l'enregistrement sans rien conserver, et tout
+   revenait à l'état initial au rechargement. Elles sont désormais lues
+   et écrites sur le serveur. */
+const PREFERENCES_NOTIF = [
+  ['reponse_question', 'Nouvelle réponse à mes questions'],
+  ['reactions',        'Réactions sur mes publications'],
+  ['questions_secteur','Nouvelles questions dans mes secteurs'],
+  ['reponses_suivis',  'Réponses des référents que je suis'],
+  ['infolettre',       'Infolettre hebdomadaire'],
+];
+
+/* Le courriel ne reprend que les trois premières : recevoir un message
+   pour chaque réaction saturerait la boîte de n'importe qui. */
+const PREFERENCES_EMAIL = PREFERENCES_NOTIF.slice(0, 3);
+
 function panneauNotifsParam() {
-  const lignes = [
-    ['Nouvelle réponse à mes questions', true],
-    ['Réactions sur mes publications', true],
-    ['Nouvelles questions dans mes secteurs', false],
-    ['Réponses des référents que je suis', true],
-    ['Newsletter hebdomadaire', false],
-  ];
   return `<div class="section-param"><h2>Notifications</h2>
-    <h3 style="font-family:'DM Sans'; font-size:14px; margin:14px 0 4px; color:var(--texte-doux);">Dans l'application</h3>
-    ${lignes.map(([l, on]) => `<div class="ligne-toggle"><div><strong>${l}</strong></div><div class="toggle ${on?'on':''}" onclick="this.classList.toggle('on'); toast('Préférence mise à jour.')"></div></div>`).join('')}
-    <h3 style="font-family:'DM Sans'; font-size:14px; margin:20px 0 4px; color:var(--texte-doux);">Par e-mail</h3>
-    ${lignes.slice(0,3).map(([l, on]) => `<div class="ligne-toggle"><div><strong>${l}</strong></div><div class="toggle ${on?'on':''}" onclick="this.classList.toggle('on'); toast('Préférence mise à jour.')"></div></div>`).join('')}
+    <p class="desc" style="margin-bottom:14px;">
+      Choisissez ce dont vous voulez être averti. Les modifications sont
+      enregistrées immédiatement.</p>
+    <div id="zone-preferences"><p class="desc">Chargement…</p></div>
   </div>`;
+}
+
+function _ligneToggle(canal, cle, libelle, actif) {
+  return `<div class="ligne-toggle">
+    <div><strong>${echapper(libelle)}</strong></div>
+    <div class="toggle ${actif ? 'on' : ''}" role="switch"
+         tabindex="0" aria-checked="${actif ? 'true' : 'false'}"
+         aria-label="${echapper(libelle)}"
+         data-canal="${canal}" data-cle="${cle}"
+         onclick="basculerPreference(this)"
+         onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();basculerPreference(this);}"></div>
+  </div>`;
+}
+
+async function chargerPreferences() {
+  const zone = document.getElementById('zone-preferences');
+  if (!zone) return;
+  let prefs;
+  try {
+    prefs = await API.get('/profil/preferences');
+  } catch (err) {
+    zone.innerHTML = `<p class="desc">Préférences indisponibles : ${echapper(err.message || '')}</p>`;
+    return;
+  }
+  etat.preferences = prefs;
+
+  zone.innerHTML = `
+    <h3 class="titre-param">Dans l'application</h3>
+    ${PREFERENCES_NOTIF.map(([cle, lib]) =>
+        _ligneToggle('app', cle, lib, prefs.app && prefs.app[cle])).join('')}
+    <h3 class="titre-param" style="margin-top:22px;">Par e-mail</h3>
+    ${PREFERENCES_EMAIL.map(([cle, lib]) =>
+        _ligneToggle('email', cle, lib, prefs.email && prefs.email[cle])).join('')}
+    <p class="note-param" id="etat-preferences"></p>`;
+}
+
+async function basculerPreference(element) {
+  const canal = element.dataset.canal;
+  const cle = element.dataset.cle;
+  if (!etat.preferences) return;
+
+  const nouvelEtat = !element.classList.contains('on');
+  element.classList.toggle('on', nouvelEtat);
+  element.setAttribute('aria-checked', nouvelEtat ? 'true' : 'false');
+  etat.preferences[canal][cle] = nouvelEtat;
+
+  const info = document.getElementById('etat-preferences');
+  if (info) info.textContent = 'Enregistrement…';
+  try {
+    etat.preferences = await API.put('/profil/preferences', etat.preferences);
+    if (info) info.textContent = 'Préférences enregistrées.';
+  } catch (err) {
+    // L'interrupteur revient à sa position : afficher un état qui n'a
+    // pas été enregistré tromperait la personne.
+    element.classList.toggle('on', !nouvelEtat);
+    element.setAttribute('aria-checked', !nouvelEtat ? 'true' : 'false');
+    etat.preferences[canal][cle] = !nouvelEtat;
+    if (info) info.textContent = '';
+    toast(err.message || "Impossible d'enregistrer.", 'erreur');
+  }
 }
 
 /* Rappel affiché tant qu'un compte tourne avec le mot de passe temporaire
@@ -1926,8 +1998,26 @@ function _rendreDashboardAdmin(d) {
 }
 async function adminUsers() {
   const liste = await API.get('/admin/utilisateurs?limite=200');
-  return `<h2 style="margin-bottom:18px;">Gestion des utilisateurs (${liste.length})</h2>
-    <table class="tableau">
+  etat.adminUtilisateurs = liste;
+  return `<h2 style="margin-bottom:6px;">Gestion des comptes</h2>
+    <p class="desc" style="margin-bottom:14px;">${liste.length} compte(s) enregistré(s).</p>
+    <div class="barre-filtre">
+      <input type="search" id="filtre-users" placeholder="Rechercher un nom, une adresse, un rôle…"
+             oninput="filtrerUtilisateurs(this.value)" aria-label="Rechercher un compte" />
+      <select id="filtre-role" onchange="filtrerUtilisateurs()" aria-label="Filtrer par rôle">
+        <option value="">Tous les rôles</option>
+        ${Object.entries(LIBELLES_ROLES).map(([v, l]) =>
+          `<option value="${v}">${echapper(l)}</option>`).join('')}
+      </select>
+    </div>
+    <div id="tableau-users">${tableauUtilisateurs(liste)}</div>`;
+}
+
+function tableauUtilisateurs(liste) {
+  if (!liste.length) {
+    return `<div class="carte"><p class="desc">Aucun compte ne correspond.</p></div>`;
+  }
+  return `<table class="tableau">
       <thead><tr><th>Nom</th><th>E-mail</th><th>Rôle</th><th>Statut</th><th>Actions</th></tr></thead>
       <tbody>${liste.map(u => `<tr>
         <td><strong>${echapper(u.prenom)} ${echapper(u.nom)}</strong></td>
@@ -1938,18 +2028,39 @@ async function adminUsers() {
           ${u.est_actif
             ? `<button class="btn btn-secondaire btn-petit" onclick="adminAction('suspendre',${u.id_utilisateur})">Suspendre</button>`
             : `<button class="btn btn-secondaire btn-petit" onclick="adminAction('reactiver',${u.id_utilisateur})">Réactiver</button>`}
-          <button class="btn btn-fantome btn-petit" onclick="adminChangerRole(${u.id_utilisateur},'${u.role}')">Rôle</button>
+          <button class="btn btn-fantome btn-petit" onclick="adminOuvrirRole(${u.id_utilisateur})">Rôle</button>
           <button class="btn btn-danger btn-petit" onclick="adminAction('supprimer',${u.id_utilisateur})">Supprimer</button>
         </td></tr>`).join('')}</tbody>
     </table>`;
 }
 
+/* Filtrage dans le navigateur : la liste tient en mémoire, et une
+   requête au serveur à chaque frappe n'apporterait rien. */
+function filtrerUtilisateurs(terme) {
+  const champ = document.getElementById('filtre-users');
+  const role = document.getElementById('filtre-role')?.value || '';
+  const q = (terme !== undefined ? terme : (champ?.value || '')).trim().toLowerCase();
+  const zone = document.getElementById('tableau-users');
+  if (!zone) return;
+
+  const filtree = (etat.adminUtilisateurs || []).filter(u => {
+    if (role && u.role !== role) return false;
+    if (!q) return true;
+    return [u.prenom, u.nom, u.email, libelleRole(u.role)]
+      .filter(Boolean).join(' ').toLowerCase().includes(q);
+  });
+  zone.innerHTML = tableauUtilisateurs(filtree);
+}
+
 /* Action générique sur un utilisateur (suspendre / réactiver / supprimer). */
 async function adminAction(action, idUser) {
   const verbes = {
-    suspendre: { url: 'POST', chemin: `/admin/utilisateurs/${idUser}/suspendre`, conf: 'Suspendre cet utilisateur ?' },
-    reactiver: { url: 'POST', chemin: `/admin/utilisateurs/${idUser}/reactiver`, conf: 'Réactiver cet utilisateur ?' },
-    supprimer: { url: 'DELETE', chemin: `/admin/utilisateurs/${idUser}`, conf: 'Supprimer définitivement ?' },
+    suspendre: { url: 'POST', chemin: `/admin/utilisateurs/${idUser}/suspendre`,
+                 conf: 'Suspendre ce compte ? La personne ne pourra plus se connecter.' },
+    reactiver: { url: 'POST', chemin: `/admin/utilisateurs/${idUser}/reactiver`,
+                 conf: 'Réactiver ce compte ?' },
+    supprimer: { url: 'DELETE', chemin: `/admin/utilisateurs/${idUser}`,
+                 conf: 'Supprimer définitivement ce compte, ses questions et ses réponses ? Cette action est irréversible.' },
   };
   const v = verbes[action]; if (!v) return;
   if (!confirm(v.conf)) return;
@@ -1960,20 +2071,59 @@ async function adminAction(action, idUser) {
   } catch (err) { toast(err.message, 'erreur'); }
 }
 
-async function adminChangerRole(idUser, roleActuel) {
-  const choix = prompt(
-    `Rôle actuel : ${roleActuel}\nNouveau rôle ?\n(visiteur / etudiant / mentor / admin / super_admin)`,
-    roleActuel
-  );
+/* Le changement de rôle passait par un prompt() où il fallait taper la
+   valeur technique sans faute : « super_admin » mal orthographié
+   renvoyait une erreur, et rien n'indiquait les valeurs acceptées. */
+function adminOuvrirRole(idUser) {
+  const u = (etat.adminUtilisateurs || [])
+    .find(x => x.id_utilisateur === idUser);
+  if (!u) return;
+
+  fermerMentionsLegales();
+  const fond = document.createElement('div');
+  fond.className = 'modale-fond';
+  fond.id = 'modaleLegale';
+  fond.setAttribute('role', 'dialog');
+  fond.setAttribute('aria-modal', 'true');
+  fond.innerHTML = `
+    <div class="modale-boite">
+      <div class="modale-entete">
+        <h2>Rôle de ${echapper(u.prenom + ' ' + u.nom)}</h2>
+        <button class="modale-fermer" onclick="fermerMentionsLegales()" aria-label="Fermer">&times;</button>
+      </div>
+      <div class="modale-corps">
+        <div class="champ">
+          <label for="choix-role">Nouveau rôle</label>
+          <select id="choix-role">
+            ${Object.entries(LIBELLES_ROLES).map(([v, l]) =>
+              `<option value="${v}"${v === u.role ? ' selected' : ''}>${echapper(l)}</option>`).join('')}
+          </select>
+        </div>
+        <p class="desc">Un administrateur accède à la modération et à la
+           gestion des comptes. L'administrateur principal peut en outre
+           nommer d'autres administrateurs.</p>
+        <button class="btn btn-primaire" onclick="adminValiderRole(${idUser})">Appliquer</button>
+      </div>
+    </div>`;
+  fond.addEventListener('click', (e) => {
+    if (e.target === fond) fermerMentionsLegales();
+  });
+  document.body.appendChild(fond);
+  document.body.style.overflow = 'hidden';
+}
+
+async function adminValiderRole(idUser) {
+  const choix = document.getElementById('choix-role')?.value;
   if (!choix) return;
   try {
-    await API.post(`/admin/utilisateurs/${idUser}/role`, { role: choix.trim() });
-    toast(`Rôle mis à jour : ${choix.trim()}.`);
+    await API.post(`/admin/utilisateurs/${idUser}/role`, { role: choix });
+    toast(`Rôle mis à jour : ${libelleRole(choix)}.`);
+    fermerMentionsLegales();
     changerPanAdmin(document.querySelector('[data-adm=users]'), 'users');
   } catch (err) { toast(err.message, 'erreur'); }
 }
+
 async function adminMentors() {
-  if (!MODE.api) return `<div class="carte"><p style="color:var(--texte-doux);">Ce module est disponible lorsque le serveur LaSourcee est connecté.</p></div>`;
   const att = await API.get('/admin/mentors-a-verifier');
   if (!att.length) {
     return `<h2 style="margin-bottom:18px;">Validation des référents</h2>
@@ -2459,15 +2609,18 @@ async function chargerQuestionsAccueil() {
     return;
   }
 
+  // « aucune réponse » sur trois questions d'affilée donne l'image d'un
+  // site désert. Une question sans réponse est présentée pour ce qu'elle
+  // est : une occasion d'être le premier à répondre.
   zone.innerHTML = questions.map(q => {
     const auteur = q.auteur || 'Membre';
     const nb = q.nb_reponses || 0;
-    const reponses = nb === 0 ? 'aucune réponse'
-                   : nb === 1 ? '1 réponse'
-                   : `${nb} réponses`;
+    const etiquette = nb === 0
+      ? '<span class="mini-q-appel">Sans réponse pour l\'instant</span>'
+      : `<span class="mini-q-nb">${nb} réponse${nb > 1 ? 's' : ''}</span>`;
     return `<div class="mini-q">
       <strong>${echapper(q.titre || '')}</strong>
-      <p>${echapper(auteur || 'Membre')} · ${reponses}</p>
+      <p><span class="mini-q-auteur">${echapper(auteur)}</span> ${etiquette}</p>
     </div>`;
   }).join('');
 }
@@ -2668,4 +2821,71 @@ const LIBELLES_ROLES = {
 
 function libelleRole(role) {
   return LIBELLES_ROLES[role] || role || '';
+}
+
+/* ============================================================
+   COMPLÉTION DU PROFIL
+   ------------------------------------------------------------
+   Un profil vide n'inspire pas confiance : personne ne s'adresse à
+   quelqu'un dont on ne sait rien. Montrer ce qui manque, et ce que
+   chaque élément apporte, obtient bien plus qu'une invitation vague
+   à « compléter son profil ».
+   ============================================================ */
+
+function elementsProfil(u) {
+  return [
+    { fait: !!(u.prenom && u.nom), libelle: 'Prénom et nom',
+      gain: 'Les autres membres savent à qui ils parlent.' },
+    { fait: !!u.photo, libelle: 'Photo de profil',
+      gain: 'Un profil avec photo reçoit nettement plus de réponses.' },
+    { fait: !!(u.bio && u.bio.trim().length >= 40), libelle: 'Présentation',
+      gain: 'Quelques lignes sur votre parcours suffisent à situer vos questions.' },
+    { fait: !!u.pays, libelle: 'Pays',
+      gain: 'Les conseils dépendent souvent du pays où vous étudiez.' },
+    { fait: !!(u.secteurs && u.secteurs.length), libelle: "Secteurs d'intérêt",
+      gain: 'Ils orientent les référents et les questions qui vous sont proposés.' },
+  ];
+}
+
+function carteCompletionProfil() {
+  const u = etat.utilisateur;
+  if (!u) return '';
+  const elements = elementsProfil(u);
+  const faits = elements.filter(e => e.fait).length;
+  const pourcent = Math.round((faits / elements.length) * 100);
+  const manquants = elements.filter(e => !e.fait);
+
+  if (!manquants.length) {
+    return `<div class="carte carte-completion complete">
+      <div class="completion-entete">
+        <strong>Profil complet</strong>
+        <span class="completion-valeur">100&nbsp;%</span>
+      </div>
+      <div class="jauge-completion"><div style="width:100%"></div></div>
+      <p class="desc">Tout est renseigné. Vos questions et vos réponses
+         partent avec les meilleures chances d'être lues.</p>
+    </div>`;
+  }
+
+  return `<div class="carte carte-completion">
+    <div class="completion-entete">
+      <strong>Votre profil est complété à ${pourcent}&nbsp;%</strong>
+      <span class="completion-valeur">${faits}/${elements.length}</span>
+    </div>
+    <div class="jauge-completion"><div style="width:${pourcent}%"></div></div>
+    <ul class="completion-liste">
+      ${manquants.map(e => `<li>
+        <strong>${echapper(e.libelle)}</strong>
+        <span>${echapper(e.gain)}</span>
+      </li>`).join('')}
+    </ul>
+    <button class="btn btn-secondaire btn-petit"
+            onclick="allerCompleterProfil()">Compléter maintenant</button>
+  </div>`;
+}
+
+function allerCompleterProfil() {
+  naviguerApp('parametres');
+  const onglet = document.querySelector('#menu-param button[data-pan="compte"]');
+  if (onglet) changerPanParam(onglet, 'compte');
 }

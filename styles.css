@@ -2009,3 +2009,144 @@ img, svg, video { max-width: 100%; height: auto; }
   .modale-fond { padding: 0; align-items: flex-end; }
   .modale-boite { max-height: 92vh; border-radius: var(--rayon-l) var(--rayon-l) 0 0; }
 }
+
+/* ==================================================================
+   COMPLÉTION DU PROFIL
+   ================================================================== */
+.carte-completion { margin-bottom: 16px; }
+.completion-entete {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.completion-valeur {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primaire);
+}
+.jauge-completion {
+  height: 7px;
+  border-radius: 4px;
+  background: var(--bleu-clair);
+  overflow: hidden;
+}
+.jauge-completion > div {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--primaire), var(--bleu-vif));
+  transition: width .4s ease;
+}
+.carte-completion.complete .jauge-completion > div {
+  background: linear-gradient(90deg, var(--accent), var(--orange-fonce));
+}
+.completion-liste {
+  list-style: none;
+  margin: 14px 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.completion-liste li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 14px;
+  position: relative;
+  font-size: 13.5px;
+}
+/* Une pastille plutôt qu'une puce : elle signale ce qui manque sans
+   ressembler à une liste de reproches. */
+.completion-liste li::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 7px;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.completion-liste strong { color: var(--texte); }
+.completion-liste span { color: var(--texte-doux); font-size: 12.5px; }
+
+/* Barre de filtre des tableaux d'administration. */
+.barre-filtre {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.barre-filtre input[type="search"] { flex: 1; min-width: 200px; }
+.barre-filtre select { min-width: 170px; }
+
+/* ==================================================================
+   TÉLÉPHONE : DISPOSITION DES ACTIONS D'ACCUEIL
+   ------------------------------------------------------------------
+   Sur un écran étroit, « Se connecter » et « Créer un compte » se
+   serraient à côté du logo et du bouton de thème, au point de passer
+   sous la ligne de flottaison. Les deux actions descendent donc en
+   pleine largeur sous le titre, là où le pouce les atteint, et la barre
+   du haut ne garde que le logo et le thème.
+   ================================================================== */
+@media (max-width: 640px) {
+  .hero-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .hero-nav .actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  /* Le bouton de thème reste en haut, les deux actions descendent. */
+  .hero-nav .actions .btn {
+    display: none;
+  }
+  .hero-actions-mobile {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 22px;
+  }
+  .hero-actions-mobile .btn {
+    width: 100%;
+    justify-content: center;
+    padding: 13px 18px;
+    font-size: 15px;
+  }
+  .hero-contenu h1 { font-size: 1.85rem; }
+  .hero-contenu .intro { font-size: 14.5px; }
+}
+/* Sur écran large, la version mobile n'a pas lieu d'être. */
+.hero-actions-mobile { display: none; }
+
+/* Questions mises en avant sur l'accueil. */
+.mini-q p {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 5px;
+  font-size: 12.5px;
+}
+.mini-q-auteur { color: var(--texte-doux); }
+.mini-q-nb {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--bleu-clair);
+  color: var(--primaire);
+  font-weight: 600;
+  font-size: 11.5px;
+}
+/* Une question sans réponse est une invitation, pas un manque : elle
+   porte la couleur d'accent plutôt que le gris de l'absence. */
+.mini-q-appel {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--orange-clair);
+  color: var(--orange-fonce);
+  font-weight: 600;
+  font-size: 11.5px;
+}

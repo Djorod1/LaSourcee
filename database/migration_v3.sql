@@ -79,3 +79,15 @@ CREATE TABLE IF NOT EXISTS tentative_auth (
     PRIMARY KEY (id_tentative),
     KEY idx_tentative_cle (cle, horodatage)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----- 5. Préférences de notification -----
+--
+-- Le panneau de notifications affichait huit interrupteurs codés en
+-- dur : chacun confirmait l'enregistrement sans rien conserver, et tout
+-- revenait à l'état initial au rechargement.
+--
+-- Les préférences sont toujours lues et écrites d'un bloc, jamais
+-- interrogées une par une : une colonne JSON suffit, une table dédiée
+-- imposerait une jointure sans rien résoudre.
+
+ALTER TABLE utilisateur ADD COLUMN preferences_notif TEXT NULL;
