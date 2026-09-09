@@ -38,6 +38,23 @@ OBJECTIFS = [
     "Accompagner d'autres membres",
 ]
 
+# Les objectifs se cumulent, dans une seule colonne, separes par une
+# virgule. Aucun intitule n'en contient : un test le verifie, et le
+# jour ou l'on en ajouterait un, il faudrait changer de separateur
+# plutot que decouper aux mauvais endroits sans s'en apercevoir.
+SEPARATEUR_OBJECTIFS = ", "
+LIMITE_OBJECTIFS = 4          # au-dela, le profil ne dit plus rien
+LONGUEUR_OBJECTIFS = 255
+
+
+def _eclater_objectifs(valeur):
+    """Liste des objectifs a partir de la colonne stockee."""
+    if not valeur:
+        return []
+    if isinstance(valeur, (list, tuple)):
+        return [str(v).strip() for v in valeur if str(v).strip()]
+    return [m.strip() for m in str(valeur).split(",") if m.strip()]
+
 # Diplome le plus eleve obtenu. La liste suit le systeme beninois et
 # place les titres professionnels au milieu du parcours, la ou ils sont
 # reellement : un CAP n'est pas une case « autre » en bas de liste.
@@ -207,7 +224,6 @@ def modifier_profil():
     # orthographe par intitule.
     A_CHOIX_FERME = (
         ("situation", SITUATIONS, "Situation inconnue."),
-        ("objectif", OBJECTIFS, "Objectif inconnu."),
         ("niveau_etudes", NIVEAUX_ETUDES, "Niveau d'études inconnu."),
         ("domaine", DOMAINES, "Domaine inconnu."),
     )
@@ -218,6 +234,27 @@ def modifier_profil():
         if retenu is None:
             return jsonify({"erreur": message}), 400
         champs[cle] = retenu
+
+    # Plusieurs objectifs a la fois. Personne ne cherche une seule chose
+    # : on prepare un depart a l'etranger tout en cherchant un stage, on
+    # apprend un metier tout en voulant gerer son argent. Le choix
+    # unique obligeait a trancher entre des besoins qui coexistent, et
+    # la moitie de l'information se perdait.
+    if "objectifs" in d or "objectif" in champs:
+        recus = d.get("objectifs")
+        if recus is None:
+            recus = _eclater_objectifs(champs.get("objectif"))
+        elif not isinstance(recus, list):
+            return jsonify({"erreur": "Les objectifs doivent être une "
+                                      "liste."}), 400
+        retenus = []
+        for brut in recus[:LIMITE_OBJECTIFS]:
+            officiel = _canoniser(brut, OBJECTIFS)
+            if officiel is None:
+                return jsonify({"erreur": "Objectif inconnu."}), 400
+            if officiel and officiel not in retenus:
+                retenus.append(officiel)
+        champs["objectif"] = SEPARATEUR_OBJECTIFS.join(retenus)
 
     # L'etablissement reste libre : aucune liste ne contiendra l'atelier
     # ou quelqu'un apprend son metier.
@@ -231,9 +268,12 @@ def modifier_profil():
                 "erreur": "Le lien professionnel doit commencer par https://"
             }), 400
         champs["profil_pro"] = lien[:255]
-    for cle in ("situation", "objectif", "langues"):
+    for cle in ("situation", "langues"):
         if cle in champs and champs[cle] is not None:
             champs[cle] = str(champs[cle])[:120]
+    if "objectif" in champs and champs["objectif"] is not None:
+        # Plus long que les autres : il porte jusqu'a quatre intitules.
+        champs["objectif"] = str(champs["objectif"])[:LONGUEUR_OBJECTIFS]
     if champs:
         fragments = ", ".join(f"{k} = %s" for k in champs)
         executer(
@@ -300,6 +340,12 @@ def _charger_profil(id_user, public=False):
         # Ne jamais révéler qu'un compte tourne encore avec un mot de
         # passe temporaire : ce serait désigner une cible.
         base.pop("doit_changer_mdp", None)
+
+    # La colonne reste une chaine, pour rester lisible dans un export et
+    # cherchable avec un simple LIKE. L'interface recoit en plus la
+    # liste deja decoupee : lui faire refaire ce decoupage exposerait a
+    # ce que les deux cotes s'accordent mal sur le separateur.
+    base["objectifs"] = _eclater_objectifs(base.get("objectif"))
 
     base["secteurs"] = recuperer_tous(
         """SELECT s.id_secteur, s.libelle, s.couleur

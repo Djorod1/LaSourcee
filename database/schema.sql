@@ -56,7 +56,8 @@ CREATE TABLE utilisateur (
     -- Droits d'administration, en JSON. NULL = compte antérieur.
     permissions      TEXT         NULL,
     situation        VARCHAR(40)  NULL,
-    objectif         VARCHAR(60)  NULL,
+    -- Plusieurs objectifs se cumulent, séparés par une virgule.
+    objectif         VARCHAR(255) NULL,
     langues          VARCHAR(120) NULL,
     profil_pro       VARCHAR(255) NULL,
     -- Parcours en trois champs distincts. Un champ libre unique mêlait

@@ -1678,6 +1678,113 @@ def executer_tests():
     verifier("Un profil inexistant repond 404",
              etu.get("/api/profil/999999").status_code == 404)
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  27. OBJECTIFS MULTIPLES, MESSAGERIE ET RECHERCHE")
+    print("═" * 70)
+
+    from routes.profil import (OBJECTIFS, SEPARATEUR_OBJECTIFS,
+                               LIMITE_OBJECTIFS, _eclater_objectifs)
+
+    # La virgule sert de separateur : aucun intitule ne doit en
+    # contenir, sinon le decoupage se ferait au mauvais endroit sans
+    # que rien ne le signale.
+    verifier("Aucun objectif ne contient le separateur",
+             not any("," in o for o in OBJECTIFS),
+             [o for o in OBJECTIFS if "," in o])
+
+    r = etu.put("/api/profil/moi", json={"objectifs": [
+        "Trouver un stage", "Apprendre un métier", "Gérer mon argent"]})
+    verifier("Plusieurs objectifs s'enregistrent", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+    p_obj = r.get_json() or {}
+    verifier("Ils sont tous conservés",
+             len(p_obj.get("objectifs") or []) == 3, p_obj.get("objectif"))
+    verifier("La colonne reste lisible",
+             SEPARATEUR_OBJECTIFS in (p_obj.get("objectif") or ""))
+
+    verifier("Un objectif inventé est refusé",
+             etu.put("/api/profil/moi",
+                     json={"objectifs": ["Trouver un stage", "Sorcellerie"]}
+                     ).status_code == 400)
+    verifier("Un doublon ne compte qu'une fois",
+             len((etu.put("/api/profil/moi", json={"objectifs": [
+                 "Changer de voie", "Changer de voie"]}).get_json()
+                 or {}).get("objectifs") or []) == 1)
+    # La forme ancienne, un seul objectif en chaine, doit rester
+    # acceptee : d'anciens comptes l'ont enregistree ainsi.
+    r = etu.put("/api/profil/moi", json={"objectif": "Trouver un stage"})
+    verifier("La forme à un seul objectif reste acceptée",
+             r.status_code == 200
+             and (r.get_json() or {}).get("objectifs") == ["Trouver un stage"])
+    verifier("Le découpage ignore les vides",
+             _eclater_objectifs("Trouver un stage, , Changer de voie")
+             == ["Trouver un stage", "Changer de voie"])
+    trop = OBJECTIFS[:LIMITE_OBJECTIFS + 2]
+    verifier("Le nombre d'objectifs est borné",
+             len((etu.put("/api/profil/moi",
+                          json={"objectifs": trop}).get_json()
+                  or {}).get("objectifs") or []) <= LIMITE_OBJECTIFS)
+
+    # --- Messagerie : elle existait cote serveur sans aucun ecran ---
+    m1 = app.test_client()
+    m1.post("/api/auth/inscription", json={
+        "prenom": "Sika", "nom": "AGOSSOU", "email": "sika@test.io",
+        "mot_de_passe": "Sika2026!", "role": "etudiant"})
+    id_sika = jeton_sql("SELECT id_utilisateur FROM utilisateur WHERE email = ?",
+                        ("sika@test.io",))
+
+    r = etu.post("/api/messagerie/conversations",
+                 json={"id_utilisateur": id_sika})
+    verifier("Une conversation s'ouvre", r.status_code in (200, 201),
+             r.get_data(as_text=True)[:110])
+    id_conv = (r.get_json() or {}).get("id_conversation")
+
+    r = etu.post(f"/api/messagerie/conversations/{id_conv}/messages",
+                 json={"contenu": "Bonjour, auriez-vous un conseil ?"})
+    verifier("Un message s'envoie", r.status_code in (200, 201))
+    verifier("Le message vide est refusé",
+             etu.post(f"/api/messagerie/conversations/{id_conv}/messages",
+                      json={"contenu": "   "}).status_code == 400)
+
+    liste = m1.get("/api/messagerie/conversations").get_json() or []
+    verifier("Le destinataire voit la conversation", len(liste) == 1)
+    verifier("Il voit le dernier message",
+             "conseil" in ((liste[0] if liste else {}).get("dernier_contenu")
+                           or ""))
+    verifier("Il compte le message non lu",
+             (liste[0] if liste else {}).get("non_lus", 0) >= 1)
+
+    msgs = m1.get(f"/api/messagerie/conversations/{id_conv}/messages").get_json()
+    verifier("Il lit le contenu", len(msgs or []) == 1)
+
+    # Un tiers ne doit pas pouvoir lire une conversation privee.
+    intrus = app.test_client()
+    intrus.post("/api/auth/inscription", json={
+        "prenom": "Intrus", "nom": "TEST", "email": "intrus@test.io",
+        "mot_de_passe": "Intrus2026!", "role": "etudiant"})
+    verifier("Un tiers ne lit pas la conversation",
+             intrus.get(f"/api/messagerie/conversations/{id_conv}/messages"
+                        ).status_code == 403)
+    verifier("Un tiers n'y écrit pas",
+             intrus.post(f"/api/messagerie/conversations/{id_conv}/messages",
+                         json={"contenu": "Bonjour"}).status_code == 403)
+
+    # --- Recherche : elle ne parcourait que la memoire du navigateur ---
+    r = etu.get("/api/recherche?q=AGOSSOU")
+    verifier("La recherche répond", r.status_code == 200)
+    res = r.get_json() or {}
+    verifier("Elle renvoie les trois familles",
+             all(c in res for c in ("mentors", "questions", "secteurs")))
+    verifier("Un terme trop court ne cherche rien",
+             (etu.get("/api/recherche?q=a").get_json()
+              or {}).get("questions") == [])
+    verifier("Elle trouve une question par son titre",
+             len((etu.get("/api/recherche?q=financer").get_json()
+                  or {}).get("questions") or []) >= 1)
+    verifier("Elle est refusée sans session",
+             app.test_client().get("/api/recherche?q=test").status_code == 401)
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

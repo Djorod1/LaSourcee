@@ -129,6 +129,7 @@ function naviguerApp(panneau) {
   if (panneau === 'fil') rendreFil();
   if (panneau === 'profil') rendreProfil();
   if (panneau === 'mentor') rendreEspaceMentor();
+  if (panneau === 'messages') rendreMessagerie();
   if (panneau === 'parametres') changerPanParam(document.querySelector('#menu-param button.actif'), 'compte');
   if (panneau === 'admin') {
     // Le menu est ajusté avant l'affichage : montrer un onglet puis le
@@ -276,6 +277,7 @@ function appliquerUtilisateur(u) {
   majRappelConfirmation();
   majRappelProfil();
   chargerCompteurCandidatures();
+  chargerCompteurMessages();
   demarrerReleveNotifications();
 }
 /* Validation des champs de l'inscription AVANT de passer à l'onboarding. */
@@ -1640,27 +1642,81 @@ function basculerMenuProfil() {
 /* ============================================================
    RECHERCHE GLOBALE
    ============================================================ */
+/* La recherche interrogeait les tableaux deja charges en memoire : elle
+   ne trouvait donc que ce qui figurait sur la page en cours, et restait
+   muette sur tout le reste de la plateforme. Elle passe par le serveur,
+   qui cherche dans les titres, les corps, les biographies et les
+   secteurs.
+
+   La frappe est temporisee : une requete par caractere saturerait le
+   serveur pour un resultat que personne ne lit, la suivante arrivant
+   avant la fin de la precedente. */
+let _minuteurRecherche = null;
+let _dernierTermeRecherche = '';
+
 function rechercher(terme) {
   const drop = document.getElementById('dropRech');
-  if (!terme || terme.length < 2) { drop.classList.remove('ouvert'); return; }
-  const t = terme.toLowerCase();
-  const mres = mentors.filter(m => (m.prenom+' '+m.nom+' '+m.secteur).toLowerCase().includes(t));
-  const qres = questions.filter(q => q.titre.toLowerCase().includes(t) || q.secteur.toLowerCase().includes(t));
+  if (!drop) return;
+  const t = (terme || '').trim();
+  clearTimeout(_minuteurRecherche);
+  if (t.length < 2) { drop.classList.remove('ouvert'); return; }
+  _minuteurRecherche = setTimeout(() => _rechercherVraiment(t), 280);
+}
+
+async function _rechercherVraiment(terme) {
+  const drop = document.getElementById('dropRech');
+  if (!drop) return;
+  _dernierTermeRecherche = terme;
+  let r;
+  try {
+    r = await API.get('/recherche?q=' + encodeURIComponent(terme));
+  } catch (_) {
+    drop.classList.remove('ouvert');
+    return;
+  }
+  // Une reponse plus lente qu'une frappe plus recente ne doit pas
+  // remplacer un resultat deja plus juste.
+  if (_dernierTermeRecherche !== terme) return;
+
   let html = '';
-  if (mres.length) {
+  if ((r.mentors || []).length) {
     html += '<h5>Référents</h5>';
-    html += mres.slice(0,4).map(m => `<div class="item-resultat" onmousedown="ouvrirProfilMentor(${m.id}); document.getElementById('dropRech').classList.remove('ouvert');">${avatarHTML(m.initiales, 's')}<div><strong>${echapper(m.prenom + ' ' + m.nom)}</strong><div style="font-size:12px; color:var(--texte-doux);">${echapper(m.secteur + ' · ' + m.pays)}</div></div></div>`).join('');
+    html += r.mentors.map(m => `<div class="res-item"
+        onclick="ouvrirProfilUtilisateur(${m.id_utilisateur}); fermerRecherche();">
+        ${avatarHTML(((m.prenom||'?')[0] + (m.nom||'?')[0]).toUpperCase(), 's', m.photo_url)}
+        <span>${echapper((m.prenom || '') + ' ' + (m.nom || ''))}</span>
+      </div>`).join('');
   }
-  if (qres.length) {
+  if ((r.questions || []).length) {
     html += '<h5>Questions</h5>';
-    html += qres.slice(0,4).map(q => `<div class="item-resultat" onmousedown="ouvrirQuestion(${q.id}); document.getElementById('dropRech').classList.remove('ouvert');">${ic('bulle','ic ic-s')} ${echapper(q.titre)}</div>`).join('');
+    html += r.questions.map(q => `<div class="res-item"
+        onclick="ouvrirQuestion(${q.id_question}); fermerRecherche();">
+        <span>${echapper(q.titre)}</span>
+      </div>`).join('');
   }
-  if (!html) html = '<div style="padding:14px; color:var(--texte-doux); font-size:14px;">Aucun résultat</div>';
-  html += `<div style="padding:10px 14px; border-top:1px solid var(--bordure); text-align:right;">
-    <button class="btn btn-primaire btn-petit" onmousedown="lancerRecherche()">Voir tous les résultats →</button>
-  </div>`;
+  if ((r.secteurs || []).length) {
+    html += '<h5>Secteurs</h5>';
+    html += r.secteurs.map(s => `<div class="res-item"
+        onclick="filtrerParSecteur('${echapper(s.libelle)}'); fermerRecherche();">
+        <span class="tag">${echapper(s.libelle)}</span>
+      </div>`).join('');
+  }
+  if (!html) {
+    html = `<div class="res-vide">Aucun résultat pour « ${echapper(terme)} ».</div>`;
+  }
   drop.innerHTML = html;
   drop.classList.add('ouvert');
+}
+
+function fermerRecherche() {
+  document.getElementById('dropRech')?.classList.remove('ouvert');
+}
+
+function filtrerParSecteur(libelle) {
+  const sel = document.getElementById('filtre-secteur');
+  if (sel) sel.value = libelle;
+  naviguerApp('fil');
+  rendreFil();
 }
 
 function lancerRecherche() {
@@ -1685,7 +1741,15 @@ function changerPanParam(elem, p) {
   document.querySelectorAll('#menu-param button').forEach(b => b.classList.remove('actif'));
   elem.classList.add('actif');
   const c = document.getElementById('contenu-param');
-  if (p === 'compte') { chargerReferentielsProfil().then(() => { c.innerHTML = panneauCompte(); }); }
+  if (p === 'compte') {
+    chargerReferentielsProfil().then(() => {
+      c.innerHTML = panneauCompte();
+      // L'état de la limite se calcule au rendu, pas au premier clic :
+      // sinon quelqu'un arrivant avec quatre objectifs déjà cochés
+      // pourrait en cocher un cinquième.
+      limiterObjectifs();
+    });
+  }
   if (p === 'notifs') { c.innerHTML = panneauNotifsParam(); chargerPreferences(); }
   if (p === 'securite') { c.innerHTML = panneauSecurite(); chargerSessions(); }
   if (p === 'confid') c.innerHTML = panneauConfid();
@@ -1707,22 +1771,29 @@ function panneauCompte() {
     <div class="champ"><label>Pays</label>
       <select id="pc-pays"><option value="">Sélectionnez votre pays</option>${optsPays}</select>
     </div>
-    <div class="champs-cote">
-      <div class="champ"><label for="pc-situation">Où en êtes-vous ?</label>
-        <select id="pc-situation">
-          <option value="">Préférer ne pas dire</option>
-          ${(etat.referentielsProfil?.situations || []).map(s =>
-            `<option value="${echapper(s)}"${s === u.situation ? ' selected' : ''}>${echapper(s)}</option>`).join('')}
-        </select>
-      </div>
-      <div class="champ"><label for="pc-objectif">Ce que vous cherchez</label>
-        <select id="pc-objectif">
-          <option value="">Préférer ne pas dire</option>
-          ${(etat.referentielsProfil?.objectifs || []).map(o =>
-            `<option value="${echapper(o)}"${o === u.objectif ? ' selected' : ''}>${echapper(o)}</option>`).join('')}
-        </select>
-      </div>
+    <div class="champ"><label for="pc-situation">Où en êtes-vous ?</label>
+      <select id="pc-situation">
+        <option value="">Préférer ne pas dire</option>
+        ${(etat.referentielsProfil?.situations || []).map(s =>
+          `<option value="${echapper(s)}"${s === u.situation ? ' selected' : ''}>${echapper(s)}</option>`).join('')}
+      </select>
     </div>
+    <fieldset class="champ groupe-objectifs">
+      <legend>Ce que vous cherchez</legend>
+      <p class="aide-champ" style="margin:0 0 10px;">Plusieurs réponses
+         possibles, jusqu'à ${LIMITE_OBJECTIFS}. Personne ne cherche une
+         seule chose : on prépare un départ tout en cherchant un stage.</p>
+      <div class="chips-objectifs" id="pc-objectifs">
+        ${(etat.referentielsProfil?.objectifs || []).map(o => `
+          <label class="chip-choix">
+            <input type="checkbox" value="${echapper(o)}"
+                   ${(u.objectifs || []).includes(o) ? 'checked' : ''}
+                   onchange="limiterObjectifs()" />
+            <span>${echapper(o)}</span>
+          </label>`).join('')}
+      </div>
+      <p class="aide-champ" id="compte-objectifs"></p>
+    </fieldset>
     <div class="champs-cote">
       <div class="champ"><label for="pc-niveau">Diplôme le plus élevé obtenu</label>
         <select id="pc-niveau">
@@ -1816,7 +1887,8 @@ async function sauverCompte() {
   const pays = document.getElementById('pc-pays')?.value || '';
   const bio = document.getElementById('pc-bio')?.value || '';
   const situation = document.getElementById('pc-situation')?.value || '';
-  const objectif = document.getElementById('pc-objectif')?.value || '';
+  const objectifs = [...document.querySelectorAll('#pc-objectifs input:checked')]
+    .map(e => e.value);
   const langues = (document.getElementById('pc-langues')?.value || '').trim();
   const profilPro = (document.getElementById('pc-profilpro')?.value || '').trim();
   const niveauEtudes = document.getElementById('pc-niveau')?.value || '';
@@ -1834,7 +1906,8 @@ async function sauverCompte() {
   etat.utilisateur.bio = bio;
   etat.utilisateur.secteurs = secteurs;
   etat.utilisateur.situation = situation;
-  etat.utilisateur.objectif = objectif;
+  etat.utilisateur.objectifs = objectifs;
+  etat.utilisateur.objectif = objectifs.join(', ');
   etat.utilisateur.langues = langues;
   etat.utilisateur.profil_pro = profilPro;
   etat.utilisateur.niveau_etudes = niveauEtudes;
@@ -1854,7 +1927,7 @@ async function sauverCompte() {
       id_pays: id_pays || undefined,
       // Une chaîne vide est envoyée telle quelle : c'est ainsi qu'on
       // efface un champ. undefined le laisserait inchangé.
-      situation, objectif, langues,
+      situation, objectifs, langues,
       profil_pro: profilPro,
       niveau_etudes: niveauEtudes,
       domaine,
@@ -2865,6 +2938,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     const section = (window.location.hash || '').replace('#', '');
     // Liste alignée sur les sous-vues réellement présentes dans la page.
     const connues = ['fil', 'profil', 'question', 'parametres', 'admin',
+                     'messages',
                      'mentor'];
     if (connues.includes(section) && section !== etat.sectionActive) {
       naviguerApp(section);
@@ -4155,25 +4229,59 @@ async function ouvrirProfilUtilisateur(id) {
    bénéficiaire, au référent et à l'administrateur : ce qui distingue
    les trois est ce qu'ils ont rempli, pas la forme de leur fiche. */
 function blocParcoursProfil(u) {
-  const lignes = [
-    ['Situation', u.situation],
-    ['Recherche', u.objectif],
-    ["Niveau d'études", u.niveau_etudes],
-    ['Domaine', u.domaine],
-    ['Formation', u.etablissement],
-    ['Langues', u.langues],
-  ].filter(([, v]) => v);
+  /* Le parcours en trois blocs, plutôt qu'une liste de dix lignes qui
+     mêlait la situation, le diplôme, les langues et un lien. Chacun
+     répond à une question différente, et un lecteur qui cherche l'une
+     ne devrait pas parcourir les autres :
 
-  if (u.profil_pro) {
-    lignes.push(['Profil professionnel',
-      `<a href="${echapper(u.profil_pro)}" target="_blank"
-          rel="noopener noreferrer nofollow">Consulter</a>`]);
-  }
-  if (!lignes.length) return '';
-  return `<dl class="parcours-profil">
-    ${lignes.map(([cle, val]) => `<dt>${echapper(cle)}</dt>
-      <dd>${cle === 'Profil professionnel' ? val : echapper(val)}</dd>`).join('')}
-  </dl>`;
+       où en est cette personne · ce qu'elle a étudié · comment la joindre
+
+     Un bloc vide disparaît : afficher « Formation » suivi de rien
+     donne l'impression d'un champ cassé. */
+  const objectifs = u.objectifs && u.objectifs.length
+    ? u.objectifs
+    : (u.objectif ? String(u.objectif).split(',').map(s => s.trim()).filter(Boolean) : []);
+
+  const blocs = [
+    { titre: 'Où en est cette personne', lignes: [
+        ['Situation', u.situation],
+      ], chips: objectifs.length ? { libelle: 'Recherche', valeurs: objectifs } : null },
+    { titre: 'Parcours', lignes: [
+        ["Niveau d'études", u.niveau_etudes],
+        ['Domaine ou métier', u.domaine],
+        ['Formation', u.etablissement],
+        // Ancien champ libre : affiché seulement si le parcours
+        // structuré est vide, sinon la même chose s'écrirait deux fois.
+        ...((!u.niveau_etudes && !u.domaine && u.etudes)
+            ? [['Études', u.etudes]] : []),
+      ] },
+    { titre: 'Échanger', lignes: [
+        ['Langues', u.langues],
+        ['Profil professionnel', u.profil_pro
+          ? `<a href="${echapper(u.profil_pro)}" target="_blank"
+               rel="noopener noreferrer nofollow">Consulter</a>` : null,
+          true],
+      ] },
+  ];
+
+  const rendu = blocs.map(bloc => {
+    const lignes = bloc.lignes.filter(([, valeur]) => valeur);
+    if (!lignes.length && !bloc.chips) return '';
+    return `<section class="bloc-parcours">
+      <h3>${echapper(bloc.titre)}</h3>
+      ${bloc.chips ? `<div class="ligne-parcours">
+        <span class="cle-parcours">${echapper(bloc.chips.libelle)}</span>
+        <span class="chips-parcours">${bloc.chips.valeurs.map(v =>
+          `<span class="tag">${echapper(v)}</span>`).join('')}</span>
+      </div>` : ''}
+      ${lignes.map(([cle, valeur, brut]) => `<div class="ligne-parcours">
+        <span class="cle-parcours">${echapper(cle)}</span>
+        <span>${brut ? valeur : echapper(valeur)}</span>
+      </div>`).join('')}
+    </section>`;
+  }).filter(Boolean).join('');
+
+  return rendu ? `<div class="parcours-profil">${rendu}</div>` : '';
 }
 
 /* Nom du rôle tel qu'il s'affiche. En base, « mentor » et « etudiant »
@@ -4229,6 +4337,8 @@ function rendreProfilAutre(u) {
       ${blocParcoursProfil(u)}
     </div>
     <div class="col-actions">
+      <button class="btn btn-primaire"
+        onclick="ecrireA(${u.id_utilisateur}, '${echapper(nomComplet)}')">Écrire</button>
       ${u.role === 'mentor' ? `<button class="btn ${suivi ? 'btn-secondaire' : 'btn-primaire'}"
         onclick="basculerSuiviProfil(${u.id_utilisateur}, this)">${
         suivi ? 'Suivi' : 'Suivre'}</button>` : ''}
@@ -4278,4 +4388,157 @@ async function basculerSuiviProfil(id, bouton) {
   } catch (err) {
     toast(err.message || 'Action impossible.', 'erreur');
   } finally { bouton.disabled = false; }
+}
+
+/* Plusieurs objectifs, mais pas tous. Au-delà de quatre, le profil ne
+   dit plus rien : quelqu'un qui coche tout n'a rien précisé. La limite
+   se voit avant d'être atteinte, plutôt que d'être opposée après coup
+   par le serveur. */
+const LIMITE_OBJECTIFS = 4;
+
+function limiterObjectifs() {
+  const cases = [...document.querySelectorAll('#pc-objectifs input')];
+  const coches = cases.filter(c => c.checked);
+  cases.forEach(c => { c.disabled = !c.checked && coches.length >= LIMITE_OBJECTIFS; });
+  cases.forEach(c => c.closest('.chip-choix')
+    ?.classList.toggle('indisponible', c.disabled));
+
+  const info = document.getElementById('compte-objectifs');
+  if (!info) return;
+  if (!coches.length) {
+    info.textContent = 'Aucun choix : votre profil restera muet sur ce point.';
+  } else if (coches.length >= LIMITE_OBJECTIFS) {
+    info.textContent = `${coches.length} sur ${LIMITE_OBJECTIFS}, le maximum. `
+      + 'Décochez pour en changer.';
+  } else {
+    info.textContent = `${coches.length} choix sur ${LIMITE_OBJECTIFS} possibles.`;
+  }
+}
+
+/* ============================================================
+   MESSAGERIE
+   ============================================================
+   Le serveur la servait depuis le début, l'accueil la promettait
+   « Échangez par messagerie privée avec les référents », et aucun écran
+   ne permettait d'y accéder : quatre routes fonctionnelles pour zéro
+   point d'entrée. */
+
+let _conversationOuverte = null;
+let _minuteurMessages = null;
+
+async function rendreMessagerie() {
+  const zone = document.getElementById('liste-conversations');
+  if (!zone) return;
+  zone.innerHTML = '<p class="desc">Chargement…</p>';
+  let liste;
+  try {
+    liste = await API.get('/messagerie/conversations');
+  } catch (err) {
+    zone.innerHTML = `<p class="desc">${echapper(err.message
+      || 'Conversations indisponibles.')}</p>`;
+    return;
+  }
+  majCompteurMessages(liste.reduce((n, c) => n + (c.non_lus || 0), 0));
+
+  if (!liste.length) {
+    zone.innerHTML = `<p class="desc">Aucune conversation. Ouvrez le profil
+      d'un référent et écrivez-lui pour commencer.</p>`;
+    return;
+  }
+  zone.innerHTML = liste.map(c => `
+    <button class="conversation ${c.id_conversation === _conversationOuverte ? 'active' : ''}"
+            onclick="ouvrirConversation(${c.id_conversation}, '${echapper((c.prenom || '') + ' ' + (c.nom || ''))}')">
+      ${avatarHTML(((c.prenom||'?')[0] + (c.nom||'?')[0]).toUpperCase(), 's', c.photo_url)}
+      <span class="conversation-texte">
+        <strong>${echapper((c.prenom || '') + ' ' + (c.nom || ''))}</strong>
+        <em>${echapper((c.dernier_contenu || 'Aucun message').slice(0, 60))}</em>
+      </span>
+      ${c.non_lus ? `<span class="pastille-notif">${c.non_lus}</span>` : ''}
+    </button>`).join('');
+}
+
+async function ouvrirConversation(id, nom) {
+  _conversationOuverte = id;
+  const fil = document.getElementById('fil-messages');
+  if (!fil) return;
+  fil.innerHTML = '<p class="desc" style="padding:24px;">Chargement…</p>';
+  let messages;
+  try {
+    messages = await API.get(`/messagerie/conversations/${id}/messages`);
+  } catch (err) {
+    fil.innerHTML = `<p class="desc" style="padding:24px;">${
+      echapper(err.message || 'Messages indisponibles.')}</p>`;
+    return;
+  }
+  const moi = etat.utilisateur?.id;
+  fil.innerHTML = `
+    <header class="entete-conversation">
+      <strong>${echapper(nom || 'Conversation')}</strong>
+    </header>
+    <div class="messages" id="messages-defilement">
+      ${messages.length
+        ? messages.map(m => `<div class="message ${m.id_expediteur === moi ? 'de-moi' : ''}">
+            <p>${echapper(m.contenu)}</p>
+            <time>${echapper(formatHorodatage(m.envoye_le))}</time>
+          </div>`).join('')
+        : '<p class="desc">Aucun message. Écrivez le premier.</p>'}
+    </div>
+    <form class="saisie-message" onsubmit="event.preventDefault(); envoyerMessage(${id});">
+      <label class="sr-only" for="champ-message">Votre message</label>
+      <textarea id="champ-message" rows="2" maxlength="4000"
+                placeholder="Écrivez votre message…"
+                onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault(); envoyerMessage(${id});}"></textarea>
+      <button class="btn btn-primaire" type="submit">Envoyer</button>
+    </form>`;
+  // Le fil s'ouvre sur le dernier message : remonter à la main pour lire
+  // ce qui vient d'arriver est le contraire de ce qu'on attend.
+  const defil = document.getElementById('messages-defilement');
+  if (defil) defil.scrollTop = defil.scrollHeight;
+  rendreMessagerie();
+}
+
+async function envoyerMessage(id) {
+  const champ = document.getElementById('champ-message');
+  const contenu = (champ?.value || '').trim();
+  if (!contenu) return;
+  champ.disabled = true;
+  try {
+    await API.post(`/messagerie/conversations/${id}/messages`, { contenu });
+    champ.value = '';
+    const nom = document.querySelector('.entete-conversation strong')?.textContent;
+    await ouvrirConversation(id, nom);
+  } catch (err) {
+    toast(err.message || 'Message non envoyé.', 'erreur');
+  } finally {
+    champ.disabled = false;
+    champ.focus();
+  }
+}
+
+/* Ouvre une conversation avec quelqu'un depuis son profil. */
+async function ecrireA(id, nom) {
+  try {
+    const r = await API.post('/messagerie/conversations',
+                             { id_utilisateur: id });
+    naviguerApp('messages');
+    await rendreMessagerie();
+    ouvrirConversation(r.id_conversation, nom);
+  } catch (err) {
+    toast(err.message || 'Conversation impossible.', 'erreur');
+  }
+}
+
+function majCompteurMessages(n) {
+  const p = document.getElementById('compteur-messages');
+  if (!p) return;
+  p.textContent = n > 99 ? '99+' : String(n);
+  p.hidden = !n;
+}
+
+async function chargerCompteurMessages() {
+  if (!etat.utilisateur || !etat.utilisateur.email) return;
+  try {
+    const liste = await API.get('/messagerie/conversations');
+    majCompteurMessages(liste.reduce((n, c) => n + (c.non_lus || 0), 0));
+  } catch (_) { /* le compteur n'est pas essentiel */ }
 }

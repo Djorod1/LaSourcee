@@ -2172,19 +2172,69 @@ img, svg, video { max-width: 100%; height: auto; }
 .nom-cliquable[onclick] { cursor: pointer; }
 .nom-cliquable[onclick]:hover { text-decoration: underline; }
 
-/* Parcours affiché sur un profil : libellé et valeur alignés. */
+/* Parcours d'un profil, en blocs plutôt qu'en liste continue. Dix
+   lignes à la file mêlaient la situation, le diplôme, les langues et un
+   lien : trois questions différentes, qu'on lisait toutes pour en
+   trouver une. */
 .parcours-profil {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 14px;
-  margin: 12px 0 0;
-  font-size: 13px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 18px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--bordure);
 }
-.parcours-profil dt { color: var(--texte-doux); }
-.parcours-profil dd { margin: 0; }
-@media (max-width: 520px) {
-  .parcours-profil { grid-template-columns: 1fr; gap: 0; }
-  .parcours-profil dt { margin-top: 8px; font-size: 12px; }
+.bloc-parcours h3 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--texte-doux);
+  margin: 0 0 8px;
+}
+.ligne-parcours {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  font-size: 13.5px;
+  margin-bottom: 6px;
+  line-height: 1.5;
+}
+.cle-parcours {
+  color: var(--texte-doux);
+  flex: 0 0 100%;
+  font-size: 12px;
+}
+.chips-parcours { display: flex; flex-wrap: wrap; gap: 5px; }
+
+/* Choix multiple d'objectifs. Des pastilles cliquables plutôt qu'une
+   colonne de cases : les intitulés sont courts, et voir d'un coup
+   d'œil ce qui est retenu compte plus que l'alignement vertical. */
+.groupe-objectifs { border: none; padding: 0; margin: 0 0 14px; }
+.groupe-objectifs legend {
+  padding: 0; font-size: 13px; font-weight: 500; margin-bottom: 2px;
+}
+.chips-objectifs { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip-choix {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 12px;
+  border: 1px solid var(--bordure);
+  border-radius: 999px;
+  font-size: 13px;
+  cursor: pointer;
+  background: var(--surface);
+}
+.chip-choix:hover { border-color: var(--primaire); }
+.chip-choix input { accent-color: var(--primaire); margin: 0; }
+.chip-choix:has(input:checked) {
+  border-color: var(--primaire);
+  background: var(--primaire-clair);
+  color: var(--primaire);
+  font-weight: 500;
+}
+.chip-choix.indisponible { opacity: .45; cursor: not-allowed; }
+.chip-choix:focus-within {
+  outline: 2px solid var(--primaire); outline-offset: 2px;
 }
 
 /* Visionneuse de photo. Fond opaque plutôt que translucide : une photo
@@ -2727,3 +2777,105 @@ img, svg, video { max-width: 100%; height: auto; }
 }
 .profil-detail > span { color: var(--texte-doux); flex-shrink: 0; }
 .profil-detail > strong { text-align: right; }
+
+/* ==================================================================
+   MESSAGERIE
+   ------------------------------------------------------------------
+   Deux colonnes sur écran large, une seule sur téléphone : la liste
+   des conversations passe alors au-dessus du fil, plutôt que de le
+   comprimer à une largeur illisible.
+   ================================================================== */
+.page-messagerie {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) 1fr;
+  gap: 0;
+  max-width: 1100px;
+  margin: 20px auto;
+  min-height: 60vh;
+  background: var(--surface);
+  border: 1px solid var(--bordure);
+  border-radius: var(--rayon-l);
+  overflow: hidden;
+}
+.colonne-conversations {
+  border-right: 1px solid var(--bordure);
+  padding: 16px;
+  overflow-y: auto;
+}
+.colonne-conversations h2 { font-size: 1.15rem; margin-bottom: 12px; }
+.conversation {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 10px; margin-bottom: 4px;
+  border: none; background: none; border-radius: var(--rayon-s);
+  cursor: pointer; text-align: left; font: inherit;
+  color: var(--noir);
+}
+.conversation:hover { background: var(--fond); }
+.conversation.active { background: var(--primaire-clair); }
+.conversation-texte { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.conversation-texte strong { font-size: 13.5px; }
+.conversation-texte em {
+  font-style: normal; font-size: 12px; color: var(--texte-doux);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.colonne-fil-messages { display: flex; flex-direction: column; }
+.entete-conversation {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--bordure);
+}
+.messages {
+  flex: 1; overflow-y: auto; padding: 18px;
+  display: flex; flex-direction: column; gap: 10px;
+  max-height: 52vh;
+}
+.message {
+  max-width: 78%;
+  padding: 9px 13px;
+  border-radius: var(--rayon-m);
+  background: var(--fond);
+  align-self: flex-start;
+}
+/* Les siens à droite, ceux de l'autre à gauche : c'est la convention
+   que tout le monde connaît, et s'en écarter demanderait de lire les
+   noms pour savoir qui parle. */
+.message.de-moi {
+  align-self: flex-end;
+  background: var(--primaire);
+  color: var(--sur-primaire);
+}
+.message p { margin: 0; font-size: 14px; line-height: 1.5; white-space: pre-wrap; }
+.message time { font-size: 11px; opacity: .75; display: block; margin-top: 4px; }
+
+.saisie-message {
+  display: flex; gap: 10px; align-items: flex-end;
+  padding: 14px 18px;
+  border-top: 1px solid var(--bordure);
+}
+.saisie-message textarea { flex: 1; resize: vertical; min-height: 44px; }
+
+@media (max-width: 720px) {
+  .page-messagerie { grid-template-columns: 1fr; margin: 12px; }
+  .colonne-conversations {
+    border-right: none; border-bottom: 1px solid var(--bordure);
+    max-height: 32vh;
+  }
+  .message { max-width: 88%; }
+}
+
+/* Résultats de recherche : la même présentation qu'avant, mais les
+   éléments viennent maintenant du serveur et non de la page. */
+.res-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; cursor: pointer; font-size: 13.5px;
+}
+.res-item:hover { background: var(--fond); }
+.res-vide { padding: 14px; font-size: 13px; color: var(--texte-doux); }
+
+/* Réservé aux lecteurs d'écran : présent dans l'arbre d'accessibilité,
+   absent de l'affichage. « display: none » l'aurait retiré des deux. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}

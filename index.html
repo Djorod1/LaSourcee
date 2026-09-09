@@ -609,6 +609,7 @@
     <button onclick="naviguerApp('fil'); fermerBurgerApp();">Accueil</button>
     <button onclick="basculerNotifs(); fermerBurgerApp();">Notifications</button>
     <button onclick="naviguerApp('profil'); fermerBurgerApp();">Mon profil</button>
+    <button onclick="naviguerApp('messages'); fermerBurgerApp();">Messages</button>
     <button onclick="naviguerApp('parametres'); fermerBurgerApp();">Paramètres</button>
     <!-- Sur téléphone, le thème se règle ici : une ligne nommée, à côté
          des autres réglages, plutôt qu'une icône muette serrée contre
@@ -623,6 +624,7 @@
   <div class="menu-profil" id="menuProfil">
     <button onclick="naviguerApp('profil')"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 4-6.5 8-6.5s8 2.1 8 6.5"/></svg> Mon profil</button>
     <button onclick="naviguerApp('mentor')" id="lien-mentor"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5h10V8a5 5 0 0 1-10 0z"/><path d="M7 5.8H4.2v1.6a3 3 0 0 0 3 3"/><path d="M17 5.8h2.8v1.6a3 3 0 0 1-3 3"/><path d="M9.5 14.2h5"/><path d="M10 14.2v3h4v-3"/><path d="M8 20h8"/></svg> Espace référent</button>
+    <button onclick="naviguerApp('messages')"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v10.5H9L4.5 20z"/></svg> Messages<span class="compteur-admin" id="compteur-messages" hidden></span></button>
     <button onclick="naviguerApp('parametres')"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.2 5.2l2.1 2.1M16.7 16.7l2.1 2.1M18.8 5.2l-2.1 2.1M7.3 16.7l-2.1 2.1"/></svg> Paramètres</button>
     <button onclick="naviguerApp('admin')" id="lien-admin"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5.2c0 4.4 3 7.8 7 9.8 4-2 7-5.4 7-9.8V6z"/></svg> Administration</button>
     <button onclick="seDeconnecter()" style="color:var(--rouge);"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 16.5 20.5 12 16 7.5"/><path d="M20.5 12H9"/></svg> Se déconnecter</button>
@@ -750,6 +752,21 @@
   <div class="sous-vue" id="sv-mentor" style="display:none;">
     <div style="max-width:1100px; margin:20px auto; padding:0 20px;">
       <div id="contenu-mentor"></div>
+    </div>
+  </div>
+
+  <!-- Messagerie. Le serveur la servait depuis le debut, l'accueil la
+       promettait, et aucun ecran ne permettait d'y acceder. -->
+  <div class="sous-vue" id="sv-messages" style="display:none;">
+    <div class="page-messagerie">
+      <aside class="colonne-conversations">
+        <h2>Messages</h2>
+        <div id="liste-conversations"></div>
+      </aside>
+      <main class="colonne-fil-messages" id="fil-messages">
+        <p class="desc" style="padding:24px;">Choisissez une conversation
+           pour l'afficher.</p>
+      </main>
     </div>
   </div>
 </section>
