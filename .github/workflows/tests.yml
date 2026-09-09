@@ -54,6 +54,10 @@ jobs:
         working-directory: backend
         run: python tests_redaction.py
 
+      - name: Contrôler le contraste du mode sombre
+        working-directory: backend
+        run: python tests_contraste.py
+
       - name: Tests d'intégration — SQLite
         working-directory: backend
         run: python tests_integration.py

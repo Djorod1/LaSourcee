@@ -1,6 +1,6 @@
 /* =========================================================
    LaSourcee — Feuille de styles
-   Identité : vert #16A34A + rouge #B91C1C + noir, sur fond crème
+   Identité : bleu royal #1E3A8A et orange #F97316, repris du logo.
    Typographie : DM Serif Display (titres) + DM Sans (texte)
    ========================================================= */
 
@@ -34,6 +34,8 @@
   --primaire-clair: var(--bleu-clair);
   --accent: var(--orange-vif);
   --accent-clair: var(--orange-clair);
+  /* Couleur du texte posé SUR le bleu principal. */
+  --sur-primaire: #ffffff;
 
   /* Neutres */
   --fond: #F6F9FF;
@@ -102,7 +104,7 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
 .btn-secondaire:hover { background: var(--primaire-clair); }
 .btn-fantome { background: transparent; color: var(--primaire); }
 .btn-fantome:hover { background: var(--primaire-clair); }
-.btn-vert { background: var(--primaire); color: #fff; }
+.btn-vert { background: var(--primaire); color: var(--sur-primaire); }
 .btn-vert:hover { background: var(--primaire-fonce); }
 .btn-danger { background: var(--rouge); color: #fff; }
 .btn-bloc { width: 100%; }
@@ -123,6 +125,9 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   font-size: 12px; font-weight: 500; background: var(--primaire-clair); color: var(--primaire);
 }
 .tag-ambre { background: var(--accent-clair); color: #7A1A1A; }
+/* Le vert subsiste pour ce qui est valide ou confirme : c'est une
+   convention universelle, pas une couleur de marque. Le rendre bleu
+   le confondrait avec le reste de l'interface. */
 .tag-vert { background: #dcfce7; color: #166534; }
 .tag-violet { background: #ede9fe; color: #6d28d9; }
 .tag-rose { background: #fce7f3; color: #be185d; }
@@ -134,7 +139,7 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
 .badge-mentor { background: var(--accent-clair); color: #7A1A1A; }
 .badge-verifie {
   display: inline-flex; align-items: center; gap: 4px;
-  background: var(--primaire); color: #fff;
+  background: var(--primaire); color: var(--sur-primaire);
   padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;
 }
 .point-statut {
@@ -147,7 +152,7 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
 /* ---------- Avatar ---------- */
 .avatar {
   width: 40px; height: 40px; border-radius: 50%;
-  background: linear-gradient(135deg, #4ade80, var(--primaire));
+  background: linear-gradient(135deg, var(--bleu-vif), var(--primaire));
   color: #fff;
   display: inline-flex; align-items: center; justify-content: center;
   font-weight: 600; font-size: 14px; flex-shrink: 0;
@@ -207,7 +212,7 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   background:
     radial-gradient(at 90% -10%, rgba(37,99,235,.18), transparent 55%),
     radial-gradient(at 10% 110%, rgba(249,115,22,.10), transparent 55%),
-    linear-gradient(180deg, #FFFFFF 0%, var(--fond) 100%);
+    linear-gradient(180deg, var(--surface) 0%, var(--fond) 100%);
 }
 .hero-nav {
   display: flex; justify-content: space-between; align-items: center;
@@ -281,7 +286,7 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   cursor: pointer; font-size: 13px; background: var(--surface); transition: all .15s;
 }
 .chip-select:hover { border-color: var(--primaire); }
-.chip-select.actif { background: var(--primaire); color: #fff; border-color: var(--primaire); }
+.chip-select.actif { background: var(--primaire); color: var(--sur-primaire); border-color: var(--primaire); }
 
 /* ============================================================
    APPLICATION (navbar + layout)
@@ -429,7 +434,7 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   padding: 6px 12px; border-radius: var(--rayon-s); font-size: 13px;
   color: var(--texte-doux); cursor: pointer; font-weight: 500;
 }
-.onglet.actif { background: var(--primaire); color: #fff; }
+.onglet.actif { background: var(--primaire); color: var(--sur-primaire); }
 .filtres select { width: auto; padding: 6px 10px; font-size: 13px; }
 
 .carte-question {
@@ -524,7 +529,7 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
    ============================================================ */
 .banniere {
   height: 180px; border-radius: var(--rayon-l);
-  background: linear-gradient(135deg, var(--primaire), #4ade80 55%, var(--orange-vif));
+  background: linear-gradient(135deg, var(--primaire), var(--bleu-vif) 55%, var(--orange-vif));
   margin-bottom: -40px;
 }
 .entete-profil {
@@ -670,7 +675,7 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   max-width: 70%; padding: 10px 14px; border-radius: 14px; font-size: 14px;
 }
 .bulle.recu { background: var(--fond); align-self: flex-start; border-bottom-left-radius: 4px; }
-.bulle.envoye { background: var(--primaire); color: #fff; align-self: flex-end; border-bottom-right-radius: 4px; }
+.bulle.envoye { background: var(--primaire); color: var(--sur-primaire); align-self: flex-end; border-bottom-right-radius: 4px; }
 .bulle .statut { display: block; font-size: 10px; opacity: .8; margin-top: 4px; text-align: right; }
 .chat-saisie {
   padding: 14px; border-top: 1px solid var(--bordure);
@@ -729,7 +734,7 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   font-size: 14px; text-align: left; margin-bottom: 2px;
 }
 .menu-admin button:hover { background: rgba(255,255,255,.08); }
-.menu-admin button.actif { background: var(--primaire); color: #fff; }
+.menu-admin button.actif { background: var(--primaire); color: var(--sur-primaire); }
 .contenu-admin { padding: 24px; background: var(--fond); }
 .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
 .kpi-carte {
@@ -779,31 +784,31 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
 
 /* ===== Améliorations LaSourcee ===== */
 .nav-bouton { transition: background .25s ease, color .25s ease, transform .15s ease; }
-.nav-bouton.actif { background: var(--primaire-clair, #E3F4E8); color: var(--primaire, #16A34A); }
+.nav-bouton.actif { background: var(--primaire-clair); color: var(--primaire); }
 .nav-bouton .icone-cloche { display: block; }
 
 .nav-recherche { display: flex; align-items: center; gap: 6px; }
 .nav-recherche input { flex: 1; min-width: 0; }
 .btn-recherche {
   width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center;
-  border-radius: var(--rayon-s); background: var(--primaire, #16A34A); color: #fff;
+  border-radius: var(--rayon-s); background: var(--primaire); color: var(--sur-primaire);
   transition: background .2s ease, transform .1s ease; flex: 0 0 36px;
 }
-.btn-recherche:hover { background: #1457a6; }
+.btn-recherche:hover { background: var(--primaire-fonce); }
 .btn-recherche:active { transform: scale(0.96); }
 
 .panneau-notifs header { gap: 10px; }
 .notif-item { transition: background .15s ease; }
 .notif-item.cliquable { cursor: pointer; }
 
-.q-pied button.actif { color: var(--primaire, #16A34A); font-weight: 600; }
-.bouton-sauver.actif { color: #8E1414; }
+.q-pied button.actif { color: var(--primaire); font-weight: 600; }
+.bouton-sauver.actif { color: var(--accent); }
 
 .photo-avatar { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block; }
 .avatar { overflow: hidden; }
 .avatar img.photo-avatar { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block; }
 
-.similaires li a { color: var(--primaire, #16A34A); text-decoration: none; }
+.similaires li a { color: var(--primaire); text-decoration: none; }
 .similaires li a:hover { text-decoration: underline; }
 .similaires li { cursor: pointer; }
 .questions-tendance li a { cursor: pointer; }
@@ -1399,8 +1404,8 @@ img, svg, video { max-width: 100%; height: auto; }
   display: inline-flex; align-items: center; justify-content: center;
   flex-shrink: 0;
 }
-.hero-avantages li:nth-child(2) .hero-av-icon { background: #DCFCE7; color: #15803D; }
-.hero-avantages li:nth-child(3) .hero-av-icon { background: #DCFCE7; color: #0D9488; }
+.hero-avantages li:nth-child(2) .hero-av-icon { background: var(--bleu-clair); color: var(--bleu-vif); }
+.hero-avantages li:nth-child(3) .hero-av-icon { background: var(--orange-clair); color: var(--orange-fonce); }
 
 .hero-illu-titre {
   display: flex; align-items: center; gap: 10px;
@@ -1447,8 +1452,8 @@ img, svg, video { max-width: 100%; height: auto; }
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--bleu-clair); color: var(--bleu-vif); flex-shrink: 0;
 }
-.hero-stat:nth-child(2) .hero-stat-icon { background: #CCFBF1; color: #0D9488; }
-.hero-stat:nth-child(3) .hero-stat-icon { background: #DCFCE7; color: #15803D; }
+.hero-stat:nth-child(2) .hero-stat-icon { background: var(--surface); color: var(--bleu-vif); }
+.hero-stat:nth-child(3) .hero-stat-icon { background: var(--surface); color: var(--primaire); }
 .hero-stat-note .hero-stat-icon { background: #FEF3C7; color: #D97706; }
 .hero-stat strong {
   display: block; font-family: 'DM Sans', sans-serif;
@@ -1717,20 +1722,28 @@ img, svg, video { max-width: 100%; height: auto; }
   --texte-doux: #9AA8BE;
   --bordure: #253148;
 
-  --primaire: #3B82F6;
-  --primaire-fonce: #1D4ED8;
+  /* Le bleu s'eclaircit pour rester lisible en tant que texte sur
+     fond sombre. Il devient alors trop clair pour porter du blanc :
+     c'est un texte sombre qui se pose dessus. */
+  --primaire: #60A5FA;
+  --primaire-fonce: #3B82F6;
   --primaire-clair: #1B2A4A;
+  --sur-primaire: #0B1220;
 
-  --bleu: #3B82F6;
-  --bleu-fonce: #1D4ED8;
+  --bleu: #60A5FA;
+  --bleu-fonce: #3B82F6;
   --bleu-clair: #1B2A4A;
   --bleu-tres-clair: #16203A;
 
   --orange-clair: #3A2415;
   --rouge-clair: #3A1A1A;
   --rouge-fonce: #FCA5A5;
+  /* --noir sert de couleur de texte : il doit s'eclaircir.
+     --gris-sombre sert de FOND au menu d'administration, avec du
+     texte blanc par-dessus : l'eclaircir rendait ce menu invisible.
+     Il reste donc sombre, et se contente de s'accorder au theme. */
   --noir: #E8EEF8;
-  --gris-sombre: #E8EEF8;
+  --gris-sombre: #0A101C;
 
   /* Une ombre noire ne se voit pas sur un fond sombre : on l'assombrit
      davantage et on l'élargit pour conserver le relief. */
@@ -2149,4 +2162,50 @@ img, svg, video { max-width: 100%; height: auto; }
   color: var(--orange-fonce);
   font-weight: 600;
   font-size: 11.5px;
+}
+
+/* ------------------------------------------------------------------
+   MODE SOMBRE : pastilles et bandeaux
+   ------------------------------------------------------------------
+   Ces éléments portent un fond pastel et un texte foncé, tous deux
+   écrits en dur. Le couple reste lisible sur fond sombre, mais une
+   pastille très claire au milieu d'une page sombre attire l'œil sans
+   raison. Le rapport s'inverse donc : fond sourd, texte clair.
+   ------------------------------------------------------------------ */
+:root[data-theme="dark"] .tag-vert      { background: #14352A; color: #86EFAC; }
+:root[data-theme="dark"] .tag-violet    { background: #2A1F44; color: #C4B5FD; }
+:root[data-theme="dark"] .tag-rose      { background: #3A1C2C; color: #F9A8D4; }
+:root[data-theme="dark"] .tag-ambre,
+:root[data-theme="dark"] .badge-mentor  { background: #3A2415; color: #FDBA74; }
+:root[data-theme="dark"] .bandeau-verif.ok      { background: #14352A; color: #86EFAC; }
+:root[data-theme="dark"] .bandeau-verif.attente { background: #3A2415; color: #FDBA74; }
+
+/* Le bandeau d'alerte reprend la même logique. */
+:root[data-theme="dark"] .bandeau-alerte {
+  background: #3A2415;
+  border-color: var(--accent);
+  color: #FDBA74;
+}
+:root[data-theme="dark"] .bandeau-fixe .btn {
+  background: var(--accent);
+  color: #1A1206;
+}
+:root[data-theme="dark"] .bandeau-fixe .btn:hover { background: #FB923C; }
+
+/* Le voile des fenêtres modales doit rester plus sombre que la page
+   qu'il recouvre, sinon il ne se distingue plus du fond. */
+:root[data-theme="dark"] .modale-fond { background: rgba(0, 0, 0, .70); }
+
+/* Les zones qui empruntaient le bleu très clair comme fond deviennent
+   des surfaces sourdes plutôt que des taches claires. */
+:root[data-theme="dark"] .hero-stat { background: var(--bleu-clair); }
+:root[data-theme="dark"] .hero-stat-icon { background: var(--fond); }
+
+/* Le dégradé du bandeau d'accueil est calculé pour un fond clair : sur
+   fond sombre, ses voiles colorés blanchissent le haut de la page. */
+:root[data-theme="dark"] .hero {
+  background:
+    radial-gradient(at 90% -10%, rgba(59, 130, 246, .20), transparent 55%),
+    radial-gradient(at 10% 110%, rgba(249, 115, 22, .12), transparent 55%),
+    linear-gradient(180deg, var(--surface) 0%, var(--fond) 100%);
 }
