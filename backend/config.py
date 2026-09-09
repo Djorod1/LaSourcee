@@ -147,6 +147,12 @@ class Config:
         and (os.getenv("EMAIL_MODE", "console") or "console").lower() == "smtp",
     )
 
+    # ---- Bornes des requetes ---------------------------------------------
+    # Une requete sans limite de taille permet d'immobiliser le serveur
+    # en lui envoyant un corps enorme. Deux megaoctets couvrent
+    # largement une question, une reponse et une photo de profil encodee.
+    MAX_CONTENT_LENGTH = int(os.getenv("TAILLE_MAX_REQUETE", str(2 * 1024 * 1024)))
+
     # ---- Frontend --------------------------------------------------------
     # Racine du dépôt : index.html, script.js, styles.css, assets/...
     DOSSIER_FRONTEND = DOSSIER_BACKEND.parent.resolve()

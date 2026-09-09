@@ -29,6 +29,7 @@ def verifier_mot_de_passe(mdp_clair: str, hache: str) -> bool:
 
 def creer_session(id_utilisateur: int, user_agent: str = None) -> str:
     """Crée un jeton de session opaque persisté en base."""
+    purger_sessions_expirees()
     token = secrets.token_hex(32)
     duree = current_app.config["DUREE_SESSION_JOURS"]
     expire_le = datetime.utcnow() + timedelta(days=duree)
@@ -126,7 +127,16 @@ def connexion_requise(fonction):
         token = jeton_session_courant()
         utilisateur = utilisateur_depuis_jeton(token)
         if utilisateur is None:
-            return jsonify({"erreur": "Authentification requise."}), 401
+            # Un jeton present mais refuse signifie une session expiree
+            # ou revoquee ; son absence, une simple visite. Les deux cas
+            # appellent la meme action mais pas la meme explication.
+            if token:
+                message = ("Votre session a expiré. Reconnectez-vous pour "
+                           "continuer.")
+            else:
+                message = ("Connectez-vous pour accéder à cette partie du "
+                           "site.")
+            return jsonify({"erreur": message, "session_expiree": bool(token)}), 401
         g.utilisateur = utilisateur
         return fonction(*args, **kwargs)
 
@@ -144,3 +154,22 @@ def admin_requis(fonction):
         return fonction(*args, **kwargs)
 
     return emballe
+
+
+def purger_sessions_expirees():
+    """Supprime les sessions arrivees a echeance.
+
+    Une session expiree ne donne plus acces a rien, mais sa ligne
+    subsiste : le jeton reste en base indefiniment, et la table grossit
+    sans fin. Declenchee une fois sur cinquante pour ne pas balayer la
+    table a chaque connexion, et sans dependre d'une tache planifiee que
+    l'hebergement serverless ne saurait pas executer.
+    """
+    import random
+    if random.randint(1, 50) != 1:
+        return
+    try:
+        executer("DELETE FROM session_web WHERE expire_le < CURRENT_TIMESTAMP",
+                 commit=True)
+    except Exception:
+        pass

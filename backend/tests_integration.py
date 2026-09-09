@@ -845,7 +845,78 @@ def executer_tests():
                  True, f"{nb_admins} administrateurs")
 
     print("\n" + "═" * 70)
-    print("  17. AUTHENTIFICATION EXTERNE (OAuth)")
+    print("  17. CONFIRMATION D'ADRESSE ET DURCISSEMENT")
+    print("═" * 70)
+
+    # -- Messages d'authentification -------------------------------------
+    r = app.test_client().get("/api/profil/moi")
+    corps = r.get_json() or {}
+    verifier("Sans session, le message invite à se connecter",
+             "connectez-vous" in (corps.get("erreur") or "").lower(),
+             str(corps))
+    verifier("Le drapeau distingue la visite de l'expiration",
+             corps.get("session_expiree") is False, str(corps))
+
+    perime = app.test_client()
+    perime.set_cookie("ls_session", "0" * 64)
+    corps = (perime.get("/api/profil/moi").get_json() or {})
+    verifier("Une session expirée est nommée comme telle",
+             corps.get("session_expiree") is True
+             and "expiré" in (corps.get("erreur") or "").lower(), str(corps))
+
+    # -- Renvoi du lien de confirmation ----------------------------------
+    candidat = app.test_client()
+    candidat.post("/api/auth/inscription", json={
+        "prenom": "Lien", "nom": "PERDU", "email": "lien.perdu@test.io",
+        "mot_de_passe": "LienPerdu2026!", "role": "etudiant"})
+
+    r = candidat.post("/api/auth/confirmation/moi")
+    verifier("Renvoi du lien accepté", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+    verifier("Un seul jeton actif à la fois",
+             jeton_sql("SELECT COUNT(*) FROM verification_email v "
+                       "JOIN utilisateur u ON u.id_utilisateur = v.id_utilisateur "
+                       "WHERE u.email = ? AND v.verifie_le IS NULL",
+                       ("lien.perdu@test.io",)) == 1,
+             "les jetons precedents doivent etre invalides")
+
+    anonyme = app.test_client()
+    r = anonyme.post("/api/auth/renvoyer-confirmation",
+                     json={"email": "lien.perdu@test.io"})
+    r2 = anonyme.post("/api/auth/renvoyer-confirmation",
+                      json={"email": "inconnu@nulle.part"})
+    verifier("Réponse identique pour une adresse inconnue",
+             r.status_code == r2.status_code == 200
+             and r.get_json() == r2.get_json(),
+             "sinon on saurait qui est inscrit")
+    verifier("Renvoi refusé sans session sur la route personnelle (401)",
+             app.test_client().post("/api/auth/confirmation/moi").status_code == 401)
+
+    # -- En-tetes de durcissement ----------------------------------------
+    r = app.test_client().get("/api/sante",
+                              headers={"X-Forwarded-Proto": "https"})
+    verifier("HSTS posé sur une connexion chiffrée",
+             "max-age=31536000" in r.headers.get("Strict-Transport-Security", ""),
+             r.headers.get("Strict-Transport-Security", "absent"))
+    r = app.test_client().get("/api/sante")
+    verifier("HSTS absent hors HTTPS",
+             "Strict-Transport-Security" not in r.headers,
+             "l'annoncer en clair rendrait le site inaccessible en local")
+    verifier("Isolation des fenêtres",
+             r.headers.get("Cross-Origin-Opener-Policy") == "same-origin")
+    verifier("Les réponses de l'API ne sont pas mises en cache",
+             r.headers.get("Cache-Control") == "no-store",
+             r.headers.get("Cache-Control", "absent"))
+    verifier("Les fichiers statiques restent cachables",
+             app.test_client().get("/styles.css").headers.get(
+                 "Cache-Control") != "no-store")
+
+    verifier("Taille des requêtes bornée",
+             app.config.get("MAX_CONTENT_LENGTH", 0) > 0,
+             str(app.config.get("MAX_CONTENT_LENGTH")))
+
+    print("\n" + "═" * 70)
+    print("  18. AUTHENTIFICATION EXTERNE (OAuth)")
     print("═" * 70)
     cfg = anon.get("/api/auth/config")
     verifier("Configuration OAuth exposée", cfg.status_code == 200)

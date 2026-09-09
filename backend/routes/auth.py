@@ -196,10 +196,15 @@ def connexion():
     # Bloquer la connexion si l'e-mail n'est pas vérifié et que c'est requis
     obligatoire = current_app.config["VERIFICATION_EMAIL_OBLIGATOIRE"]
     if obligatoire and not user.get("email_verifie"):
-        return _erreur(
-            "Adresse e-mail non vérifiée. Consultez votre boîte mail "
-            "pour confirmer votre inscription.", 403,
-        )
+        # Le motif et le recours dans la meme reponse : sans le drapeau,
+        # l'interface ne peut pas proposer de renvoyer le lien, et la
+        # personne reste bloquee sans savoir quoi faire.
+        return jsonify({
+            "erreur": "Votre adresse n'est pas encore confirmée. Ouvrez "
+                      "le lien reçu par e-mail, ou demandez-en un nouveau.",
+            "confirmation_requise": True,
+            "email": email,
+        }), 403
 
     reinitialiser(cle_throttle)   # connexion réussie : on efface le compteur
 
@@ -518,3 +523,93 @@ def _poser_cookie(reponse, token):
     tous les points d'entrée — mot de passe, Google, LinkedIn — posent
     exactement le même cookie."""
     return poser_cookie_session(reponse, token)
+
+
+# --- Confirmation d'adresse : renvoi du lien ---------------------------------
+
+@bp_auth.post("/renvoyer-confirmation")
+def renvoyer_confirmation():
+    """Renvoie le lien de confirmation d'adresse.
+
+    Sans cette route, une personne dont le premier message s'est perdu,
+    ou dont le lien a expiré au bout de vingt-quatre heures, reste
+    bloquée sans recours : le seul message qu'elle voyait était
+    « Authentification requise », qui ne dit ni pourquoi ni quoi faire.
+
+    La réponse est identique que l'adresse existe ou non, et que le
+    compte soit déjà confirmé ou non : révéler l'un ou l'autre
+    permettrait de savoir qui est inscrit.
+    """
+    d = request.get_json(silent=True) or {}
+    email = (d.get("email") or "").strip().lower()
+
+    reponse_neutre = jsonify({
+        "ok": True,
+        "message": "Si cette adresse correspond à un compte non confirmé, "
+                   "un nouveau lien vient d'être envoyé.",
+    })
+
+    if not REGEX_EMAIL.match(email):
+        return reponse_neutre
+
+    # Meme bornage que la reinitialisation : sans lui, cette route
+    # permettrait d'inonder la boite de n'importe qui.
+    cle_debit = f"confirmation|{email}|{request.remote_addr}"
+    if est_bloque(cle_debit, MAX_DEMANDES_MDP):
+        return reponse_neutre
+    enregistrer_echec(cle_debit)
+
+    user = recuperer_un(
+        "SELECT id_utilisateur, prenom, email_verifie FROM utilisateur "
+        "WHERE email = %s AND est_actif = 1", (email,))
+    if user and not user["email_verifie"]:
+        # Les jetons precedents sont invalides : deux liens actifs pour
+        # la meme adresse doublent la surface d'attaque sans rien
+        # apporter.
+        executer("DELETE FROM verification_email WHERE id_utilisateur = %s "
+                 "AND verifie_le IS NULL",
+                 (user["id_utilisateur"],), commit=True)
+        _envoyer_email_verification(
+            user["id_utilisateur"], email, user["prenom"])
+
+    return reponse_neutre
+
+
+@bp_auth.post("/confirmation/moi")
+@connexion_requise
+def renvoyer_ma_confirmation():
+    """Renvoie le lien de confirmation à la personne connectée.
+
+    Ici l'identité est déjà établie par la session : le message peut
+    donc être explicite, contrairement à la route publique.
+    """
+    user = recuperer_un(
+        "SELECT prenom, email, email_verifie FROM utilisateur "
+        "WHERE id_utilisateur = %s", (g.utilisateur["id_utilisateur"],))
+    if not user:
+        return _erreur("Compte introuvable.", 404)
+    if user["email_verifie"]:
+        return jsonify({"ok": True, "deja_confirme": True,
+                        "message": "Votre adresse est déjà confirmée."})
+
+    cle_debit = f"confirmation-moi|{g.utilisateur['id_utilisateur']}"
+    if est_bloque(cle_debit, MAX_DEMANDES_MDP):
+        return _erreur(
+            "Trop de demandes. Patientez quelques minutes avant de "
+            "redemander un lien.", 429)
+    enregistrer_echec(cle_debit)
+
+    executer("DELETE FROM verification_email WHERE id_utilisateur = %s "
+             "AND verifie_le IS NULL",
+             (g.utilisateur["id_utilisateur"],), commit=True)
+    parti = _envoyer_email_verification(
+        g.utilisateur["id_utilisateur"], user["email"], user["prenom"])
+
+    if not parti:
+        return _erreur(
+            "L'envoi a échoué. Contactez un administrateur.", 503)
+    return jsonify({
+        "ok": True,
+        "message": f"Un lien de confirmation vient de partir vers "
+                   f"{user['email']}.",
+    })

@@ -15,6 +15,8 @@ import logging
 import os
 import re
 import time
+
+from flask import request
 from threading import Lock
 
 logger = logging.getLogger("lasourcee.securite")
@@ -198,4 +200,24 @@ def appliquer_entetes_securite(reponse):
     reponse.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     reponse.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     reponse.headers["Content-Security-Policy"] = POLITIQUE_CSP
+
+    # HSTS : le navigateur refuse ensuite toute connexion en clair vers
+    # ce domaine, y compris si un lien HTTP lui est presente. Pose
+    # uniquement quand la connexion est deja chiffree : l'annoncer sur
+    # du HTTP local rendrait le site inaccessible en developpement.
+    if request and request.headers.get("X-Forwarded-Proto", "").startswith("https"):
+        reponse.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains")
+
+    # Isole la page des fenetres qu'elle ouvre et de celles qui
+    # l'ouvrent : sans cela, un site tiers gardant une reference sur
+    # notre onglet peut le rediriger.
+    reponse.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    reponse.headers["X-Permitted-Cross-Domain-Policies"] = "none"
+
+    # Les reponses de l'API ne doivent jamais etre mises en cache par un
+    # intermediaire : elles contiennent des donnees propres a une
+    # session.
+    if request and request.path.startswith("/api/"):
+        reponse.headers["Cache-Control"] = "no-store"
     return reponse

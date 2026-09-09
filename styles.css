@@ -2304,3 +2304,31 @@ img, svg, video { max-width: 100%; height: auto; }
   border-color: #F87171;
 }
 :root[data-theme="dark"] .zone-danger strong { color: #FCA5A5; }
+
+/* ------------------------------------------------------------------
+   BOUTON DE THÈME : ALIGNEMENT
+   ------------------------------------------------------------------
+   Il flottait parce qu'il héritait de l'alignement de son conteneur
+   sans hauteur de référence. Une hauteur de ligne nulle et un
+   alignement centré le calent sur les éléments voisins, quelle que
+   soit leur taille.
+   ------------------------------------------------------------------ */
+.hero-nav .actions,
+.navbar .actions-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.bouton-theme {
+  line-height: 0;
+  padding: 0;
+  align-self: center;
+}
+.bouton-theme svg { display: block; }
+
+@media (max-width: 640px) {
+  /* Sur téléphone, il prend la place laissée par les deux boutons
+     descendus sous l'introduction, sans gouttière résiduelle. */
+  .hero-nav .actions { gap: 0; }
+  .bouton-theme { width: 40px; height: 40px; }
+}

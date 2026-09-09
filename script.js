@@ -157,6 +157,12 @@ async function seConnecter() {
     toast('Connexion réussie. Bienvenue !');
     afficherVue('vue-app'); initApp();
   } catch (err) {
+    // Adresse non confirmée : proposer le renvoi du lien plutôt que de
+    // laisser la personne devant un refus sans issue.
+    if (err.donnees && err.donnees.confirmation_requise) {
+      ouvrirConfirmationAdresse(err.donnees.email || email);
+      return;
+    }
     toast(err.message || 'Identifiants incorrects.', 'erreur');
   }
 }
@@ -245,8 +251,11 @@ function appliquerUtilisateur(u) {
     photo: u.photo_url || null,
     verifie: !!u.est_verifie,
     doit_changer_mdp: !!u.doit_changer_mdp,
+    email_verifie: !!u.email_verifie,
+    email: u.email || '',
   };
   majRappelMotDePasse();
+  majRappelConfirmation();
 }
 /* Validation des champs de l'inscription AVANT de passer à l'onboarding. */
 function commencerOnboarding() {
@@ -2819,11 +2828,11 @@ const TEXTES_LEGAUX = {
       visibles des autres membres : c'est ce qui permet à chacun d'en
       profiter. Vous pouvez supprimer les vôtres à tout moment.</p>
 
-      <p><strong>Vos droits.</strong> Vous pouvez consulter, corriger ou
-      faire effacer vos données en écrivant à
-      <a href="mailto:djorod@lasourcee.org">djorod@lasourcee.org</a>.
-      La suppression du compte efface le profil et les données
-      associées.</p>
+      <p><strong>Vos droits.</strong> Vous pouvez à tout moment
+      télécharger vos données et supprimer votre compte depuis
+      Paramètres, Confidentialité. Pour toute autre demande, écrivez à
+      <a href="mailto:djorod@lasourcee.org">djorod@lasourcee.org</a>
+      ou appelez le <a href="tel:+2290155040432">+229 01 55 04 04 32</a>.</p>
 
       <p><strong>Sécurité.</strong> Les mots de passe sont hachés, jamais
       stockés en clair. Les échanges passent par une connexion chiffrée.
@@ -2877,7 +2886,12 @@ const TEXTES_LEGAUX = {
 
       <p><strong>Signalement.</strong> Pour signaler un contenu ou une
       difficulté, écrivez à
-      <a href="mailto:djorod@lasourcee.org">djorod@lasourcee.org</a>.</p>`,
+      <a href="mailto:djorod@lasourcee.org">djorod@lasourcee.org</a>.</p>
+
+      <p><strong>Nous joindre.</strong><br>
+      Courriel : <a href="mailto:djorod@lasourcee.org">djorod@lasourcee.org</a><br>
+      Téléphone : <a href="tel:+2290155040432">+229 01 55 04 04 32</a>
+      ou <a href="tel:+2290153581795">+229 01 53 58 17 95</a></p>`,
   },
 };
 
@@ -3007,4 +3021,95 @@ function allerCompleterProfil() {
   naviguerApp('parametres');
   const onglet = document.querySelector('#menu-param button[data-pan="compte"]');
   if (onglet) changerPanParam(onglet, 'compte');
+}
+
+/* ============================================================
+   CONFIRMATION DE L'ADRESSE E-MAIL
+   ------------------------------------------------------------
+   Une personne dont le message s'est perdu, ou dont le lien a expiré
+   au bout de vingt-quatre heures, se heurtait à un refus sans recours.
+   Le refus explique désormais, et propose de renvoyer le lien.
+   ============================================================ */
+
+function ouvrirConfirmationAdresse(email) {
+  fermerMentionsLegales();
+  const fond = document.createElement('div');
+  fond.className = 'modale-fond';
+  fond.id = 'modaleLegale';
+  fond.setAttribute('role', 'dialog');
+  fond.setAttribute('aria-modal', 'true');
+  fond.innerHTML = `
+    <div class="modale-boite">
+      <div class="modale-entete">
+        <h2>Confirmez votre adresse</h2>
+        <button class="modale-fermer" onclick="fermerMentionsLegales()" aria-label="Fermer">&times;</button>
+      </div>
+      <div class="modale-corps">
+        <p>Pour vérifier que cette adresse est bien la vôtre, nous vous
+           avons envoyé un lien à <strong>${echapper(email)}</strong>.
+           Ouvrez-le, puis revenez vous connecter.</p>
+        <p class="desc">Le lien est valable vingt-quatre heures. Pensez à
+           regarder dans les indésirables : les messages automatiques y
+           atterrissent souvent la première fois.</p>
+        <button class="btn btn-primaire" id="btn-renvoi"
+                onclick="renvoyerConfirmation('${echapper(email)}')">
+          Renvoyer le lien</button>
+        <p class="note-param" id="etat-renvoi"></p>
+      </div>
+    </div>`;
+  fond.addEventListener('click', (e) => {
+    if (e.target === fond) fermerMentionsLegales();
+  });
+  document.body.appendChild(fond);
+  document.body.style.overflow = 'hidden';
+}
+
+async function renvoyerConfirmation(email) {
+  const bouton = document.getElementById('btn-renvoi');
+  const info = document.getElementById('etat-renvoi');
+  if (bouton) { bouton.disabled = true; bouton.textContent = 'Envoi…'; }
+  try {
+    const r = await API.post('/auth/renvoyer-confirmation', { email });
+    if (info) info.textContent = r.message || 'Lien renvoyé.';
+  } catch (err) {
+    if (info) info.textContent = err.message || "L'envoi a échoué.";
+  } finally {
+    if (bouton) { bouton.disabled = false; bouton.textContent = 'Renvoyer le lien'; }
+  }
+}
+
+/* Bandeau affiché aux membres connectés dont l'adresse n'est pas encore
+   confirmée. Il n'empêche rien, il rappelle : bloquer quelqu'un qui a
+   déjà un compte le ferait partir. */
+function majRappelConfirmation() {
+  const u = etat.utilisateur;
+  const existant = document.getElementById('rappel-confirmation');
+  if (!u || u.email_verifie) return existant && existant.remove();
+  if (existant) return;
+
+  const bandeau = document.createElement('div');
+  bandeau.id = 'rappel-confirmation';
+  bandeau.className = 'bandeau-alerte bandeau-fixe';
+  bandeau.setAttribute('role', 'status');
+  bandeau.innerHTML =
+    '<span><strong>Adresse non confirmée.</strong> '
+    + "Ouvrez le lien reçu par e-mail pour sécuriser votre compte.</span>"
+    + '<button class="btn btn-petit" onclick="renvoyerMaConfirmation(this)">'
+    + 'Renvoyer le lien</button>';
+  document.body.prepend(bandeau);
+}
+
+async function renvoyerMaConfirmation(bouton) {
+  const libelle = bouton.textContent;
+  bouton.disabled = true;
+  bouton.textContent = 'Envoi…';
+  try {
+    const r = await API.post('/auth/confirmation/moi');
+    toast(r.message || 'Lien renvoyé.');
+  } catch (err) {
+    toast(err.message || "L'envoi a échoué.", 'erreur');
+  } finally {
+    bouton.disabled = false;
+    bouton.textContent = libelle;
+  }
 }
