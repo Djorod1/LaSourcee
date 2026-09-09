@@ -1138,6 +1138,29 @@ def executer_tests():
     verifier("L'état d'origine est rétabli après le test",
              mod_config.Config.EST_PRODUCTION == prod_avant)
 
+    # Un echec doit se corriger sans aller lire les journaux : sur un
+    # hebergement sans etat, personne ne les consulte.
+    from utils.email import envoyer_detaille
+    for cle, valeur in (("EMAIL_MODE", "smtp"),
+                        ("SMTP_HOTE", "127.0.0.1"),
+                        ("SMTP_PORT", "1"),
+                        ("SMTP_UTILISATEUR", "essai@lasourcee.org"),
+                        ("SMTP_MOTDEPASSE", "peu-importe")):
+        os.environ[cle] = valeur
+    try:
+        parti, motif = envoyer_detaille("qui@test.io", "Essai", "Corps")
+        verifier("Un serveur SMTP injoignable est signalé", parti is False)
+        verifier("Le motif nomme l'hôte et le port en cause",
+                 "127.0.0.1:1" in motif, motif[:110])
+        verifier("Le motif dit quoi vérifier",
+                 "SMTP_HOTE" in motif and "SMTP_SECURITE" in motif,
+                 motif[:110])
+    finally:
+        for cle in ("EMAIL_MODE", "SMTP_HOTE", "SMTP_PORT",
+                    "SMTP_UTILISATEUR", "SMTP_MOTDEPASSE"):
+            os.environ.pop(cle, None)
+        os.environ["EMAIL_MODE"] = "console"
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

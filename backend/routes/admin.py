@@ -505,7 +505,7 @@ def tester_envoi_email():
     base et n'indiquerait pas la cause d'un échec. Ici, le motif exact
     remonte : authentification refusée, hôte injoignable, port bloqué.
     """
-    from utils.email import envoyer, configuration_valide
+    from utils.email import envoyer_detaille, configuration_valide
 
     destinataire = (g.utilisateur.get("email") or "").strip()
     if not destinataire:
@@ -516,7 +516,7 @@ def tester_envoi_email():
         return jsonify({"envoye": False, "motif": motif}), 200
 
     try:
-        envoye = envoyer(
+        envoye, motif = envoyer_detaille(
             destinataire,
             "LaSourcee, test de configuration",
             "Ce message confirme que l'envoi d'e-mails fonctionne.\n\n"
@@ -529,11 +529,14 @@ def tester_envoi_email():
                     details=str(exc)[:200])
         return jsonify({"envoye": False, "motif": str(exc)[:200]}), 200
 
-    journaliser(g.utilisateur["id_utilisateur"], "test_email",
-                details=destinataire)
+    journaliser(g.utilisateur["id_utilisateur"],
+                "test_email" if envoye else "test_email_echec",
+                details=destinataire if envoye else motif[:200])
+    # Le motif exact plutôt qu'un renvoi aux journaux du serveur : sur un
+    # hébergement sans état, personne ne va les consulter, et « mot de
+    # passe refusé » ne se corrige pas comme « hôte injoignable ».
     return jsonify({
         "envoye": bool(envoye),
         "destinataire": destinataire,
-        "motif": "" if envoye else
-                 "L'envoi a échoué. Consultez les journaux du serveur.",
+        "motif": "" if envoye else motif,
     })

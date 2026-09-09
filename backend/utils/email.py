@@ -96,6 +96,20 @@ def envoi_operationnel():
 def envoyer(destinataire, sujet, corps, corps_html=None):
     """Envoie un e-mail. Retourne True si l'envoi a réussi.
 
+    Enveloppe de ``envoyer_detaille`` pour les appelants qui n'ont que
+    faire du motif : l'immense majorité.
+    """
+    return envoyer_detaille(destinataire, sujet, corps, corps_html)[0]
+
+
+def envoyer_detaille(destinataire, sujet, corps, corps_html=None):
+    """Envoie un e-mail et retourne ``(réussi, motif)``.
+
+    Le motif compte au moment de brancher un serveur SMTP : « mot de
+    passe refusé » et « hôte injoignable » se corrigent différemment,
+    et sur un hébergement serverless les journaux ne sont pas à portée
+    de main. Il remonte donc jusqu'à l'écran de diagnostic.
+
     En mode console, retourne True en développement, où le message
     s'affiche dans le terminal, et False en production, où il n'atteint
     personne. Répondre True partout revenait à annoncer « un message
@@ -121,19 +135,18 @@ def envoyer(destinataire, sujet, corps, corps_html=None):
             destinataire, sujet, corps,
         )
         if Config.EST_PRODUCTION:
-            logger.error(
-                "Message NON distribué à %s : EMAIL_MODE vaut « console » "
-                "en production. Réglez EMAIL_MODE=smtp et les variables "
-                "SMTP_*, sinon aucune confirmation ni réinitialisation "
-                "n'atteindra personne.", destinataire)
-            return False
-        return True
+            motif = ("EMAIL_MODE vaut « console » en production : le message "
+                     "est écrit dans les journaux, il n'est envoyé à "
+                     "personne. Réglez EMAIL_MODE=smtp.")
+            logger.error("Message NON distribué à %s : %s", destinataire, motif)
+            return False, motif
+        return True, ""
 
     # ---- Mode SMTP (production) -----------------------------------------
     ok, raison = configuration_valide()
     if not ok:
         logger.error("Envoi impossible à %s — %s", destinataire, raison)
-        return False
+        return False, raison
 
     expediteur = c["expediteur"]
     if "<" not in expediteur:
@@ -157,19 +170,23 @@ def envoyer(destinataire, sujet, corps, corps_html=None):
                 serveur.login(c["utilisateur"], c["motdepasse"])
                 serveur.send_message(msg)
         logger.info("E-mail envoyé à %s — %s", destinataire, sujet)
-        return True
+        return True, ""
 
     except smtplib.SMTPAuthenticationError:
-        logger.error(
-            "Authentification SMTP refusée pour %s. "
-            "Avec Gmail, utilisez un mot de passe d'application, "
-            "pas le mot de passe du compte.", c["utilisateur"],
-        )
+        motif = (f"Le serveur a refusé les identifiants de "
+                 f"{c['utilisateur']}. Vérifiez SMTP_UTILISATEUR (l'adresse "
+                 f"complète) et SMTP_MOTDEPASSE (celui de la boîte aux "
+                 f"lettres, pas celui du panneau d'hébergement). Avec "
+                 f"Gmail, il faut un mot de passe d'application.")
     except smtplib.SMTPRecipientsRefused:
-        logger.error("Adresse destinataire refusée : %s", destinataire)
+        motif = f"Le serveur a refusé l'adresse destinataire {destinataire}."
     except (smtplib.SMTPException, OSError) as exc:
-        logger.error("Échec de l'envoi à %s : %s", destinataire, exc)
-    return False
+        motif = (f"Contact impossible avec {c['hote']}:{c['port']} "
+                 f"({type(exc).__name__} : {str(exc)[:120]}). Vérifiez "
+                 f"SMTP_HOTE, SMTP_PORT et SMTP_SECURITE : le port 465 va "
+                 f"avec « ssl », le port 587 avec « starttls ».")
+    logger.error("Échec de l'envoi à %s : %s", destinataire, motif)
+    return False, motif
 
 
 # ---------------------------------------------------------------------------
