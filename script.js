@@ -43,7 +43,7 @@ function avatarHTML(initiales, taille = '', photo = null, mentorVerifie = false)
 }
 /* Badge mentor vérifié (innovation : couleur vert du logo, lecture immédiate) */
 function badgeMentorVerifie() {
-  return `<span class="badge-mentor-verifie">${ic('check','ic ic-s')} Mentor vérifié</span>`;
+  return `<span class="badge-mentor-verifie">${ic('check','ic ic-s')} Référent vérifié</span>`;
 }
 function monAvatarHTML(taille = '') { return avatarHTML(etat.utilisateur.initiales, taille, etat.utilisateur.photo); }
 function estMentor() { return etat.utilisateur.role === 'mentor'; }
@@ -515,7 +515,7 @@ function rendreSidebarProfil() {
     <button class="btn btn-secondaire btn-petit btn-bloc" onclick="naviguerApp('profil')">Voir mon profil</button>
     <div class="profil-stats">
       <div><strong>${u.questionsPosees}</strong><span>Questions posées</span></div>
-      <div><strong>${u.mentorsSuivis}</strong><span>Mentors suivis</span></div>
+      <div><strong>${u.mentorsSuivis}</strong><span>Référents suivis</span></div>
     </div>`;
   document.getElementById('mes-secteurs').innerHTML =
     u.secteurs.map((s, i) => `<span class="tag ${['','tag-ambre','tag-vert','tag-violet'][i%4]}">${echapper(s)}</span>`).join('');
@@ -596,7 +596,7 @@ async function chargerMentorsDepuisApi() {
     rendreColonneDroite();
     if (typeof rendreSidebarProfil === 'function') rendreSidebarProfil();
   } catch (err) {
-    console.warn('Annuaire des mentors indisponible :', err.message);
+    console.warn('Annuaire des référents indisponible :', err.message);
   }
 }
 
@@ -736,7 +736,7 @@ function ouvrirQuestion(id) {
          <button class="btn btn-primaire btn-petit" onclick="ajouterReponse(${q.id})">Envoyer</button>
        </div>`
     : `<div class="carte" style="margin-top:12px; background:var(--fond); font-size:13px; color:var(--texte-doux); display:flex; gap:8px; align-items:center;">
-         ${ic('etincelle','ic ic-s')} Seuls les mentors peuvent répondre aux questions. Devenez mentor pour partager votre expertise.
+         ${ic('etincelle','ic ic-s')} Seuls les référents peuvent répondre aux questions. Devenez référent pour partager votre expertise.
        </div>`;
   document.getElementById('contenu-question').innerHTML = `
     <article class="carte-question">
@@ -763,8 +763,8 @@ function ouvrirQuestion(id) {
 function reponseHTML(r) {
   const cls = r.mentor ? 'reponse mentor' : 'reponse';
   const badge = r.verifie
-    ? `<span class="badge-verifie">${ic('check','ic ic-s')} Mentor vérifié</span>`
-    : (r.mentor ? `<span class="badge-mentor badge-role">${ic('trophee','ic ic-s')} Mentor</span>` : '');
+    ? `<span class="badge-verifie">${ic('check','ic ic-s')} Référent vérifié</span>`
+    : (r.mentor ? `<span class="badge-mentor badge-role">${ic('trophee','ic ic-s')} Référent</span>` : '');
   const etoiles = r.mentor ? `<span class="etoiles" title="Notez cette réponse">
     ${[1,2,3,4,5].map(i => `<span class="${i <= (r.etoiles||0) ? '' : 'vide'}" onclick="noter(this, ${i})">★</span>`).join('')}
   </span>` : '';
@@ -832,7 +832,7 @@ async function signaler(id) {
 }
 
 async function ajouterReponse(id) {
-  if (!estMentor()) return toast('Seuls les mentors peuvent répondre.', 'erreur');
+  if (!estMentor()) return toast('Seuls les référents peuvent répondre.', 'erreur');
   const inp = document.getElementById('rep-input-'+id);
   const contenu = (inp?.value || '').trim();
   if (!contenu) return toast('Écrivez votre réponse.', 'erreur');
@@ -1049,7 +1049,7 @@ function rendreProfil() {
     </div>
     <div class="stat-item">
       <span class="stat-valeur">${u.mentorsSuivis}</span>
-      <span class="stat-label">Mentors suivis</span>
+      <span class="stat-label">Référents suivis</span>
     </div>
     ${estMentor() ? `<div class="stat-item accent">
       <span class="stat-valeur">12</span>
@@ -1058,7 +1058,7 @@ function rendreProfil() {
   document.getElementById('tabs-profil').innerHTML = `
     <div class="tab-profil actif" onclick="ongletProfil(this, 'questions')">Mes questions</div>
     <div class="tab-profil" onclick="ongletProfil(this, 'sauvees')">Questions sauvegardées</div>
-    <div class="tab-profil" onclick="ongletProfil(this, 'mentors')">Mentors suivis</div>`;
+    <div class="tab-profil" onclick="ongletProfil(this, 'mentors')">Référents suivis</div>`;
   ongletProfil(document.querySelector('.tab-profil.actif'), 'questions');
 }
 function ongletProfil(elem, t) {
@@ -1075,7 +1075,7 @@ function ongletProfil(elem, t) {
   } else {
     const ids = [...etat.suivis];
     const suiv = ids.length ? mentors.filter(m => etat.suivis.has(m.id)) : mentors.slice(0, 4);
-    c.innerHTML = `<div class="carte"><div class="carte-titre">Mes mentors suivis</div>${suiv.map(m => `
+    c.innerHTML = `<div class="carte"><div class="carte-titre">Mes référents suivis</div>${suiv.map(m => `
       <div class="suivi-item" onclick="ouvrirProfilMentor(${m.id})">
         ${avatarHTML(m.initiales)}
         <div class="info"><strong>${echapper(m.prenom + ' ' + m.nom)}</strong><span>${echapper(m.secteur + ' · ' + m.pays)}</span></div>
@@ -1093,7 +1093,7 @@ function rendreProfilMentor(m) {
     <div class="col-infos">
       <h2>${echapper(m.prenom + ' ' + m.nom)} ${m.verifie ? badgeMentorVerifie() : ''}</h2>
       <div class="ligne-meta">
-        <span class="badge-role badge-mentor">${ic('trophee','ic ic-s')} Mentor</span>
+        <span class="badge-role badge-mentor">${ic('trophee','ic ic-s')} Référent</span>
         <span>${ic('position','ic ic-s')} ${echapper(m.ville + ', ' + m.pays)}</span>
         <span><span class="point-statut ${m.dispo}"></span>${dispoLabel}</span>
       </div>
@@ -1142,7 +1142,7 @@ function ongletMentor(elem, t) {
 /* ============================================================
    ESPACE MENTOR (réservé au rôle mentor)
    Tableau de bord personnel : statut de vérification, statistiques,
-   et questions sans réponse dans les secteurs d'expertise du mentor.
+   et questions sans réponse dans les secteurs d'expertise du référent.
    ============================================================ */
 function rendreEspaceMentor() {
   const u = etat.utilisateur;
@@ -1152,8 +1152,8 @@ function rendreEspaceMentor() {
     c.innerHTML = `
       <div class="etat-vide carte" style="text-align:center;">
         <div class="illu">${ic('trophee','ic ic-l')}</div>
-        <h3>Devenez mentor vérifié</h3>
-        <p>Partagez votre expérience professionnelle avec les étudiants.
+        <h3>Devenez référent vérifié</h3>
+        <p>Partagez votre expérience professionnelle avec les bénéficiaires.
            Votre candidature sera examinée par un administrateur, et vous
            recevrez la réponse par e-mail.</p>
         <button class="btn btn-primaire" style="margin-top:14px;"
@@ -1167,7 +1167,7 @@ function rendreEspaceMentor() {
     c.innerHTML = `
       <div class="entete-mentor">
         <div>
-          <h2>Espace mentor</h2>
+          <h2>Espace référent</h2>
           <p style="color:var(--texte-doux);">
             Votre candidature suit son cours.
           </p>
@@ -1185,7 +1185,7 @@ function rendreEspaceMentor() {
         </p>
         <p style="color:var(--texte-doux); font-size:14px; line-height:1.6; margin-top:10px;">
           Vous pouvez déjà répondre aux questions de la communauté&nbsp;: le
-          badge <b>Mentor vérifié</b> apparaîtra sur vos réponses une fois la
+          badge <b>Référent vérifié</b> apparaîtra sur vos réponses une fois la
           validation effectuée.
         </p>
         <div style="display:flex; gap:10px; margin-top:16px;">
@@ -1214,8 +1214,8 @@ function rendreEspaceMentor() {
   c.innerHTML = `
     <div class="entete-mentor">
       <div>
-        <h2>Espace mentor</h2>
-        <p style="color:var(--texte-doux);">Suivez votre activité et repérez les étudiants à aider.</p>
+        <h2>Espace référent</h2>
+        <p style="color:var(--texte-doux);">Suivez votre activité et repérez les bénéficiaires à aider.</p>
       </div>
       <span class="bandeau-verif ${u.verifie ? 'ok' : 'attente'}">
         ${ic(u.verifie ? 'check' : 'cloche','ic ic-s')}
@@ -1273,7 +1273,7 @@ async function devenirMentor() {
   zone.innerHTML = `
     <div class="entete-mentor">
       <div>
-        <h2>Devenir mentor vérifié</h2>
+        <h2>Devenir référent vérifié</h2>
         <p style="color:var(--texte-doux);">
           Présentez votre parcours. Un administrateur examinera votre
           demande et vous recevrez sa réponse par e-mail.
@@ -1310,7 +1310,7 @@ async function devenirMentor() {
       </div>
 
       <div class="champ">
-        <label for="cm-motivation">Pourquoi souhaitez-vous mentorer ? <span class="obligatoire">*</span></label>
+        <label for="cm-motivation">Pourquoi souhaitez-vous accompagner ? <span class="obligatoire">*</span></label>
         <textarea id="cm-motivation" maxlength="900" rows="4"
           placeholder="Expliquez ce que vous voulez transmettre et à qui (80 caractères minimum). Ce texte n'est lu que par les administrateurs."></textarea>
         <div class="compteur-car"><span id="cm-moti-cnt">0</span>/900</div>
@@ -1483,7 +1483,7 @@ function rechercher(terme) {
   const qres = questions.filter(q => q.titre.toLowerCase().includes(t) || q.secteur.toLowerCase().includes(t));
   let html = '';
   if (mres.length) {
-    html += '<h5>Mentors</h5>';
+    html += '<h5>Référents</h5>';
     html += mres.slice(0,4).map(m => `<div class="item-resultat" onmousedown="ouvrirProfilMentor(${m.id}); document.getElementById('dropRech').classList.remove('ouvert');">${avatarHTML(m.initiales, 's')}<div><strong>${echapper(m.prenom + ' ' + m.nom)}</strong><div style="font-size:12px; color:var(--texte-doux);">${echapper(m.secteur + ' · ' + m.pays)}</div></div></div>`).join('');
   }
   if (qres.length) {
@@ -1650,7 +1650,7 @@ function panneauNotifsParam() {
     ['Nouvelle réponse à mes questions', true],
     ['Réactions sur mes publications', true],
     ['Nouvelles questions dans mes secteurs', false],
-    ['Réponses des mentors que je suis', true],
+    ['Réponses des référents que je suis', true],
     ['Newsletter hebdomadaire', false],
   ];
   return `<div class="section-param"><h2>Notifications</h2>
@@ -1903,12 +1903,12 @@ function _rendreDashboardAdmin(d) {
   const kpis = [
     ['groupe',  'Total inscrits',   d.utilisateurs],
     ['profil',  'Étudiants',        d.etudiants],
-    ['trophee', 'Mentors',          d.mentors],
+    ['trophee', 'Référents',        d.mentors],
     ['bouclier','Administrateurs',  d.admins],
     ['bulle',   'Questions',        d.questions],
     ['etincelle','Réponses',        d.reponses],
     ['drapeau', 'Signalements ouverts', d.signalements_ouverts],
-    ['check',   'Mentors à vérifier',   d.mentors_a_verifier],
+    ['check',   'Référents à vérifier', d.mentors_a_verifier],
   ];
   return `<h2 style="margin-bottom:18px;">Tableau de bord</h2>
     <div class="kpi-grid">
@@ -1932,7 +1932,7 @@ async function adminUsers() {
       <tbody>${liste.map(u => `<tr>
         <td><strong>${echapper(u.prenom)} ${echapper(u.nom)}</strong></td>
         <td>${echapper(u.email)}</td>
-        <td><span class="badge-role ${u.role==='mentor'?'badge-mentor':''}">${echapper(u.role)}</span></td>
+        <td><span class="badge-role ${u.role==='mentor'?'badge-mentor':''}">${echapper(libelleRole(u.role))}</span></td>
         <td><span class="tag ${u.est_actif?'tag-vert':'tag-rose'}">${u.est_actif?'actif':'suspendu'}</span></td>
         <td>
           ${u.est_actif
@@ -1976,11 +1976,11 @@ async function adminMentors() {
   if (!MODE.api) return `<div class="carte"><p style="color:var(--texte-doux);">Ce module est disponible lorsque le serveur LaSourcee est connecté.</p></div>`;
   const att = await API.get('/admin/mentors-a-verifier');
   if (!att.length) {
-    return `<h2 style="margin-bottom:18px;">Validation des mentors</h2>
+    return `<h2 style="margin-bottom:18px;">Validation des référents</h2>
       <div class="carte"><p style="color:var(--texte-doux);">
         Aucun mentor en attente de vérification.</p></div>`;
   }
-  return `<h2 style="margin-bottom:18px;">Validation des mentors (${att.length})</h2>
+  return `<h2 style="margin-bottom:18px;">Validation des référents (${att.length})</h2>
     <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap:14px;">
       ${att.map(m => {
         const init = ((m.prenom||'?')[0] + (m.nom||'?')[0]).toUpperCase();
@@ -1999,11 +1999,11 @@ async function adminMentors() {
 }
 
 async function adminMentorAction(action, idMentor) {
-  const conf = action === 'verifier' ? 'Valider ce mentor ?' : 'Refuser ce mentor (rétrograder en étudiant) ?';
+  const conf = action === 'verifier' ? 'Valider ce référent ?' : 'Refuser ce référent (revenir au compte bénéficiaire) ?';
   if (!confirm(conf)) return;
   try {
     await API.post(`/admin/mentors/${idMentor}/${action}`, {});
-    toast(action === 'verifier' ? 'Mentor validé.' : 'Mentor refusé.');
+    toast(action === 'verifier' ? 'Référent validé.' : 'Référent refusé.');
     changerPanAdmin(document.querySelector('[data-adm=mentors]'), 'mentors');
   } catch (err) { toast(err.message, 'erreur'); }
 }
@@ -2647,3 +2647,25 @@ function fermerMentionsLegales() {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') fermerMentionsLegales();
 });
+
+/* ============================================================
+   LIBELLÉS DES RÔLES
+   ------------------------------------------------------------
+   Les rôles restent stockés sous leurs noms techniques ('mentor',
+   'etudiant'). Renommer ces valeurs imposerait de migrer une base
+   vivante et une trentaine de requêtes, sans rien changer pour
+   personne. Seule la traduction affichée compte, et elle est faite
+   ici, à un seul endroit.
+   ============================================================ */
+
+const LIBELLES_ROLES = {
+  visiteur: 'Visiteur',
+  etudiant: 'Bénéficiaire',
+  mentor: 'Référent',
+  admin: 'Administrateur',
+  super_admin: 'Administrateur principal',
+};
+
+function libelleRole(role) {
+  return LIBELLES_ROLES[role] || role || '';
+}

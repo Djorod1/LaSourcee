@@ -321,7 +321,7 @@ def verifier_mentor(id_mentor):
         (id_mentor,), commit=True,
     )
     if not n:
-        return jsonify({"erreur": "Mentor introuvable."}), 404
+        return jsonify({"erreur": "Référent introuvable."}), 404
 
     # S'assure que le rôle suit la validation
     executer("UPDATE utilisateur SET role = 'mentor' WHERE id_utilisateur = %s",
@@ -346,7 +346,7 @@ def refuser_mentor(id_mentor):
         (id_mentor,), commit=True,
     )
     if not n:
-        return jsonify({"erreur": "Mentor introuvable."}), 404
+        return jsonify({"erreur": "Référent introuvable."}), 404
 
     # Prévient AVANT de supprimer les détails, pour disposer des infos
     from routes.candidature_mentor import notifier_decision

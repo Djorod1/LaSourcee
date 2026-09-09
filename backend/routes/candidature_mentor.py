@@ -84,7 +84,7 @@ def deposer_candidature():
     )
     if details and details["est_verifie"]:
         return jsonify({"erreur":
-            "Votre compte mentor est déjà vérifié."}), 409
+            "Votre compte référent est déjà vérifié."}), 409
 
     # ---- Enregistrement --------------------------------------------------
     with curseur(commit=True) as cur:
@@ -178,7 +178,7 @@ def etat_candidature():
     if details["est_verifie"]:
         return jsonify({
             "statut": "validee",
-            "message": "Votre compte mentor est vérifié.",
+            "message": "Votre compte référent est vérifié.",
             "details": details,
         })
     return jsonify({
@@ -209,9 +209,9 @@ def _prevenir_administrateurs(profil, profession, organisation, annees,
 
     for admin in admins:
         html = mod_email.gabarit_html(
-            "Nouvelle candidature de mentor",
+            "Nouvelle candidature de référent",
             [f"Bonjour {admin['prenom']},",
-             f"<b>{candidat}</b> souhaite devenir mentor sur LaSourcee.",
+             f"<b>{candidat}</b> souhaite devenir référent sur LaSourcee.",
              f"<b>Poste :</b> {poste}<br>"
              f"<b>Expérience :</b> {annees} an{'s' if annees > 1 else ''}<br>"
              f"<b>Contact :</b> {profil['email']}"
@@ -219,11 +219,11 @@ def _prevenir_administrateurs(profil, profession, organisation, annees,
              f"<b>Motivation :</b><br><i>{motivation[:600]}</i>"],
             bouton_texte="Examiner la candidature",
             bouton_lien=lien_admin,
-            note_bas="Espace d'administration → Validation mentors.",
+            note_bas="Espace d'administration → Validation référents.",
         )
         texte = (
             f"Bonjour {admin['prenom']},\n\n"
-            f"{candidat} souhaite devenir mentor sur LaSourcee.\n\n"
+            f"{candidat} souhaite devenir référent sur LaSourcee.\n\n"
             f"Poste       : {poste}\n"
             f"Experience  : {annees} an(s)\n"
             f"Contact     : {profil['email']}\n\n"
@@ -231,7 +231,7 @@ def _prevenir_administrateurs(profil, profession, organisation, annees,
             f"Validez ou refusez depuis l'espace d'administration :\n{lien_admin}\n"
         )
         mod_email.envoyer(admin["email"],
-                          f"Candidature mentor : {candidat}", texte,
+                          f"Candidature référent : {candidat}", texte,
                           corps_html=html)
 
 
@@ -241,24 +241,24 @@ def _accuser_reception(profil):
         "Votre candidature a bien été reçue",
         [f"Bonjour {profil['prenom']},",
          "Nous avons bien reçu votre candidature au statut de "
-         "<b>mentor vérifié</b> sur LaSourcee.",
+         "<b>référent vérifié</b> sur LaSourcee.",
          "Un administrateur va l'examiner. Vous recevrez un e-mail dès "
          "qu'une décision sera prise, généralement sous quelques jours.",
          "En attendant, vous pouvez déjà répondre aux questions de la "
          "communauté : votre badge « vérifié » apparaîtra une fois la "
          "validation effectuée."],
-        note_bas="Merci de contribuer à l'entraide entre étudiants.",
+        note_bas="Merci de contribuer à l'entraide entre les membres.",
     )
     texte = (
         f"Bonjour {profil['prenom']},\n\n"
-        f"Nous avons bien recu votre candidature au statut de mentor verifie "
+        f"Nous avons bien recu votre candidature au statut de referent verifie "
         f"sur LaSourcee.\n\n"
         f"Un administrateur va l'examiner. Vous recevrez un e-mail des qu'une "
         f"decision sera prise.\n\n"
         f"L'equipe LaSourcee"
     )
     mod_email.envoyer(profil["email"],
-                      "Votre candidature de mentor sur LaSourcee", texte,
+                      "Votre candidature de référent sur LaSourcee", texte,
                       corps_html=html)
 
 
@@ -278,30 +278,30 @@ def notifier_decision(id_mentor, acceptee, motif=""):
 
     if acceptee:
         html = mod_email.gabarit_html(
-            "Vous êtes désormais mentor vérifié",
+            "Vous êtes désormais référent vérifié",
             [f"Félicitations {u['prenom']},",
              "Votre candidature a été <b>acceptée</b>. Votre compte porte "
-             "maintenant le badge <b>Mentor vérifié</b>, visible par tous "
-             "les étudiants de la plateforme.",
+             "maintenant le badge <b>Référent vérifié</b>, visible par tous "
+             "les membres de la plateforme.",
              "Vous pouvez répondre aux questions, être suivi par les "
-             "étudiants et apparaître dans l'annuaire des mentors."],
-            bouton_texte="Accéder à mon espace mentor",
+             "bénéficiaires et apparaître dans l'annuaire des référents."],
+            bouton_texte="Accéder à mon espace référent",
             bouton_lien=lien,
             note_bas="Merci de faire vivre l'entraide sur LaSourcee.",
         )
         texte = (
             f"Felicitations {u['prenom']},\n\n"
-            f"Votre candidature de mentor a ete acceptee. Votre compte porte "
-            f"desormais le badge Mentor verifie.\n\n"
+            f"Votre candidature de referent a ete acceptee. Votre compte porte "
+            f"desormais le badge Referent verifie.\n\n"
             f"Connectez-vous : {lien}\n\nL'equipe LaSourcee"
         )
-        sujet = "Votre candidature de mentor est acceptée"
+        sujet = "Votre candidature de référent est acceptée"
     else:
         raison = (f"<br><br><b>Motif :</b> {motif}" if motif else "")
         html = mod_email.gabarit_html(
-            "Suite à votre candidature de mentor",
+            "Suite à votre candidature de référent",
             [f"Bonjour {u['prenom']},",
-             "Après examen, votre candidature au statut de mentor vérifié "
+             "Après examen, votre candidature au statut de référent vérifié "
              "n'a pas été retenue pour le moment." + raison,
              "Votre compte reste actif : vous pouvez continuer à poser des "
              "questions et à participer à la communauté. Vous pourrez "
@@ -312,11 +312,11 @@ def notifier_decision(id_mentor, acceptee, motif=""):
         )
         texte = (
             f"Bonjour {u['prenom']},\n\n"
-            f"Apres examen, votre candidature au statut de mentor verifie n'a "
+            f"Apres examen, votre candidature au statut de referent verifie n'a "
             f"pas ete retenue pour le moment."
             + (f"\n\nMotif : {motif}" if motif else "")
             + f"\n\nVotre compte reste actif.\n\nL'equipe LaSourcee"
         )
-        sujet = "Suite à votre candidature de mentor"
+        sujet = "Suite à votre candidature de référent"
 
     return mod_email.envoyer(u["email"], sujet, texte, corps_html=html)

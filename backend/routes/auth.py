@@ -62,7 +62,7 @@ def inscription():
     if not REGEX_EMAIL.match(email):
         return _erreur("Adresse e-mail invalide.")
     if role not in ROLES_AUTORISES:
-        return _erreur("Rôle invalide (étudiant ou mentor).")
+        return _erreur("Rôle invalide : bénéficiaire ou référent.")
     ok, message = mot_de_passe_valide(mdp)
     if not ok:
         return _erreur(message)
