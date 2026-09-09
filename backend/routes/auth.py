@@ -2,6 +2,7 @@
 
 import logging
 import re
+import secrets
 
 from flask import Blueprint, current_app, g, request, jsonify, make_response
 
@@ -132,13 +133,20 @@ def _envoyer_email_verification(id_user: int, email: str, prenom: str):
     from utils.email import envoyer
 
     jeton = secrets.token_hex(32)
+    # Un code de six chiffres accompagne le lien. Le lien reste le
+    # chemin le plus court, mais il dépend de l'adresse du site, de la
+    # messagerie qui peut le tronquer, et du navigateur qui l'ouvre.
+    # Six chiffres se recopient depuis n'importe quel écran, y compris
+    # depuis un téléphone où l'e-mail s'ouvre dans une autre
+    # application. Ils ne dépendent d'aucune URL.
+    code = f"{secrets.randbelow(1000000):06d}"
     expire = datetime.utcnow() + timedelta(hours=24)
     try:
         executer(
             """INSERT INTO verification_email
-                  (id_jeton, id_utilisateur, expire_le)
-               VALUES (%s, %s, %s)""",
-            (jeton, id_user, expire),
+                  (id_jeton, code, id_utilisateur, expire_le)
+               VALUES (%s, %s, %s, %s)""",
+            (jeton, code, id_user, expire),
             commit=True,
         )
         lien = url_publique("/verifier-email.html?jeton=" + jeton)
@@ -146,9 +154,12 @@ def _envoyer_email_verification(id_user: int, email: str, prenom: str):
             email,
             "Bienvenue sur LaSourcee, confirmez votre adresse",
             f"Bonjour {prenom},\n\n"
-            f"Bienvenue sur LaSourcee. Pour activer votre compte,\n"
-            f"cliquez sur le lien ci-dessous (valable 24 heures) :\n\n"
+            f"Bienvenue sur LaSourcee. Pour activer votre compte, saisissez\n"
+            f"ce code dans la page qui vous le demande :\n\n"
+            f"    {code}\n\n"
+            f"Vous pouvez aussi cliquer directement sur ce lien :\n\n"
             f"{lien}\n\n"
+            f"Le code et le lien sont valables 24 heures.\n"
             f"Si vous n'avez pas créé ce compte, ignorez ce message.\n\n"
             f"L'équipe LaSourcee",
         )
@@ -256,6 +267,72 @@ def verifier_email():
             "WHERE id_jeton = %s",
             (jeton,),
         )
+    return jsonify({"ok": True, "message": "Adresse e-mail vérifiée."})
+
+
+# Six chiffres se devinent en un million de coups : sans limite, un
+# robot y parvient. Dix essais par code suffisent largement à qui
+# recopie depuis sa boîte, et ferment la porte au tâtonnement.
+MAX_ESSAIS_CODE = 10
+
+
+@bp_auth.post("/verifier-code")
+def verifier_code():
+    """Valide une adresse à partir du code reçu par e-mail.
+
+    Le lien reste disponible, mais il dépend de l'adresse du site, de la
+    messagerie qui peut le couper et du navigateur qui l'ouvre. Le code
+    ne dépend de rien : il se recopie à la main.
+    """
+    from utils.dates import est_expire
+    d = request.get_json(silent=True) or {}
+    email = (d.get("email") or "").strip().lower()
+    code = "".join(c for c in (d.get("code") or "") if c.isdigit())
+
+    if not email or len(code) != 6:
+        return _erreur("Saisissez l'adresse et les six chiffres du code.", 400)
+
+    ligne = recuperer_un(
+        """SELECT v.id_jeton, v.code, v.tentatives, v.expire_le, v.verifie_le,
+                  v.id_utilisateur, u.email_verifie
+             FROM verification_email v
+             JOIN utilisateur u ON u.id_utilisateur = v.id_utilisateur
+            WHERE u.email = %s AND v.verifie_le IS NULL
+         ORDER BY v.cree_le DESC LIMIT 1""",
+        (email,),
+    )
+    # Un compte déjà confirmé répond comme un succès : la personne a
+    # peut-être cliqué le lien puis saisi le code, et lui opposer une
+    # erreur la ferait douter de son propre compte.
+    if not ligne:
+        deja = recuperer_un(
+            "SELECT email_verifie FROM utilisateur WHERE email = %s", (email,))
+        if deja and deja["email_verifie"]:
+            return jsonify({"ok": True, "message": "Adresse déjà vérifiée."})
+        return _erreur("Aucun code en attente pour cette adresse. "
+                       "Demandez-en un nouveau.", 410)
+
+    if est_expire(ligne["expire_le"]):
+        return _erreur("Ce code a expiré. Demandez-en un nouveau.", 410)
+    if (ligne["tentatives"] or 0) >= MAX_ESSAIS_CODE:
+        return _erreur("Trop d'essais sur ce code. Demandez-en un nouveau.",
+                       429)
+
+    if not ligne["code"] or not secrets.compare_digest(str(ligne["code"]), code):
+        executer(
+            "UPDATE verification_email SET tentatives = tentatives + 1 "
+            "WHERE id_jeton = %s", (ligne["id_jeton"],), commit=True)
+        restants = MAX_ESSAIS_CODE - (ligne["tentatives"] or 0) - 1
+        return _erreur(
+            f"Code incorrect. Il vous reste {max(restants, 0)} essai(s).", 400)
+
+    with curseur(commit=True) as cur:
+        cur.execute(
+            "UPDATE utilisateur SET email_verifie = 1 WHERE id_utilisateur = %s",
+            (ligne["id_utilisateur"],))
+        cur.execute(
+            "UPDATE verification_email SET verifie_le = CURRENT_TIMESTAMP "
+            "WHERE id_jeton = %s", (ligne["id_jeton"],))
     return jsonify({"ok": True, "message": "Adresse e-mail vérifiée."})
 
 

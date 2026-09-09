@@ -35,20 +35,27 @@ RACINE = Path(__file__).resolve().parent.parent
 # plateforme.
 # ---------------------------------------------------------------------
 
-DOMAINE = "lasource-test.vercel.app"
+# Adresse du deploiement, telle que Vercel la pose dans VERCEL_URL.
+DEPLOIEMENT = "lasource-test-a1b2c3-equipe.vercel.app"
+# Domaine du site, celui que les visiteurs connaissent. C'est lui qui
+# doit figurer dans les liens envoyes par e-mail : l'adresse d'un
+# deploiement est protegee par une authentification Vercel, et les
+# nouveaux inscrits y tombaient sur un mur.
+DOMAINE = "lasource-test.org"
 
 os.environ.setdefault("DATABASE_URL",
                       "postgresql://postgres@127.0.0.1:5433/lasource_deploi")
 os.environ.update({
     "VERCEL": "1",
     "VERCEL_ENV": "production",
-    "VERCEL_URL": DOMAINE,
+    "VERCEL_URL": DEPLOIEMENT,
+    "VERCEL_PROJECT_PRODUCTION_URL": DOMAINE,
     "DB_TYPE": "postgres",
     "SECRET_KEY": "cle-de-test-stable-pour-la-verification-de-deploiement",
     "EMAIL_MODE": "console",
     "VERIFICATION_EMAIL_OBLIGATOIRE": "0",
 })
-os.environ.pop("URL_PLATEFORME", None)   # doit être déduite de VERCEL_URL
+os.environ.pop("URL_PLATEFORME", None)   # doit être déduite du domaine de production
 
 sys.path.insert(0, str(RACINE / "backend"))
 
@@ -142,9 +149,13 @@ def executer():
 
     verifier("Environnement détecté comme production", Config.EST_PRODUCTION)
     verifier("Moteur PostgreSQL sélectionné", Config.DB_TYPE == "postgres")
-    verifier("Adresse publique déduite de VERCEL_URL",
+    verifier("Adresse publique prise sur le domaine de production",
              Config.URL_PLATEFORME == f"https://{DOMAINE}",
              Config.URL_PLATEFORME)
+    verifier("L'adresse du déploiement n'est jamais utilisée",
+             DEPLOIEMENT not in Config.URL_PLATEFORME,
+             "un lien vers un déploiement précis demande une "
+             "authentification Vercel : personne n'aboutit")
 
     bloquants = [m for g, m in anomalies_configuration() if g == "bloquant"]
     verifier("Aucune anomalie bloquante de configuration",

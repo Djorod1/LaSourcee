@@ -216,6 +216,15 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   font-size: 12px; color: var(--texte-doux);
   margin-top: 6px; line-height: 1.45;
 }
+/* Saisie d'un code à six chiffres : caractères espacés et centrés, pour
+   qu'on voie d'un coup d'œil combien on en a tapé. */
+.saisie-code {
+  font-size: 22px;
+  letter-spacing: .4em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  padding-left: .4em;
+}
 .sep-ou {
   display: flex; align-items: center; gap: 12px; margin: 20px 0;
   color: var(--texte-doux); font-size: 13px;

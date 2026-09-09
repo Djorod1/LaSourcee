@@ -25,7 +25,7 @@ Lancer la vérification complète à tout moment :
 
 ```bash
 cd backend
-python tests_integration.py       # doit afficher 311/311 tests réussis
+python tests_integration.py       # doit afficher 325/325 tests réussis
 ```
 
 La même suite tourne à l'identique sur les trois moteurs. Pour la
@@ -274,8 +274,8 @@ cd backend && ../.venv/bin/python gerer_admins.py creer
 - [ ] `VERIFICATION_EMAIL_OBLIGATOIRE=1`
 - [ ] HTTPS actif
 - [ ] Comptes administrateurs créés et mots de passe temporaires changés
-- [ ] `python tests_integration.py` affiche 311/311
-- [ ] `python tests_deploiement.py` affiche 79/79 (déploiement serverless)
+- [ ] `python tests_integration.py` affiche 325/325
+- [ ] `python tests_deploiement.py` affiche 80/80 (déploiement serverless)
 
 ---
 

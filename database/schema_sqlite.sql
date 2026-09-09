@@ -282,6 +282,11 @@ CREATE INDEX idx_reinit_expire ON reinitialisation_mdp(expire_le);
 
 CREATE TABLE verification_email (
     id_jeton        TEXT    PRIMARY KEY,
+    -- Code court saisi a la main. Un lien peut echouer, etre coupe par
+    -- la messagerie ou pointer ailleurs ; six chiffres se recopient
+    -- depuis n'importe quel ecran.
+    code            TEXT,
+    tentatives      INTEGER NOT NULL DEFAULT 0,
     id_utilisateur  INTEGER NOT NULL,
     cree_le         TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expire_le       TEXT    NOT NULL,

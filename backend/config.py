@@ -128,10 +128,31 @@ class Config:
     # ---- Adresse publique ------------------------------------------------
     # Utilisée dans les liens des e-mails (vérification d'adresse,
     # réinitialisation de mot de passe, notifications).
-    URL_PLATEFORME = (os.getenv("URL_PLATEFORME")
-                      or (f"https://{os.getenv('VERCEL_URL')}"
-                          if os.getenv("VERCEL_URL") else "")
-                      or "http://localhost:5000").rstrip("/")
+    #
+    # L'ordre compte, et c'est tout le sujet. VERCEL_URL désigne un
+    # déploiement précis, du genre « projet-a1b2c3-equipe.vercel.app »,
+    # et non le domaine du site. Cette adresse change à chaque mise en
+    # ligne et se trouve derrière l'authentification Vercel : les liens
+    # de confirmation y conduisaient les nouveaux inscrits, qui
+    # tombaient sur un mur au lieu de valider leur adresse.
+    # VERCEL_PROJECT_PRODUCTION_URL, elle, désigne le domaine de
+    # production : elle passe donc devant.
+    #
+    # Le domaine canonique sert de dernier recours en production. Il est
+    # déjà déclaré dans la page, le plan du site et le fichier robots :
+    # le répéter ici n'ajoute pas une source de vérité, cela évite qu'un
+    # e-mail parte vers une adresse où personne ne peut aboutir.
+    DOMAINE_CANONIQUE = "https://lasourcee.org"
+
+    URL_PLATEFORME = (
+        os.getenv("URL_PLATEFORME")
+        or (f"https://{os.getenv('VERCEL_PROJECT_PRODUCTION_URL')}"
+            if os.getenv("VERCEL_PROJECT_PRODUCTION_URL") else "")
+        or (DOMAINE_CANONIQUE if EST_PRODUCTION else "")
+        or (f"https://{os.getenv('VERCEL_URL')}"
+            if os.getenv("VERCEL_URL") else "")
+        or "http://localhost:5000"
+    ).rstrip("/")
 
     # ---- Confirmation d'adresse e-mail -----------------------------------
     # Exiger la confirmation avant la première connexion empêche de créer

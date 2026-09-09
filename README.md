@@ -134,8 +134,8 @@ DATABASE_URL="postgresql://..." ./demarrer.sh tests   # ajoute PostgreSQL
 |---|---|
 | `tests_redaction.py` | aucun tiret cadratin dans les 18 fichiers dont le texte atteint un utilisateur |
 | `tests_contraste.py` | 15 couples de couleurs au niveau WCAG AA, en clair comme en sombre |
-| `tests_integration.py` | 311 tests fonctionnels, sur SQLite puis sur PostgreSQL |
-| `tests_deploiement.py` | 79 vérifications de mise en ligne |
+| `tests_integration.py` | 325 tests fonctionnels, sur SQLite puis sur PostgreSQL |
+| `tests_deploiement.py` | 80 vérifications de mise en ligne |
 
 Sans `DATABASE_URL`, les deux dernières lignes sont annoncées comme non
 lancées plutôt que passées sous silence.
@@ -194,8 +194,8 @@ frontend et pourrait servir une autre interface sans modification.
 │   ├── app.py                Application Flask, erreurs, fichiers statiques
 │   ├── config.py             Configuration et diagnostic de démarrage
 │   ├── gerer_admins.py       Gestion des comptes administrateurs
-│   ├── tests_integration.py  311 tests fonctionnels
-│   ├── tests_deploiement.py  79 vérifications de mise en ligne
+│   ├── tests_integration.py  325 tests fonctionnels
+│   ├── tests_deploiement.py  80 vérifications de mise en ligne
 │   ├── tests_redaction.py    absence de tiret dans les textes visibles
 │   ├── tests_contraste.py    lisibilité des couleurs (WCAG AA)
 │   ├── models/db.py          Accès uniforme SQLite / PostgreSQL / MySQL

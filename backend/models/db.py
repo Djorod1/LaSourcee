@@ -345,6 +345,10 @@ COLONNES_ATTENDUES = [
     # Droits d'administration par domaine. NULL distingue un compte
     # antérieur, qui garde tout, d'une liste vide, qui n'accorde rien.
     ("utilisateur", "permissions", "TEXT"),
+    # Code court de confirmation, saisi a la main quand le lien
+    # n'aboutit pas.
+    ("verification_email", "code", "TEXT"),
+    ("verification_email", "tentatives", "INTEGER NOT NULL DEFAULT 0"),
     ("signalement", "action", "TEXT"),
     ("signalement", "traite_par", "INTEGER"),
     ("signalement", "traite_le", "TEXT"),

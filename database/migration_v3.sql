@@ -33,6 +33,12 @@ ALTER TABLE utilisateur
 
 CREATE TABLE IF NOT EXISTS verification_email (
     id_jeton        CHAR(64)     NOT NULL,
+    -- Code court saisi à la main. Un lien peut échouer, être coupé par
+    -- la messagerie ou pointer vers une adresse de déploiement
+    -- inaccessible ; six chiffres se recopient depuis n'importe quel
+    -- écran.
+    code            VARCHAR(10)  NULL,
+    tentatives      TINYINT UNSIGNED NOT NULL DEFAULT 0,
     id_utilisateur  INT UNSIGNED NOT NULL,
     cree_le         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expire_le       DATETIME     NOT NULL,

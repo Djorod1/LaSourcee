@@ -3493,14 +3493,27 @@ function ouvrirConfirmationAdresse(email) {
       </div>
       <div class="modale-corps">
         <p>Pour vérifier que cette adresse est bien la vôtre, nous vous
-           avons envoyé un lien à <strong>${echapper(email)}</strong>.
-           Ouvrez-le, puis revenez vous connecter.</p>
-        <p class="desc">Le lien est valable vingt-quatre heures. Pensez à
-           regarder dans les indésirables : les messages automatiques y
-           atterrissent souvent la première fois.</p>
-        <button class="btn btn-primaire" id="btn-renvoi"
-                onclick="renvoyerConfirmation('${echapper(email)}')">
-          Renvoyer le lien</button>
+           avons envoyé un message à <strong>${echapper(email)}</strong>.
+           Il contient un code à six chiffres.</p>
+        <div class="champ">
+          <label for="code-confirmation">Code reçu par e-mail</label>
+          <input id="code-confirmation" class="saisie-code" inputmode="numeric"
+                 autocomplete="one-time-code" maxlength="6" placeholder="000000"
+                 onkeydown="if(event.key==='Enter') validerCodeConfirmation('${echapper(email)}', this)" />
+          <p class="aide-champ">Le message contient aussi un lien, si vous
+             préférez. Code et lien valables vingt-quatre heures.</p>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn btn-primaire" id="btn-code"
+                  onclick="validerCodeConfirmation('${echapper(email)}', this)">
+            Valider mon adresse</button>
+          <button class="btn btn-secondaire" id="btn-renvoi"
+                  onclick="renvoyerConfirmation('${echapper(email)}')">
+            Renvoyer le message</button>
+        </div>
+        <p class="desc" style="margin-top:10px;">Pensez à regarder dans les
+           indésirables : les messages automatiques y atterrissent souvent
+           la première fois.</p>
         <p class="note-param" id="etat-renvoi"></p>
       </div>
     </div>`;
@@ -3509,6 +3522,38 @@ function ouvrirConfirmationAdresse(email) {
   });
   document.body.appendChild(fond);
   document.body.style.overflow = 'hidden';
+}
+
+/* Validation par le code reçu. Elle ne dépend d'aucune URL : c'est
+   précisément ce qui manquait quand le lien conduisait vers une adresse
+   de déploiement où personne ne pouvait aboutir. */
+async function validerCodeConfirmation(email, bouton) {
+  const champ = document.getElementById('code-confirmation');
+  const info = document.getElementById('etat-renvoi');
+  const code = (champ?.value || '').replace(/\D/g, '');
+  if (code.length !== 6) {
+    if (info) { info.style.color = 'var(--rouge-fonce)';
+                info.textContent = 'Saisissez les six chiffres du code.'; }
+    champ?.focus();
+    return;
+  }
+  const libelle = bouton.textContent;
+  bouton.disabled = true; bouton.textContent = 'Vérification…';
+  try {
+    const r = await API.post('/auth/verifier-code', { email, code });
+    if (info) { info.style.color = 'var(--vert)';
+                info.textContent = r.message || 'Adresse vérifiée.'; }
+    toast('Adresse vérifiée. Vous pouvez vous connecter.');
+    if (etat.utilisateur) etat.utilisateur.email_verifie = true;
+    majRappelConfirmation();
+    setTimeout(fermerMentionsLegales, 1400);
+  } catch (err) {
+    if (info) { info.style.color = 'var(--rouge-fonce)';
+                info.textContent = err.message || 'Code refusé.'; }
+    champ?.select();
+  } finally {
+    bouton.disabled = false; bouton.textContent = libelle;
+  }
 }
 
 async function renvoyerConfirmation(email) {
@@ -3549,11 +3594,14 @@ function majRappelConfirmation() {
       + "aucun lien n'a pu vous être adressé. Votre compte reste "
       + 'utilisable, il n\'y a rien à faire de votre côté.</span>';
   } else {
+    // Le bouton ouvre la fenêtre de saisie du code plutôt que de
+    // renvoyer un message de plus : quelqu'un qui voit ce bandeau a
+    // déjà reçu le sien, et c'est le lien qui n'a pas abouti.
     bandeau.innerHTML =
       '<span><strong>Adresse non confirmée.</strong> '
-      + "Ouvrez le lien reçu par e-mail pour sécuriser votre compte.</span>"
-      + '<button class="btn btn-petit" onclick="renvoyerMaConfirmation(this)">'
-      + 'Renvoyer le lien</button>';
+      + 'Saisissez le code reçu par e-mail pour sécuriser votre compte.</span>'
+      + '<button class="btn btn-petit" onclick="ouvrirConfirmationAdresse('
+      + `'${echapper(u.email)}')">Saisir mon code</button>`;
   }
   if (!existant) document.body.prepend(bandeau);
 }

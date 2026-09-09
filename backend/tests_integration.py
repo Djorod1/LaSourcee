@@ -1494,6 +1494,108 @@ def executer_tests():
     verifier("Les droits retirés ferment l'accès",
              res.get("/api/admin/signalements").status_code in (401, 403))
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  25. CONFIRMATION PAR CODE ET ADRESSE DES LIENS")
+    print("═" * 70)
+
+    # L'adresse des liens envoyes par e-mail. VERCEL_URL designe un
+    # deploiement precis, protege par une authentification Vercel : les
+    # nouveaux inscrits tombaient sur un mur au lieu de confirmer.
+    import subprocess as _sp
+    def _url(env):
+        base = {"PATH": os.environ.get("PATH", "")}
+        base.update(env)
+        return _sp.run([sys.executable, "-c",
+                        "import sys; sys.path.insert(0,'.');"
+                        "from config import Config; print(Config.URL_PLATEFORME)"],
+                       capture_output=True, text=True, env=base,
+                       cwd=os.path.dirname(os.path.abspath(__file__))
+                       ).stdout.strip()
+
+    verifier("L'adresse de deploiement n'est jamais utilisee",
+             ".vercel.app" not in _url({
+                 "VERCEL": "1", "VERCEL_ENV": "production",
+                 "VERCEL_URL": "projet-a1b2c3-equipe.vercel.app"}),
+             "un lien vers un deploiement precis est inaccessible")
+    verifier("Le domaine de production prime",
+             _url({"VERCEL": "1", "VERCEL_ENV": "production",
+                   "VERCEL_URL": "x.vercel.app",
+                   "VERCEL_PROJECT_PRODUCTION_URL": "lasourcee.org"})
+             == "https://lasourcee.org")
+    verifier("Une adresse explicite prime sur tout",
+             _url({"VERCEL": "1", "VERCEL_ENV": "production",
+                   "URL_PLATEFORME": "https://autre.exemple.org",
+                   "VERCEL_URL": "x.vercel.app"}) == "https://autre.exemple.org")
+
+    # --- Le code de confirmation ---
+    codeur = app.test_client()
+    codeur.post("/api/auth/inscription", json={
+        "prenom": "Rachidat", "nom": "TIDJANI", "email": "rachidat@test.io",
+        "mot_de_passe": "Rachidat2026!", "role": "etudiant"})
+    code = jeton_sql(
+        "SELECT v.code FROM verification_email v "
+        "JOIN utilisateur u ON u.id_utilisateur = v.id_utilisateur "
+        "WHERE u.email = ?", ("rachidat@test.io",))
+    verifier("Un code est genere a l'inscription", bool(code))
+    verifier("Le code fait six chiffres",
+             bool(code) and len(str(code)) == 6 and str(code).isdigit(), str(code))
+
+    r = anon.post("/api/auth/verifier-code",
+                  json={"email": "rachidat@test.io", "code": "000000"})
+    faux = r.status_code == 400 or str(code) == "000000"
+    verifier("Un code faux est refuse", faux, r.get_data(as_text=True)[:90])
+    verifier("Le refus dit combien d'essais restent",
+             "essai" in (r.get_json() or {}).get("erreur", "").lower()
+             or str(code) == "000000")
+
+    r = anon.post("/api/auth/verifier-code",
+                  json={"email": "rachidat@test.io", "code": "12345"})
+    verifier("Un code trop court est refuse", r.status_code == 400)
+
+    r = anon.post("/api/auth/verifier-code",
+                  json={"email": "rachidat@test.io", "code": str(code)})
+    verifier("Le bon code valide l'adresse", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+    verifier("L'adresse est marquee verifiee en base",
+             jeton_sql("SELECT email_verifie FROM utilisateur WHERE email = ?",
+                       ("rachidat@test.io",)) == 1)
+
+    # Un compte deja confirme repond comme un succes : lui opposer une
+    # erreur le ferait douter de son propre compte.
+    r = anon.post("/api/auth/verifier-code",
+                  json={"email": "rachidat@test.io", "code": str(code)})
+    verifier("Une seconde validation ne provoque pas d'erreur",
+             r.status_code == 200)
+
+    r = anon.post("/api/auth/verifier-code",
+                  json={"email": "inconnu@nulle.part", "code": "123456"})
+    verifier("Une adresse inconnue est refusee proprement",
+             r.status_code == 410)
+
+    # Six chiffres se devinent en un million de coups : sans limite, un
+    # robot y parvient.
+    tatonneur = app.test_client()
+    tatonneur.post("/api/auth/inscription", json={
+        "prenom": "Ulrich", "nom": "SOGLO", "email": "ulrich@test.io",
+        "mot_de_passe": "Ulrich2026!", "role": "etudiant"})
+    vrai = str(jeton_sql(
+        "SELECT v.code FROM verification_email v "
+        "JOIN utilisateur u ON u.id_utilisateur = v.id_utilisateur "
+        "WHERE u.email = ?", ("ulrich@test.io",)))
+    faux_code = "111111" if vrai != "111111" else "222222"
+    derniere = None
+    for _ in range(12):
+        derniere = anon.post("/api/auth/verifier-code",
+                             json={"email": "ulrich@test.io",
+                                   "code": faux_code})
+    verifier("Le tatonnement est bloque", derniere.status_code == 429,
+             derniere.get_data(as_text=True)[:90])
+    verifier("Le bon code ne passe plus apres blocage",
+             anon.post("/api/auth/verifier-code",
+                       json={"email": "ulrich@test.io",
+                             "code": vrai}).status_code == 429)
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)
