@@ -25,7 +25,7 @@ Lancer la vérification complète à tout moment :
 
 ```bash
 cd backend
-python tests_integration.py       # doit afficher 383/399 tests réussis
+python tests_integration.py       # doit afficher 399/399 tests réussis
 ```
 
 La même suite tourne à l'identique sur les trois moteurs. Pour la
