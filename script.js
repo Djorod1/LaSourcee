@@ -2622,6 +2622,14 @@ window.addEventListener('DOMContentLoaded', async () => {
                          : { google_client_id: '', linkedin_configure: false };
     window.GOOGLE_CLIENT_ID = cfg.google_client_id || null;
     window.LINKEDIN_CONFIGURE = !!cfg.linkedin_configure;
+    // Par défaut on suppose l'envoi actif : en cas de doute, mieux vaut
+    // le message habituel qu'une alerte alarmante à tort.
+    window.ENVOI_EMAIL_ACTIF = cfg.envoi_email_actif !== false;
+    majRappelConfirmation();
+    // Le thème est posé par le script du <head>, avant que cette ligne
+    // du menu existe : sans cette synchronisation elle annoncerait
+    // « Sombre » sur un site resté clair, jusqu'au premier basculement.
+    appliquerTheme(themeActuel());
     // Masquer les boutons sociaux si non configurés (UX honnête)
     document.querySelectorAll('.btn-social').forEach(btn => {
       const t = btn.textContent;
@@ -2954,6 +2962,11 @@ function appliquerTheme(theme) {
   // La barre d'adresse des navigateurs mobiles suit cette couleur.
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', theme === 'dark' ? '#0B1220' : '#1E3A8A');
+  // La ligne du menu annonce le thème en cours, pas celui qu'on
+  // obtiendrait : un libellé qui décrit l'état se lit sans hésiter,
+  // alors qu'un libellé d'action laisse toujours douter du sens.
+  const etat = document.getElementById('etat-theme');
+  if (etat) etat.textContent = (theme === 'dark') ? 'Sombre' : 'Clair';
 }
 
 function basculerTheme() {
@@ -3267,19 +3280,31 @@ async function renvoyerConfirmation(email) {
 function majRappelConfirmation() {
   const u = etat.utilisateur;
   const existant = document.getElementById('rappel-confirmation');
-  if (!u || u.email_verifie) return existant && existant.remove();
-  if (existant) return;
+  if (!u || !u.email || u.email_verifie) return existant && existant.remove();
 
-  const bandeau = document.createElement('div');
+  const bandeau = existant || document.createElement('div');
   bandeau.id = 'rappel-confirmation';
   bandeau.className = 'bandeau-alerte bandeau-fixe';
   bandeau.setAttribute('role', 'status');
-  bandeau.innerHTML =
-    '<span><strong>Adresse non confirmée.</strong> '
-    + "Ouvrez le lien reçu par e-mail pour sécuriser votre compte.</span>"
-    + '<button class="btn btn-petit" onclick="renvoyerMaConfirmation(this)">'
-    + 'Renvoyer le lien</button>';
-  document.body.prepend(bandeau);
+
+  // Deux situations, deux messages. Inviter à ouvrir un lien reçu par
+  // e-mail alors qu'aucun e-mail n'a pu partir envoie chercher dans une
+  // boîte où rien n'arrivera, et fait douter de la plateforme plutôt
+  // que de sa configuration.
+  if (window.ENVOI_EMAIL_ACTIF === false) {
+    bandeau.innerHTML =
+      '<span><strong>Adresse non confirmée.</strong> '
+      + "L'envoi d'e-mails n'est pas encore en service sur la plateforme : "
+      + "aucun lien n'a pu vous être adressé. Votre compte reste "
+      + 'utilisable, il n\'y a rien à faire de votre côté.</span>';
+  } else {
+    bandeau.innerHTML =
+      '<span><strong>Adresse non confirmée.</strong> '
+      + "Ouvrez le lien reçu par e-mail pour sécuriser votre compte.</span>"
+      + '<button class="btn btn-petit" onclick="renvoyerMaConfirmation(this)">'
+      + 'Renvoyer le lien</button>';
+  }
+  if (!existant) document.body.prepend(bandeau);
 }
 
 async function renvoyerMaConfirmation(bouton) {

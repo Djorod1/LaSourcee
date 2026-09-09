@@ -1091,6 +1091,53 @@ def executer_tests():
     verifier("LinkedIn signalé non configuré (503)",
              anon.get("/api/auth/linkedin").status_code == 503)
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  21. HONNÊTETÉ DE L'ENVOI D'E-MAILS")
+    print("═" * 70)
+
+    import config as mod_config
+    from utils.email import envoyer, envoi_operationnel
+
+    verifier("La configuration dit si un message peut partir",
+             "envoi_email_actif" in (cfg.get_json() or {}))
+
+    # En developpement, le mode console suffit : le message s'affiche
+    # sous les yeux de qui teste.
+    verifier("En développement, le mode console vaut un envoi",
+             envoi_operationnel() is True)
+    verifier("Il rend la main sans erreur",
+             envoyer("essai@test.io", "Essai", "Corps") is True)
+
+    # En production, le meme mode envoie le message dans un journal que
+    # personne ne lit. Repondre « c'est parti » revient a faire attendre
+    # un lien qui n'arrivera jamais : c'est ce qui s'est produit.
+    prod_avant = mod_config.Config.EST_PRODUCTION
+    try:
+        mod_config.Config.EST_PRODUCTION = True
+        verifier("En production, le mode console n'est pas un envoi",
+                 envoi_operationnel() is False,
+                 "sinon l'interface annonce un message jamais distribué")
+        verifier("L'envoi le signale au lieu de répondre « c'est parti »",
+                 envoyer("essai@test.io", "Essai", "Corps") is False)
+        c_prod = anon.get("/api/auth/config").get_json() or {}
+        verifier("La configuration le signale à l'interface",
+                 c_prod.get("envoi_email_actif") is False)
+
+        # L'inscription doit alors le dire, plutot que d'inviter a
+        # ouvrir une boite ou rien n'arrivera.
+        r = app.test_client().post("/api/auth/inscription", json={
+            "prenom": "Sènan", "nom": "AHOYO", "email": "senan@test.io",
+            "mot_de_passe": "Senan2026!", "role": "etudiant"})
+        verifier("L'inscription avoue que le message n'est pas parti",
+                 (r.get_json() or {}).get("email_envoye") is False,
+                 r.get_data(as_text=True)[:90])
+    finally:
+        mod_config.Config.EST_PRODUCTION = prod_avant
+
+    verifier("L'état d'origine est rétabli après le test",
+             mod_config.Config.EST_PRODUCTION == prod_avant)
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

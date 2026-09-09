@@ -79,19 +79,39 @@ def _construire_message(destinataire, sujet, corps_texte, corps_html, expediteur
     return msg
 
 
+def envoi_operationnel():
+    """L'envoi peut-il réellement atteindre une boîte aux lettres ?
+
+    En développement, le mode console suffit : le message s'affiche dans
+    le terminal, sous les yeux de la personne qui teste. En production,
+    il part dans un journal que personne ne lit, et l'adresse reste sans
+    nouvelle. Les deux cas ne doivent donc pas se répondre pareil.
+    """
+    if _config()["mode"] == "smtp":
+        return configuration_valide()[0]
+    from config import Config
+    return not Config.EST_PRODUCTION
+
+
 def envoyer(destinataire, sujet, corps, corps_html=None):
     """Envoie un e-mail. Retourne True si l'envoi a réussi.
 
-    En mode console, retourne toujours True (le message est journalisé).
-    En mode smtp, retourne False si l'envoi échoue — l'appelant décide
+    En mode console, retourne True en développement, où le message
+    s'affiche dans le terminal, et False en production, où il n'atteint
+    personne. Répondre True partout revenait à annoncer « un message
+    vient de partir » à quelqu'un qui n'allait jamais rien recevoir, et
+    a laissé des comptes attendre un lien de confirmation inexistant.
+
+    En mode smtp, retourne False si l'envoi échoue. L'appelant décide
     s'il doit alerter l'utilisateur ou rester silencieux (cas des
     réinitialisations de mot de passe, où l'on ne révèle jamais si une
     adresse existe).
     """
     c = _config()
 
-    # ---- Mode console (développement) -----------------------------------
+    # ---- Mode console ----------------------------------------------------
     if c["mode"] != "smtp":
+        from config import Config
         logger.info(
             "\n──────── E-MAIL (mode console) ────────\n"
             "À      : %s\n"
@@ -100,6 +120,13 @@ def envoyer(destinataire, sujet, corps, corps_html=None):
             "───────────────────────────────────────",
             destinataire, sujet, corps,
         )
+        if Config.EST_PRODUCTION:
+            logger.error(
+                "Message NON distribué à %s : EMAIL_MODE vaut « console » "
+                "en production. Réglez EMAIL_MODE=smtp et les variables "
+                "SMTP_*, sinon aucune confirmation ni réinitialisation "
+                "n'atteindra personne.", destinataire)
+            return False
         return True
 
     # ---- Mode SMTP (production) -----------------------------------------

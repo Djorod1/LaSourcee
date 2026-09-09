@@ -2237,10 +2237,15 @@ img, svg, video { max-width: 100%; height: auto; }
 /* ------------------------------------------------------------------
    BOUTON DE THÈME : POSITION SUR TÉLÉPHONE
    ------------------------------------------------------------------
-   Il se décalait parce qu'il partageait un conteneur en ligne avec deux
-   boutons masqués sur petit écran : la barre gardait leur gouttière.
-   Il est désormais aligné explicitement, à taille réduite, et la
-   gouttière disparaît avec eux.
+   Les réglages de taille successifs n'y changeaient rien parce que la
+   cause n'était pas une taille : le bouton était placé DANS le bloc du
+   profil, un conteneur cliquable dont il subissait l'alignement, et
+   dont il déclenchait le menu à chaque changement de thème.
+
+   Il en est sorti. Sur téléphone, plutôt que de disputer une place qui
+   n'existe pas à l'avatar et à la cloche, il quitte la barre pour le
+   menu, où il devient une ligne nommée. Une icône lune sans libellé,
+   coincée entre deux autres, ne se comprend de toute façon pas.
    ------------------------------------------------------------------ */
 @media (max-width: 640px) {
   .hero-nav .actions {
@@ -2251,14 +2256,32 @@ img, svg, video { max-width: 100%; height: auto; }
     width: 40px; height: 40px;
     margin: 0;
   }
-  /* Dans la barre de l'application, le bouton doit rester au même
-     niveau que l'avatar, sans pousser les autres icônes. */
-  .navbar .bouton-theme {
-    width: 34px; height: 34px;
-    border: none;
-    background: transparent;
-  }
-  .navbar .bouton-theme svg { width: 19px; height: 19px; }
+  /* Dans la barre de l'application, il cède la place au menu. */
+  .navbar .theme-barre { display: none; }
+}
+
+/* Sur écran large, le bouton reste dans la barre et la ligne du menu
+   n'a pas lieu d'être : le menu ne s'y ouvre pas. */
+@media (min-width: 641px) {
+  .menu-burger-app .ligne-theme { display: none; }
+}
+
+/* Ligne « Thème » du menu : libellé à gauche, état courant à droite,
+   comme un réglage de système. On voit ce qu'on va obtenir avant de
+   toucher, ce qu'une icône seule ne dit jamais. */
+.menu-burger-app .ligne-theme {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ligne-theme-etat {
+  font-size: 12px;
+  color: var(--texte-doux);
+  border: 1px solid var(--bordure);
+  border-radius: 999px;
+  padding: 2px 10px;
+  white-space: nowrap;
 }
 
 /* ------------------------------------------------------------------

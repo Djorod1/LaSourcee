@@ -32,11 +32,17 @@ logger = logging.getLogger("lasource.oauth")
 def config_publique():
     """Expose aux frontend les clés publiques nécessaires (Client ID Google,
     flag LinkedIn). Pas de secret."""
+    from utils.email import envoi_operationnel
     return jsonify({
         "google_client_id": os.getenv("GOOGLE_CLIENT_ID", ""),
         "linkedin_configure": bool(
             os.getenv("LINKEDIN_CLIENT_ID") and os.getenv("LINKEDIN_CLIENT_SECRET")
         ),
+        # L'interface doit savoir si un message peut reellement partir.
+        # Sans cela elle invite a ouvrir un lien recu par e-mail alors
+        # qu'aucun e-mail n'a ete distribue, et la personne cherche dans
+        # une boite ou rien n'arrivera.
+        "envoi_email_actif": envoi_operationnel(),
     })
 
 
