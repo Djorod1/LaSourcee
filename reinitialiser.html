@@ -9,6 +9,25 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Serif+Display&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
+
+  <script>
+  /* Appliqué avant le premier rendu : un thème posé plus tard ferait
+     apparaître la page en clair une fraction de seconde avant de
+     basculer. Choix mémorisé, sinon préférence du système. */
+  (function () {
+    try {
+      var choix = localStorage.getItem('lasourcee-theme');
+      if (!choix) {
+        choix = window.matchMedia
+          && window.matchMedia('(prefers-color-scheme: dark)').matches
+          ? 'dark' : 'light';
+      }
+      if (choix === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    } catch (e) { /* stockage refusé : thème clair par défaut */ }
+  })();
+  </script>
 </head>
 <body>
 

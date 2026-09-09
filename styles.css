@@ -1698,3 +1698,314 @@ img, svg, video { max-width: 100%; height: auto; }
   padding: 14px 2px;
   margin: 0;
 }
+
+/* ==================================================================
+   MODE SOMBRE
+   ------------------------------------------------------------------
+   Seuls les jetons de couleur sont redéfinis : tout le reste de la
+   feuille les utilise déjà, aucune règle n'a donc à être dupliquée.
+
+   Le bleu royal de la charte devient illisible sur fond sombre. C'est
+   le bleu vif qui prend le rôle principal, et le fond emprunte sa
+   teinte au bleu de la marque plutôt qu'au gris neutre : l'identité
+   reste reconnaissable dans les deux thèmes.
+   ================================================================== */
+:root[data-theme="dark"] {
+  --fond: #0B1220;
+  --surface: #131C2E;
+  --texte: #E8EEF8;
+  --texte-doux: #9AA8BE;
+  --bordure: #253148;
+
+  --primaire: #3B82F6;
+  --primaire-fonce: #1D4ED8;
+  --primaire-clair: #1B2A4A;
+
+  --bleu: #3B82F6;
+  --bleu-fonce: #1D4ED8;
+  --bleu-clair: #1B2A4A;
+  --bleu-tres-clair: #16203A;
+
+  --orange-clair: #3A2415;
+  --rouge-clair: #3A1A1A;
+  --rouge-fonce: #FCA5A5;
+  --noir: #E8EEF8;
+  --gris-sombre: #E8EEF8;
+
+  /* Une ombre noire ne se voit pas sur un fond sombre : on l'assombrit
+     davantage et on l'élargit pour conserver le relief. */
+  --ombre-s: 0 1px 2px rgba(0, 0, 0, .35);
+  --ombre-m: 0 4px 14px rgba(0, 0, 0, .40);
+  --ombre-l: 0 12px 34px rgba(0, 0, 0, .50);
+}
+
+/* Surfaces posées en blanc explicite dans la feuille : elles doivent
+   suivre le thème, sinon des blocs blancs subsistent sur fond sombre. */
+:root[data-theme="dark"] .carte,
+:root[data-theme="dark"] .boite-auth,
+:root[data-theme="dark"] .navbar,
+:root[data-theme="dark"] .menu-cote,
+:root[data-theme="dark"] .menu-admin,
+:root[data-theme="dark"] .contenu-admin,
+:root[data-theme="dark"] .section-param,
+:root[data-theme="dark"] .mini-q,
+:root[data-theme="dark"] .hero-stats,
+:root[data-theme="dark"] .hero-illu,
+:root[data-theme="dark"] input,
+:root[data-theme="dark"] textarea,
+:root[data-theme="dark"] select {
+  background: var(--surface);
+  color: var(--texte);
+}
+
+:root[data-theme="dark"] input::placeholder,
+:root[data-theme="dark"] textarea::placeholder {
+  color: var(--texte-doux);
+}
+
+/* Le logo est dessiné pour un fond clair : un halo discret le détache
+   sans le retoucher. */
+:root[data-theme="dark"] .logo-img {
+  filter: drop-shadow(0 0 10px rgba(59, 130, 246, .35));
+}
+
+/* ---------- Bouton de bascule ---------- */
+.bouton-theme {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px; height: 38px;
+  border: 1px solid var(--bordure);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--texte-doux);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.bouton-theme:hover {
+  color: var(--primaire);
+  border-color: var(--primaire);
+}
+.bouton-theme svg { width: 18px; height: 18px; }
+
+/* Une seule des deux icônes est visible, selon le thème actif. */
+.bouton-theme .icone-lune { display: block; }
+.bouton-theme .icone-soleil { display: none; }
+:root[data-theme="dark"] .bouton-theme .icone-lune { display: none; }
+:root[data-theme="dark"] .bouton-theme .icone-soleil { display: block; }
+
+/* Quatre atouts plutôt que trois : la liste passe en deux colonnes sur
+   écran large, ce qui équilibre le bloc au lieu de l'étirer. Sur
+   téléphone elle revient à une colonne, plus lisible qu'une grille
+   serrée. */
+.hero-avantages {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+}
+@media (max-width: 720px) {
+  .hero-avantages { grid-template-columns: 1fr; }
+}
+
+/* ==================================================================
+   BANDEAU DE CHIFFRES
+   ------------------------------------------------------------------
+   Quatre chiffres alignés sur une seule ligne deviennent illisibles sur
+   téléphone. La grille s'adapte d'elle-même à la largeur disponible :
+   quatre colonnes sur ordinateur, deux sur téléphone, sans point de
+   rupture arbitraire.
+
+   Les nombres empruntent la couleur de la marque, les libellés restent
+   en gris : c'est le chiffre qu'on lit d'abord, le mot ensuite.
+   ================================================================== */
+.hero-stats {
+  border: 1px solid var(--bordure);
+  border-radius: var(--rayon-l);
+  padding: 18px 20px;
+  box-shadow: var(--ombre-s);
+}
+.hero-stats-titre {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--texte-doux);
+  margin-bottom: 14px;
+  text-align: center;
+}
+.hero-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+.hero-stat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--rayon-m);
+  background: var(--bleu-tres-clair);
+}
+.hero-stat-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px; height: 34px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--primaire);
+}
+.hero-stat strong {
+  display: block;
+  font-family: 'DM Sans', system-ui, sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--primaire);
+}
+.hero-stat span {
+  font-size: 12.5px;
+  color: var(--texte-doux);
+  line-height: 1.3;
+}
+/* La note moyenne se distingue par l'orange du logo : c'est une mesure
+   de qualité, pas un volume. */
+.hero-stat-note { background: var(--orange-clair); }
+.hero-stat-note .hero-stat-icon { color: var(--accent); }
+.hero-stat-note strong { color: var(--orange-fonce); }
+
+@media (max-width: 480px) {
+  .hero-stats { padding: 14px; }
+  .hero-stat { padding: 9px 10px; gap: 8px; }
+  .hero-stat-icon { width: 30px; height: 30px; }
+  .hero-stat strong { font-size: 18px; }
+}
+
+/* ==================================================================
+   PIED DE PAGE
+   ================================================================== */
+.pied-page {
+  border-top: 1px solid var(--bordure);
+  background: var(--surface);
+  padding: 32px 24px 20px;
+  margin-top: 40px;
+}
+.pied-contenu {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 28px;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.pied-nom {
+  font-family: 'DM Serif Display', Georgia, serif;
+  font-size: 20px;
+  color: var(--primaire);
+}
+.pied-marque p {
+  color: var(--texte-doux);
+  font-size: 13.5px;
+  line-height: 1.5;
+  max-width: 340px;
+  margin-top: 6px;
+}
+.pied-liens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+.pied-liens button,
+.pied-liens a {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--texte-doux);
+  cursor: pointer;
+  text-decoration: none;
+}
+.pied-liens button:hover,
+.pied-liens a:hover {
+  color: var(--primaire);
+  text-decoration: underline;
+}
+.pied-bas {
+  max-width: 1100px;
+  margin: 22px auto 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--bordure);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: var(--texte-doux);
+}
+.pied-signature { font-weight: 600; color: var(--primaire); }
+
+@media (max-width: 640px) {
+  .pied-page { padding: 24px 18px 16px; }
+  .pied-contenu { flex-direction: column; gap: 20px; }
+  .pied-bas { flex-direction: column; gap: 6px; text-align: left; }
+}
+
+/* ==================================================================
+   FENÊTRE MODALE (mentions légales)
+   ================================================================== */
+.modale-fond {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: rgba(15, 23, 42, .55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow-y: auto;
+}
+.modale-boite {
+  background: var(--surface);
+  border-radius: var(--rayon-l);
+  box-shadow: var(--ombre-l);
+  max-width: 640px;
+  width: 100%;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+.modale-entete {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--bordure);
+}
+.modale-entete h2 { font-size: 1.35rem; }
+.modale-fermer {
+  background: none;
+  border: none;
+  font-size: 26px;
+  line-height: 1;
+  color: var(--texte-doux);
+  cursor: pointer;
+  padding: 0 4px;
+}
+.modale-fermer:hover { color: var(--texte); }
+.modale-corps {
+  padding: 18px 22px 24px;
+  overflow-y: auto;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--texte-doux);
+}
+.modale-corps p { margin-bottom: 12px; }
+.modale-corps strong { color: var(--texte); }
+
+@media (max-width: 560px) {
+  .modale-fond { padding: 0; align-items: flex-end; }
+  .modale-boite { max-height: 92vh; border-radius: var(--rayon-l) var(--rayon-l) 0 0; }
+}

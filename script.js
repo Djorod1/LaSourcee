@@ -109,6 +109,14 @@ function naviguerApp(panneau) {
   document.getElementById('menuProfil').classList.remove('ouvert');
   etat.sectionActive = panneau;
   majNavActif();
+
+  // La section est inscrite dans l'adresse : un rafraîchissement, un
+  // retour arrière ou un lien partagé retrouvent le même écran. Sans
+  // cela, toute actualisation ramenait au fil d'accueil.
+  const vise = '#' + panneau;
+  if (window.location.hash !== vise) {
+    window.history.replaceState({}, '', window.location.pathname + vise);
+  }
   if (panneau === 'fil') rendreFil();
   if (panneau === 'profil') rendreProfil();
   if (panneau === 'mentor') rendreEspaceMentor();
@@ -2177,14 +2185,22 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
   } catch (_) { /* tolérance */ }
 
-  // Toujours afficher la page de bienvenue au chargement, sauf si l'URL
-  // contient `#app` (alors on bascule directement dans l'application si
-  // une session est encore active).
-  const veutApp = window.location.hash === '#app';
-  if (MODE.utilisateur && veutApp) {
+  // Une session valide ramène dans l'application, jamais sur la page de
+  // bienvenue. Auparavant il fallait que l'adresse porte exactement
+  // « #app » : toute actualisation renvoyait donc un membre connecté sur
+  // la vitrine, alors que sa session était intacte côté serveur.
+  if (MODE.utilisateur) {
     appliquerUtilisateur(MODE.utilisateur);
     afficherVue('vue-app');
     initApp();
+    // On rouvre la section quittée, si l'adresse en désigne une.
+    const section = (window.location.hash || '').replace('#', '');
+    // Liste alignée sur les sous-vues réellement présentes dans la page.
+    const connues = ['fil', 'profil', 'question', 'parametres', 'admin',
+                     'mentor'];
+    if (connues.includes(section) && section !== etat.sectionActive) {
+      naviguerApp(section);
+    }
   } else {
     afficherVue('vue-accueil');
   }
@@ -2419,7 +2435,7 @@ async function chargerStatistiques() {
   // argument pour rejoindre les premiers.
   const titre = document.querySelector('.hero-stats-titre');
   if (titre && (s.membres || 0) < 25) {
-    titre.textContent = 'Une plateforme qui démarre, rejoignez les premiers';
+    titre.textContent = 'Les premiers membres construisent déjà la suite';
   }
 }
 
@@ -2455,3 +2471,179 @@ async function chargerQuestionsAccueil() {
     </div>`;
   }).join('');
 }
+
+/* ============================================================
+   THÈME CLAIR ET SOMBRE
+   ------------------------------------------------------------
+   Le thème initial est posé par un script en tête de page, avant le
+   premier rendu. Ici on gère seulement la bascule manuelle et sa
+   mémorisation.
+   ============================================================ */
+
+function themeActuel() {
+  return document.documentElement.getAttribute('data-theme') === 'dark'
+    ? 'dark' : 'light';
+}
+
+function appliquerTheme(theme) {
+  if (theme === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+  // La barre d'adresse des navigateurs mobiles suit cette couleur.
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', theme === 'dark' ? '#0B1220' : '#1E3A8A');
+}
+
+function basculerTheme() {
+  const nouveau = themeActuel() === 'dark' ? 'light' : 'dark';
+  appliquerTheme(nouveau);
+  try {
+    // Le choix explicite prime désormais sur la préférence du système.
+    localStorage.setItem('lasourcee-theme', nouveau);
+  } catch (e) { /* stockage refusé : le choix vaut pour cette visite */ }
+}
+
+/* Tant que rien n'a été choisi, la plateforme suit le système : passer
+   son téléphone en mode nuit bascule le site aussi. */
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: dark)')
+    .addEventListener('change', (e) => {
+      let choix = null;
+      try { choix = localStorage.getItem('lasourcee-theme'); } catch (_) {}
+      if (!choix) appliquerTheme(e.matches ? 'dark' : 'light');
+    });
+}
+
+/* ============================================================
+   MENTIONS LÉGALES ET CONDITIONS
+   ------------------------------------------------------------
+   Un site public qui collecte des comptes et des adresses e-mail doit
+   dire qui l'édite, ce qu'il conserve et pendant combien de temps.
+   Les textes sont volontairement courts et concrets : personne ne lit
+   trois pages de formules, et un texte que personne ne lit ne protège
+   personne.
+   ============================================================ */
+
+const TEXTES_LEGAUX = {
+  confidentialite: {
+    titre: 'Confidentialité',
+    contenu: `
+      <p><strong>Ce que nous collectons.</strong> Votre prénom, votre nom,
+      votre adresse e-mail, et ce que vous choisissez d'ajouter à votre
+      profil : présentation, pays, domaines. Rien d'autre.</p>
+
+      <p><strong>Pourquoi.</strong> L'adresse sert à vous connecter, à
+      confirmer votre inscription et à réinitialiser votre mot de passe.
+      Elle n'est jamais affichée aux autres membres, ni vendue, ni
+      transmise à des tiers.</p>
+
+      <p><strong>Cookies.</strong> Un seul est déposé, celui de votre
+      session. Aucun traceur publicitaire, aucune mesure d'audience
+      externe.</p>
+
+      <p><strong>Vos publications.</strong> Questions et réponses sont
+      visibles des autres membres : c'est ce qui permet à chacun d'en
+      profiter. Vous pouvez supprimer les vôtres à tout moment.</p>
+
+      <p><strong>Vos droits.</strong> Vous pouvez consulter, corriger ou
+      faire effacer vos données en écrivant à
+      <a href="mailto:contact@lasourcee.org">contact@lasourcee.org</a>.
+      La suppression du compte efface le profil et les données
+      associées.</p>
+
+      <p><strong>Sécurité.</strong> Les mots de passe sont hachés, jamais
+      stockés en clair. Les échanges passent par une connexion chiffrée.
+      Vous pouvez consulter et déconnecter vos appareils depuis
+      Paramètres, Sécurité.</p>`,
+  },
+  conditions: {
+    titre: "Conditions d'utilisation",
+    contenu: `
+      <p><strong>Ce qu'est LaSourcee.</strong> Un espace où des personnes
+      posent des questions d'orientation, de carrière ou d'argent, et où
+      d'autres partagent leur expérience.</p>
+
+      <p><strong>Ce qui est attendu.</strong> Des échanges respectueux,
+      des informations exactes, et un profil qui vous corresponde
+      réellement. Un compte créé au nom de quelqu'un d'autre est
+      supprimé.</p>
+
+      <p><strong>Ce qui n'est pas accepté.</strong> Les propos haineux ou
+      discriminatoires, le harcèlement, la publicité, et la diffusion de
+      données personnelles d'autrui. Tout contenu peut être signalé, et
+      les comptes concernés suspendus.</p>
+
+      <p><strong>La portée des conseils.</strong> Les réponses publiées
+      sont des témoignages et des avis personnels. Elles ne remplacent ni
+      un conseil professionnel, ni un accompagnement juridique, médical
+      ou financier.</p>
+
+      <p><strong>Votre compte.</strong> Vous êtes responsable de la
+      confidentialité de votre mot de passe. Vous pouvez fermer votre
+      compte quand vous le souhaitez.</p>`,
+  },
+  mentions: {
+    titre: 'Mentions légales',
+    contenu: `
+      <p><strong>Éditeur.</strong> LaSourcee, plateforme de mentorat.
+      Contact :
+      <a href="mailto:contact@lasourcee.org">contact@lasourcee.org</a></p>
+
+      <p><strong>Conception et développement.</strong> Coding_DJOROD,
+      2026.</p>
+
+      <p><strong>Hébergement.</strong> Le site est hébergé par Vercel
+      Inc., et les données sont conservées sur une base PostgreSQL
+      gérée.</p>
+
+      <p><strong>Propriété.</strong> Le nom LaSourcee, le logo et
+      l'habillage du site appartiennent à leurs auteurs. Les questions
+      et réponses restent la propriété de leurs auteurs respectifs, qui
+      en autorisent l'affichage sur la plateforme.</p>
+
+      <p><strong>Signalement.</strong> Pour signaler un contenu ou une
+      difficulté, écrivez à
+      <a href="mailto:contact@lasourcee.org">contact@lasourcee.org</a>.</p>`,
+  },
+};
+
+function ouvrirMentionsLegales(cle) {
+  const doc = TEXTES_LEGAUX[cle];
+  if (!doc) return;
+
+  fermerMentionsLegales();
+  const fond = document.createElement('div');
+  fond.className = 'modale-fond';
+  fond.id = 'modaleLegale';
+  fond.setAttribute('role', 'dialog');
+  fond.setAttribute('aria-modal', 'true');
+  fond.setAttribute('aria-label', doc.titre);
+  fond.innerHTML = `
+    <div class="modale-boite">
+      <div class="modale-entete">
+        <h2>${echapper(doc.titre)}</h2>
+        <button class="modale-fermer" onclick="fermerMentionsLegales()"
+                aria-label="Fermer">&times;</button>
+      </div>
+      <div class="modale-corps">${doc.contenu}</div>
+    </div>`;
+
+  // Un clic hors de la boîte referme, comme partout ailleurs.
+  fond.addEventListener('click', (e) => {
+    if (e.target === fond) fermerMentionsLegales();
+  });
+  document.body.appendChild(fond);
+  document.body.style.overflow = 'hidden';
+}
+
+function fermerMentionsLegales() {
+  const m = document.getElementById('modaleLegale');
+  if (m) m.remove();
+  document.body.style.overflow = '';
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') fermerMentionsLegales();
+});
