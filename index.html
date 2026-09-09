@@ -370,7 +370,12 @@
         <label>Mot de passe</label>
         <div class="champ-mdp"><input type="password" id="mdp-conn" placeholder="••••••••" /><button type="button" class="btn-oeil" aria-label="Afficher le mot de passe" onclick="basculerOeil(this)"><svg class="oeil-ouvert" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg><svg class="oeil-ferme" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a19.77 19.77 0 0 1 4.22-5.17"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 7 11 7a19.85 19.85 0 0 1-3.17 4.05"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg></button></div>
       </div>
-      <div style="text-align:right; margin-bottom: 16px;">
+      <div class="liens-connexion">
+        <!-- Accès permanent à la saisie du code. Quelqu'un qui ferme la
+             page après son inscription, ou qui revient le lendemain, ne
+             doit pas avoir à échouer à se connecter pour retrouver
+             l'endroit où saisir son code. -->
+        <a href="#" onclick="ouvrirSaisieCode(); return false;">J'ai un code à saisir</a>
         <a href="#" onclick="afficherVue('vue-oubli'); return false;">Mot de passe oublié ?</a>
       </div>
       <button class="btn btn-primaire btn-bloc" onclick="seConnecter()">Se connecter</button>
@@ -424,6 +429,30 @@
       </div>
       <div class="champ"><label>Mot de passe</label><div class="champ-mdp"><input type="password" id="mdp-ins" placeholder="Au moins 8 caractères" /><button type="button" class="btn-oeil" aria-label="Afficher le mot de passe" onclick="basculerOeil(this)"><svg class="oeil-ouvert" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg><svg class="oeil-ferme" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a19.77 19.77 0 0 1 4.22-5.17"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 7 11 7a19.85 19.85 0 0 1-3.17 4.05"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg></button></div></div>
       <div class="champ"><label>Confirmation du mot de passe</label><div class="champ-mdp"><input type="password" id="mdp2-ins" placeholder="Retapez votre mot de passe" /><button type="button" class="btn-oeil" aria-label="Afficher le mot de passe" onclick="basculerOeil(this)"><svg class="oeil-ouvert" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg><svg class="oeil-ferme" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a19.77 19.77 0 0 1 4.22-5.17"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 7 11 7a19.85 19.85 0 0 1-3.17 4.05"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg></button></div></div>
+      <!-- Consentement. Ni l'inscription ni la connexion Google ne
+           demandaient quoi que ce soit : les donnees etaient collectees
+           sans que personne ne l'ait accepte, ni meme lu. -->
+      <fieldset class="bloc-consentement">
+        <legend>Avant de créer votre compte</legend>
+        <label class="case-consentement">
+          <input type="checkbox" id="cons-conditions" onchange="majBoutonInscription()" />
+          <span>J'ai lu et j'accepte les
+            <a href="#" onclick="event.preventDefault(); ouvrirMentionsLegales('conditions');">conditions d'utilisation</a>.</span>
+        </label>
+        <label class="case-consentement">
+          <input type="checkbox" id="cons-donnees" onchange="majBoutonInscription()" />
+          <span>J'autorise LaSourcee à conserver mon nom, mon adresse
+            e-mail et les informations de mon profil, dans les conditions
+            décrites par la
+            <a href="#" onclick="event.preventDefault(); ouvrirMentionsLegales('confidentialite');">politique de confidentialité</a>.</span>
+        </label>
+        <label class="case-consentement">
+          <input type="checkbox" id="cons-notifs" />
+          <span>J'accepte de recevoir par e-mail les réponses à mes
+            questions. <em>Facultatif, modifiable à tout moment.</em></span>
+        </label>
+      </fieldset>
+
 
       <button class="btn btn-primaire btn-bloc" onclick="commencerOnboarding()">Continuer →</button>
 

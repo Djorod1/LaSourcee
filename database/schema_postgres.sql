@@ -50,6 +50,10 @@ CREATE TABLE utilisateur (
     preferences_notif TEXT,
     -- Droits d'administration, en JSON. NULL = compte anterieur.
     permissions     TEXT,
+    -- Consentement recueilli a l'inscription, date et versionne.
+    consentement_le      TIMESTAMP,
+    consentement_version TEXT,
+    accepte_notifs       SMALLINT NOT NULL DEFAULT 0,
     situation       TEXT,
     objectif        TEXT,
     langues         TEXT,

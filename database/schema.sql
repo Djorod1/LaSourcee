@@ -55,6 +55,10 @@ CREATE TABLE utilisateur (
     preferences_notif TEXT        NULL,
     -- Droits d'administration, en JSON. NULL = compte antérieur.
     permissions      TEXT         NULL,
+    -- Consentement recueilli à l'inscription, daté et versionné.
+    consentement_le      DATETIME     NULL,
+    consentement_version VARCHAR(20)  NULL,
+    accepte_notifs       BOOLEAN      NOT NULL DEFAULT FALSE,
     situation        VARCHAR(40)  NULL,
     -- Plusieurs objectifs se cumulent, séparés par une virgule.
     objectif         VARCHAR(255) NULL,

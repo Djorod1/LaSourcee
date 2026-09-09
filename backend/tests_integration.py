@@ -40,6 +40,12 @@ logging.getLogger("lasource.email").setLevel(logging.CRITICAL)
 logging.getLogger("lasource").setLevel(logging.CRITICAL)
 logging.getLogger("werkzeug").setLevel(logging.CRITICAL)
 
+# Consentement exige a l'inscription depuis que les conditions
+# sont recueillies. Les tests le fournissent comme le fait
+# l'interface : sans lui, chaque inscription echoue en 400.
+CONSENT_TESTS = {"conditions": True, "donnees": True,
+                 "notifications": False}
+
 _resultats = []
 
 
@@ -119,18 +125,18 @@ def executer_tests():
     etu = app.test_client()
     r = etu.post("/api/auth/inscription", json={
         "prenom": "Aminata", "nom": "TRAORE", "email": "aminata@test.io",
-        "mot_de_passe": "Aminata2026!", "role": "etudiant"})
+        "mot_de_passe": "Aminata2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
     verifier("Inscription d'un étudiant", r.status_code == 201,
              f"reçu {r.status_code} : {r.get_data(as_text=True)[:90]}")
 
     r = etu.post("/api/auth/inscription", json={
         "prenom": "Autre", "nom": "Personne", "email": "aminata@test.io",
-        "mot_de_passe": "Autre2026!", "role": "etudiant"})
+        "mot_de_passe": "Autre2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
     verifier("E-mail en double refusé (409)", r.status_code == 409)
 
     r = etu.post("/api/auth/inscription", json={
         "prenom": "Faible", "nom": "Mdp", "email": "faible@test.io",
-        "mot_de_passe": "123", "role": "etudiant"})
+        "mot_de_passe": "123", "role": "etudiant", "consentement": CONSENT_TESTS})
     verifier("Mot de passe trop faible refusé", r.status_code == 400)
 
     r = etu.post("/api/auth/connexion",
@@ -264,7 +270,7 @@ def executer_tests():
     incomplet = app.test_client()
     incomplet.post("/api/auth/inscription", json={
         "prenom": "Bref", "nom": "Dossier", "email": "bref@test.io",
-        "mot_de_passe": "BrefTest2026!", "role": "etudiant"})
+        "mot_de_passe": "BrefTest2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
     r = incomplet.post("/api/mentors/candidature",
                        json={"profession": "X", "bio": "court",
                              "motivation": "court", "annees_experience": 1,
@@ -429,7 +435,7 @@ def executer_tests():
     victime = app.test_client()
     victime.post("/api/auth/inscription", json={
         "prenom": "Cible", "nom": "DEBIT", "email": "cible.debit@test.io",
-        "mot_de_passe": "MotDePasse2026!", "role": "etudiant"})
+        "mot_de_passe": "MotDePasse2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
 
     forceur = app.test_client()
     codes = [forceur.post("/api/auth/connexion",
@@ -682,7 +688,7 @@ def executer_tests():
     simple = app.test_client()
     simple.post("/api/auth/inscription", json={
         "prenom": "Sans", "nom": "DROITS", "email": "sans.droits@test.io",
-        "mot_de_passe": "SansDroits2026!", "role": "etudiant"})
+        "mot_de_passe": "SansDroits2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
     verifier("Diagnostic refusé à un étudiant (403)",
              simple.get("/api/admin/diagnostic").status_code == 403)
     verifier("Diagnostic refusé sans session (401)",
@@ -723,7 +729,7 @@ def executer_tests():
     nouveau = app.test_client()
     nouveau.post("/api/auth/inscription", json={
         "prenom": "Compteur", "nom": "TEST", "email": "compteur@test.io",
-        "mot_de_passe": "Compteur2026!", "role": "etudiant"})
+        "mot_de_passe": "Compteur2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
     apres = (public.get("/api/profil/statistiques").get_json() or {})
     verifier("Une inscription incrémente le compteur de membres",
              apres.get("membres") == avant + 1,
@@ -791,7 +797,7 @@ def executer_tests():
     partant = app.test_client()
     partant.post("/api/auth/inscription", json={
         "prenom": "Yao", "nom": "PARTANT", "email": "yao.partant@test.io",
-        "mot_de_passe": "YaoPartant2026!", "role": "etudiant"})
+        "mot_de_passe": "YaoPartant2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
 
     r = partant.get("/api/profil/moi/donnees")
     verifier("Export des données accessible", r.status_code == 200)
@@ -868,7 +874,7 @@ def executer_tests():
     candidat = app.test_client()
     candidat.post("/api/auth/inscription", json={
         "prenom": "Lien", "nom": "PERDU", "email": "lien.perdu@test.io",
-        "mot_de_passe": "LienPerdu2026!", "role": "etudiant"})
+        "mot_de_passe": "LienPerdu2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
 
     r = candidat.post("/api/auth/confirmation/moi")
     verifier("Renvoi du lien accepté", r.status_code == 200,
@@ -957,7 +963,7 @@ def executer_tests():
     poseur = app.test_client()
     poseur.post("/api/auth/inscription", json={
         "prenom": "Ida", "nom": "POSEUSE", "email": "ida.poseuse@test.io",
-        "mot_de_passe": "IdaPoseuse2026!", "role": "etudiant"})
+        "mot_de_passe": "IdaPoseuse2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
     r = poseur.post("/api/questions", json={
         "titre": "Comment financer un master à l'étranger ?",
         "corps": "Je cherche des pistes concrètes de bourses et de "
@@ -1128,7 +1134,7 @@ def executer_tests():
         # ouvrir une boite ou rien n'arrivera.
         r = app.test_client().post("/api/auth/inscription", json={
             "prenom": "Sènan", "nom": "AHOYO", "email": "senan@test.io",
-            "mot_de_passe": "Senan2026!", "role": "etudiant"})
+            "mot_de_passe": "Senan2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
         verifier("L'inscription avoue que le message n'est pas parti",
                  (r.get_json() or {}).get("email_envoye") is False,
                  r.get_data(as_text=True)[:90])
@@ -1210,7 +1216,7 @@ def executer_tests():
     cand = app.test_client()
     cand.post("/api/auth/inscription", json={
         "prenom": "Odile", "nom": "HOUNKPATIN", "email": "odile@test.io",
-        "mot_de_passe": "Odile2026!", "role": "etudiant"})
+        "mot_de_passe": "Odile2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
     r = cand.post("/api/mentors/candidature", json={
         "bio": "Ingénieure en génie civil depuis douze ans, je suis les "
                "chantiers publics et j'accompagne des jeunes diplômés.",
@@ -1296,7 +1302,7 @@ def executer_tests():
     gene = app.test_client()
     gene.post("/api/auth/inscription", json={
         "prenom": "Fataou", "nom": "BIO", "email": "fataou@test.io",
-        "mot_de_passe": "Fataou2026!", "role": "etudiant"})
+        "mot_de_passe": "Fataou2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
     r = gene.post("/api/questions", json={
         "titre": "Contenu à modérer pour les besoins du test",
         "corps": "Ce message existe pour éprouver la chaîne de modération "
@@ -1532,7 +1538,7 @@ def executer_tests():
     codeur = app.test_client()
     codeur.post("/api/auth/inscription", json={
         "prenom": "Rachidat", "nom": "TIDJANI", "email": "rachidat@test.io",
-        "mot_de_passe": "Rachidat2026!", "role": "etudiant"})
+        "mot_de_passe": "Rachidat2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
     code = jeton_sql(
         "SELECT v.code FROM verification_email v "
         "JOIN utilisateur u ON u.id_utilisateur = v.id_utilisateur "
@@ -1578,7 +1584,7 @@ def executer_tests():
     tatonneur = app.test_client()
     tatonneur.post("/api/auth/inscription", json={
         "prenom": "Ulrich", "nom": "SOGLO", "email": "ulrich@test.io",
-        "mot_de_passe": "Ulrich2026!", "role": "etudiant"})
+        "mot_de_passe": "Ulrich2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
     vrai = str(jeton_sql(
         "SELECT v.code FROM verification_email v "
         "JOIN utilisateur u ON u.id_utilisateur = v.id_utilisateur "
@@ -1604,7 +1610,7 @@ def executer_tests():
     mesur = app.test_client()
     mesur.post("/api/auth/inscription", json={
         "prenom": "Kounoumi", "nom": "MEDEKON", "email": "kounoumi@test.io",
-        "mot_de_passe": "Kounoumi2026!", "role": "etudiant"})
+        "mot_de_passe": "Kounoumi2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
     r = mesur.post("/api/questions", json={
         "titre": "Question servant a eprouver les mesures d'usage",
         "corps": "Un corps assez long pour passer la validation du serveur "
@@ -1730,7 +1736,7 @@ def executer_tests():
     m1 = app.test_client()
     m1.post("/api/auth/inscription", json={
         "prenom": "Sika", "nom": "AGOSSOU", "email": "sika@test.io",
-        "mot_de_passe": "Sika2026!", "role": "etudiant"})
+        "mot_de_passe": "Sika2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
     id_sika = jeton_sql("SELECT id_utilisateur FROM utilisateur WHERE email = ?",
                         ("sika@test.io",))
 
@@ -1762,7 +1768,7 @@ def executer_tests():
     intrus = app.test_client()
     intrus.post("/api/auth/inscription", json={
         "prenom": "Intrus", "nom": "TEST", "email": "intrus@test.io",
-        "mot_de_passe": "Intrus2026!", "role": "etudiant"})
+        "mot_de_passe": "Intrus2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
     verifier("Un tiers ne lit pas la conversation",
              intrus.get(f"/api/messagerie/conversations/{id_conv}/messages"
                         ).status_code == 403)
@@ -1807,7 +1813,7 @@ def executer_tests():
     try:
         app.test_client().post("/api/auth/inscription", json={
             "prenom": "Nadege", "nom": "AKPOVI", "email": "nadege@test.io",
-            "mot_de_passe": "Nadege2026!", "role": "etudiant"})
+            "mot_de_passe": "Nadege2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
     finally:
         journal.removeHandler(poignee)
         journal.setLevel(niveau)
@@ -1875,12 +1881,111 @@ def executer_tests():
     autre = app.test_client()
     autre.post("/api/auth/inscription", json={
         "prenom": "Curieux", "nom": "TEST", "email": "curieux@test.io",
-        "mot_de_passe": "Curieux2026!", "role": "etudiant"})
+        "mot_de_passe": "Curieux2026!", "role": "etudiant", "consentement": CONSENT_TESTS})
     pub = autre.get(f"/api/profil/{id_etu}").get_json() or {}
     verifier("Le numéro ne figure pas sur le profil public",
              "telephone" not in pub)
     verifier("Il figure sur son propre profil",
              "telephone" in (etu.get("/api/profil/moi").get_json() or {}))
+
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  29. PARCOURS D'INSCRIPTION ET CONSENTEMENT")
+    print("═" * 70)
+
+    from routes.auth import VERSION_CONSENTEMENT
+    import config as _cfg
+
+    CONSENT_OK = {"conditions": True, "donnees": True, "notifications": True}
+
+    # Le consentement conditionne la creation du compte.
+    base = {"prenom": "Sika", "nom": "DANSOU", "email": "sika.c@test.io",
+            "mot_de_passe": "Sika2026!", "role": "etudiant"}
+    verifier("Sans consentement, le compte n'est pas créé",
+             app.test_client().post("/api/auth/inscription",
+                                    json=base).status_code == 400)
+    verifier("Les conditions seules ne suffisent pas",
+             app.test_client().post("/api/auth/inscription", json={
+                 **base, "consentement": {"conditions": True}}
+             ).status_code == 400)
+
+    cli = app.test_client()
+    r = cli.post("/api/auth/inscription",
+                 json={**base, "consentement": CONSENT_OK})
+    verifier("Avec consentement, le compte est créé", r.status_code == 201,
+             r.get_data(as_text=True)[:100])
+    verifier("Le consentement est daté",
+             bool(jeton_sql("SELECT consentement_le FROM utilisateur "
+                            "WHERE email = ?", ("sika.c@test.io",))))
+    verifier("Le consentement porte la version du texte",
+             jeton_sql("SELECT consentement_version FROM utilisateur "
+                       "WHERE email = ?",
+                       ("sika.c@test.io",)) == VERSION_CONSENTEMENT,
+             "sans version, on sait qu'il a accepté, pas quoi")
+    verifier("Le choix facultatif est conservé",
+             jeton_sql("SELECT accepte_notifs FROM utilisateur "
+                       "WHERE email = ?", ("sika.c@test.io",)) == 1)
+
+    # --- Le parcours quand la confirmation est obligatoire ---
+    # C'est le cas depuis que l'envoi SMTP fonctionne, et c'est ce qui
+    # laissait les nouveaux inscrits sans acces : l'inscription
+    # n'ouvrait pas de session, l'interface demandait le profil, et le
+    # refus etait presente comme un echec d'inscription.
+    avant = _cfg.Config.VERIFICATION_EMAIL_OBLIGATOIRE
+    app.config["VERIFICATION_EMAIL_OBLIGATOIRE"] = True
+    try:
+        strict = app.test_client()
+        r = strict.post("/api/auth/inscription", json={
+            "prenom": "Orou", "nom": "BIO", "email": "orou@test.io",
+            "mot_de_passe": "Orou2026!", "role": "etudiant",
+            "consentement": CONSENT_OK})
+        verifier("Le compte est créé même sans connexion immédiate",
+                 r.status_code == 201)
+        verifier("La réponse annonce que la confirmation est requise",
+                 (r.get_json() or {}).get("verification_requise") is True,
+                 "sans ce drapeau, l'interface croit à un échec")
+        verifier("Aucune session n'est ouverte à ce stade",
+                 strict.get("/api/profil/moi").status_code == 401)
+
+        code_o = jeton_sql(
+            "SELECT v.code FROM verification_email v "
+            "JOIN utilisateur u ON u.id_utilisateur = v.id_utilisateur "
+            "WHERE u.email = ?", ("orou@test.io",))
+        r = strict.post("/api/auth/verifier-code",
+                        json={"email": "orou@test.io", "code": str(code_o)})
+        verifier("Le code confirme l'adresse", r.status_code == 200)
+        verifier("Et ouvre la session dans la foulée",
+                 (r.get_json() or {}).get("session_ouverte") is True,
+                 "redemander le mot de passe après avoir prouvé "
+                 "l'adresse n'ajoute rien")
+        verifier("Le profil devient accessible",
+                 strict.get("/api/profil/moi").status_code == 200,
+                 "c'est ici que le parcours s'arrêtait")
+        verifier("Le profil de l'accueil s'enregistre alors",
+                 strict.put("/api/profil/moi", json={
+                     "niveau_etudes": "Baccalauréat",
+                     "domaine": "Soudure et métallerie"}).status_code == 200)
+
+        # Un compte non confirme qui se connecte doit etre oriente vers
+        # la saisie du code, pas laisse devant un refus sans issue.
+        autre = app.test_client()
+        autre.post("/api/auth/inscription", json={
+            "prenom": "Fataou", "nom": "MOUKAILA",
+            "email": "fataou.c@test.io", "mot_de_passe": "Fataou2026!",
+            "role": "etudiant", "consentement": CONSENT_OK})
+        r = autre.post("/api/auth/connexion", json={
+            "email": "fataou.c@test.io", "mot_de_passe": "Fataou2026!"})
+        verifier("La connexion d'un compte non confirmé est refusée",
+                 r.status_code == 403)
+        corps = r.get_json() or {}
+        verifier("Le refus porte de quoi ouvrir la saisie du code",
+                 corps.get("confirmation_requise") is True
+                 and corps.get("email") == "fataou.c@test.io")
+        verifier("Le message parle du code, non d'un lien",
+                 "code" in corps.get("erreur", "")
+                 and "lien" not in corps.get("erreur", ""))
+    finally:
+        app.config["VERIFICATION_EMAIL_OBLIGATOIRE"] = avant
 
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)

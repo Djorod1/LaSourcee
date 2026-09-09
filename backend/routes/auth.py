@@ -3,6 +3,7 @@
 import logging
 import re
 import secrets
+from datetime import datetime
 
 from flask import Blueprint, current_app, g, request, jsonify, make_response
 
@@ -34,6 +35,12 @@ bp_auth = Blueprint("auth", __name__, url_prefix="/api/auth")
 REGEX_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 ROLES_AUTORISES = {"etudiant", "mentor"}
 
+# Version des textes acceptes a l'inscription. A incrementer quand les
+# conditions ou la politique de confidentialite changent au point
+# d'exiger un nouvel accord : sans elle on sait qu'une personne a
+# accepte, mais pas ce qu'elle a accepte.
+VERSION_CONSENTEMENT = "2026-09"
+
 
 def _erreur(message, code=400):
     return jsonify({"erreur": message}), code
@@ -58,6 +65,15 @@ def inscription():
     mdp    = d.get("mot_de_passe") or ""
     role   = d.get("role") or "etudiant"
 
+    # Le consentement est exigé, puis enregistré daté et versionné. Un
+    # accord dont on ne sait ni quand il a été donné ni à quel texte il
+    # se rapportait ne prouve rien le jour où la question se pose.
+    consent = d.get("consentement") or {}
+    if not (consent.get("conditions") and consent.get("donnees")):
+        return _erreur(
+            "Vous devez accepter les conditions d'utilisation et le "
+            "traitement de vos données pour créer un compte.")
+
     if not (prenom and nom):
         return _erreur("Prénom et nom obligatoires.")
     if not REGEX_EMAIL.match(email):
@@ -76,9 +92,13 @@ def inscription():
     with curseur(commit=True) as cur:
         cur.execute(
             """INSERT INTO utilisateur
-                  (prenom, nom, email, mot_de_passe, role, email_verifie)
-               VALUES (%s, %s, %s, %s, %s, 0)""",
-            (prenom, nom, email, hache, role),
+                  (prenom, nom, email, mot_de_passe, role, email_verifie,
+                   consentement_le, consentement_version, accepte_notifs)
+               VALUES (%s, %s, %s, %s, %s, 0, %s, %s, %s)""",
+            (prenom, nom, email, hache, role,
+             datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+             VERSION_CONSENTEMENT,
+             1 if consent.get("notifications") else 0),
         )
         id_user = cur.lastrowid
         # Les mentors ont une ligne associée pour leurs détails publics.
@@ -220,9 +240,12 @@ def connexion():
         # Le motif et le recours dans la meme reponse : sans le drapeau,
         # l'interface ne peut pas proposer de renvoyer le lien, et la
         # personne reste bloquee sans savoir quoi faire.
+        # Le motif ET le recours dans la même réponse : sans le drapeau,
+        # l'interface ne peut pas ouvrir la saisie du code, et la
+        # personne reste devant un refus sans issue.
         return jsonify({
-            "erreur": "Votre adresse n'est pas encore confirmée. Ouvrez "
-                      "le lien reçu par e-mail, ou demandez-en un nouveau.",
+            "erreur": "Votre adresse n'est pas encore confirmée. Saisissez "
+                      "le code reçu par e-mail, ou demandez-en un nouveau.",
             "confirmation_requise": True,
             "email": email,
         }), 403
@@ -370,7 +393,31 @@ def verifier_code():
         cur.execute(
             "UPDATE verification_email SET verifie_le = CURRENT_TIMESTAMP "
             "WHERE id_jeton = %s", (ligne["id_jeton"],))
-    return jsonify({"ok": True, "message": "Adresse e-mail vérifiée."})
+
+    # La session s'ouvre ici. Saisir le code prouve qu'on relève bien
+    # cette adresse : redemander le mot de passe juste après n'ajoute
+    # rien, et laissait surtout la personne devant un écran de
+    # connexion sans lui dire que son compte venait d'être activé.
+    #
+    # C'est aussi ce qui manquait au parcours d'inscription. Depuis que
+    # la confirmation est obligatoire, l'inscription ne connecte plus :
+    # l'interface demandait le profil dans la foulée, recevait un refus,
+    # et renvoyait au formulaire en annonçant un échec, alors que le
+    # compte était créé et le code parti.
+    compte = recuperer_un(
+        "SELECT id_utilisateur, prenom, nom, email, role, est_admin, "
+        "doit_changer_mdp FROM utilisateur WHERE id_utilisateur = %s",
+        (ligne["id_utilisateur"],))
+    jeton = creer_session(ligne["id_utilisateur"],
+                          request.headers.get("User-Agent"))
+    reponse = jsonify({
+        "ok": True,
+        "message": "Adresse vérifiée. Vous êtes connecté.",
+        "utilisateur": compte,
+        "session_ouverte": True,
+    })
+    _poser_cookie(reponse, jeton)
+    return reponse
 
 
 @bp_auth.post("/deconnexion")

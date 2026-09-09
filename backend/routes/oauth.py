@@ -85,10 +85,37 @@ def connexion_google():
     if not sub or not email:
         return jsonify({"erreur": "Profil Google incomplet."}), 400
 
+    # Google demande l'autorisation de partager ces informations ; il ne
+    # demande pas ce que LaSourcee en fera. Ce consentement-ci porte sur
+    # la conservation, et il est exigé avant toute création de compte.
+    # Une connexion à un compte déjà existant n'a rien à redemander : la
+    # personne a accepté en s'inscrivant.
+    consentement = (request.get_json(silent=True) or {}).get("consentement") or {}
+    deja_connu = recuperer_un(
+        "SELECT 1 FROM utilisateur WHERE email = %s LIMIT 1", (email,))
+    if not deja_connu and not (consentement.get("donnees")
+                               and consentement.get("conditions")):
+        return jsonify({
+            "erreur": "Votre autorisation est nécessaire avant de créer "
+                      "un compte à partir de vos informations Google."
+        }), 400
+
     try:
         id_user = _trouver_ou_creer_compte_externe(
             "google", sub, email, email_verifie, prenom, nom, photo
         )
+        if not deja_connu:
+            from routes.auth import VERSION_CONSENTEMENT
+            from datetime import datetime as _dt
+            executer(
+                """UPDATE utilisateur
+                      SET consentement_le = %s, consentement_version = %s,
+                          accepte_notifs = %s
+                    WHERE id_utilisateur = %s""",
+                (_dt.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                 VERSION_CONSENTEMENT,
+                 1 if consentement.get("notifications") else 0,
+                 id_user), commit=True)
     except AdresseNonVerifiee:
         return jsonify({
             "erreur": "Google n'a pas confirmé cette adresse e-mail. "

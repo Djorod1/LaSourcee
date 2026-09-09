@@ -99,6 +99,11 @@ ENTETES_PROXY = {
     "Host": DOMAINE,
 }
 
+# Consentement exige a l'inscription. Les tests le fournissent
+# comme l'interface, sinon chaque creation de compte echoue.
+CONSENT_DEPLOI = {"conditions": True, "donnees": True,
+                  "notifications": False}
+
 _total = 0
 _reussis = 0
 
@@ -210,7 +215,7 @@ def executer():
         "email": "fatou.deploiement@exemple.org",
         "mot_de_passe": "Deploiement2026!",
         "role": "etudiant",
-    })
+        "consentement": CONSENT_DEPLOI})
     verifier("Inscription acceptée (201)", r.status_code == 201,
              r.get_data(as_text=True)[:200])
 
@@ -410,7 +415,8 @@ def executer():
         _r = client.post("/api/auth/inscription", headers=ENTETES_PROXY, json={
             "prenom": "Migration", "nom": "ESSAI",
             "email": "migration.essai@exemple.org",
-            "mot_de_passe": "Migration2026!", "role": "etudiant"})
+            "mot_de_passe": "Migration2026!", "role": "etudiant",
+        "consentement": CONSENT_DEPLOI})
         verifier("Une inscription aboutit après mise à niveau",
                  _r.status_code == 201, _r.get_data(as_text=True)[:90])
         client.post("/api/auth/connexion", headers=ENTETES_PROXY, json={

@@ -182,14 +182,112 @@ async function seConnecter() {
 /* ----- Connexion OAuth Google -----
    Utilise Google Identity Services (chargé dans index.html).
    Demande un ID token, puis l'envoie au backend pour vérification. */
-async function connecterGoogle() {
-  const clientId = window.GOOGLE_CLIENT_ID;
-  if (!clientId) {
-    return toast(
-      'Google OAuth non configuré. Ajoutez GOOGLE_CLIENT_ID dans backend/.env '
-      + '(voir README).', 'erreur'
-    );
+/* Consentement avant Google.
+
+   Le bouton ouvrait directement la fenêtre de Google, et le compte se
+   créait avec le nom, l'adresse et la photo sans que personne n'ait rien
+   accepté ni même lu. Google demande l'autorisation de partager ces
+   informations ; il ne demande pas ce que LaSourcee en fera. C'est à
+   nous de le dire, et de le demander, avant d'ouvrir sa fenêtre.
+
+   Le panneau est refusé tant que les deux cases nécessaires ne sont pas
+   cochées, et il énumère précisément ce qui sera reçu. */
+function connecterGoogle() {
+  if (!window.GOOGLE_CLIENT_ID) {
+    return toast('Connexion Google non configurée sur ce serveur.', 'erreur');
   }
+  ouvrirConsentementGoogle();
+}
+
+function ouvrirConsentementGoogle() {
+  fermerMentionsLegales();
+  const fond = document.createElement('div');
+  fond.className = 'modale-fond';
+  fond.id = 'modaleLegale';
+  fond.setAttribute('role', 'dialog');
+  fond.setAttribute('aria-modal', 'true');
+  fond.innerHTML = `
+    <div class="modale-boite">
+      <div class="modale-entete">
+        <h2>Continuer avec Google</h2>
+        <button class="modale-fermer" onclick="fermerMentionsLegales()" aria-label="Fermer">&times;</button>
+      </div>
+      <div class="modale-corps">
+        <p>Google nous transmettra les informations suivantes, et rien
+           d'autre :</p>
+        <ul class="liste-donnees">
+          <li><strong>Votre nom et prénom</strong>, tels qu'ils figurent
+            sur votre compte Google.</li>
+          <li><strong>Votre adresse e-mail</strong>, ainsi que
+            l'indication qu'elle est vérifiée.</li>
+          <li><strong>Votre photo de profil</strong>, si vous en avez une.</li>
+        </ul>
+        <p class="desc">Nous n'avons accès ni à vos messages, ni à vos
+           contacts, ni à vos fichiers. LaSourcee ne peut rien publier en
+           votre nom.</p>
+
+        <fieldset class="bloc-consentement">
+          <legend>Votre autorisation</legend>
+          <label class="case-consentement">
+            <input type="checkbox" id="g-donnees" onchange="majBoutonGoogle()" />
+            <span>J'autorise LaSourcee à recevoir de Google mon nom, mon
+              adresse e-mail et ma photo, et à les conserver pour mon
+              compte.</span>
+          </label>
+          <label class="case-consentement">
+            <input type="checkbox" id="g-conditions" onchange="majBoutonGoogle()" />
+            <span>J'ai lu et j'accepte les
+              <a href="#" onclick="event.preventDefault(); ouvrirMentionsLegales('conditions');">conditions d'utilisation</a>
+              et la
+              <a href="#" onclick="event.preventDefault(); ouvrirMentionsLegales('confidentialite');">politique de confidentialité</a>.</span>
+          </label>
+          <label class="case-consentement">
+            <input type="checkbox" id="g-notifs" />
+            <span>J'accepte de recevoir par e-mail les réponses à mes
+              questions. <em>Facultatif.</em></span>
+          </label>
+        </fieldset>
+
+        <button class="btn btn-primaire" id="btn-google-suite" disabled
+                onclick="lancerGoogle(this)">Continuer avec Google</button>
+        <p class="aide-champ">Vous pourrez supprimer votre compte et
+           toutes ces informations à tout moment, depuis vos paramètres.</p>
+      </div>
+    </div>`;
+  fond.addEventListener('click', (e) => {
+    if (e.target === fond) fermerMentionsLegales();
+  });
+  document.body.appendChild(fond);
+  document.body.style.overflow = 'hidden';
+}
+
+function majBoutonGoogle() {
+  const bouton = document.getElementById('btn-google-suite');
+  if (!bouton) return;
+  bouton.disabled = !(document.getElementById('g-donnees')?.checked
+                      && document.getElementById('g-conditions')?.checked);
+}
+
+function majBoutonInscription() {
+  // Rien à désactiver ici : le contrôle a lieu au clic, avec un message
+  // qui dit ce qui manque. Un bouton grisé sans explication laisse
+  // chercher.
+}
+
+async function lancerGoogle(bouton) {
+  const consentement = {
+    donnees: !!document.getElementById('g-donnees')?.checked,
+    conditions: !!document.getElementById('g-conditions')?.checked,
+    notifications: !!document.getElementById('g-notifs')?.checked,
+  };
+  if (!(consentement.donnees && consentement.conditions)) return;
+  bouton.disabled = true;
+  fermerMentionsLegales();
+  _lancerGoogleAvecConsentement(consentement);
+}
+
+async function _lancerGoogleAvecConsentement(consentement) {
+  const clientId = window.GOOGLE_CLIENT_ID;
   if (!window.google || !window.google.accounts) {
     return toast('Bibliothèque Google non chargée. Vérifiez votre connexion.', 'erreur');
   }
@@ -197,7 +295,8 @@ async function connecterGoogle() {
     client_id: clientId,
     callback: async (reponse) => {
       try {
-        await API.post('/auth/google', { credential: reponse.credential });
+        await API.post('/auth/google',
+                       { credential: reponse.credential, consentement });
         SESSION.utilisateur = await API.get('/profil/moi');
         appliquerUtilisateur(SESSION.utilisateur);
         toast('Connexion réussie. Google a confirmé votre adresse, aucun '
@@ -298,6 +397,15 @@ function commencerOnboarding() {
   }
   if (mdp !== mdp2) return toast('Les deux mots de passe ne correspondent pas.', 'erreur');
 
+  // Le consentement est verifie ici aussi, et pas seulement par le
+  // serveur : laisser avancer pour refuser trois ecrans plus loin, une
+  // fois le formulaire rempli, serait la pire facon de le demander.
+  if (!document.getElementById('cons-conditions')?.checked
+      || !document.getElementById('cons-donnees')?.checked) {
+    return toast('Acceptez les conditions et le traitement de vos données '
+                 + 'pour continuer.', 'erreur');
+  }
+
   etat.etapeOnboarding = 1;
   majEtapeOnboarding();
   afficherVue('vue-onboarding');
@@ -352,59 +460,76 @@ function validerEtapeOnboarding(etape) {
   return true;
 }
 
-/* Crée le compte sur le serveur avec toutes les informations
-   collectées à l'inscription puis pendant l'accueil guidé. */
+/* Crée le compte, puis conduit à la confirmation ou à l'application.
+
+   Le parcours dépend d'un réglage du serveur. Quand la confirmation est
+   obligatoire, l'inscription n'ouvre pas de session : demander le
+   profil dans la foulée recevait un refus, et l'interface renvoyait au
+   formulaire en annonçant un échec, alors que le compte était créé et
+   le code parti. C'est ce qui empêchait de trouver où saisir le code.
+
+   Les informations recueillies pendant l'accueil guidé sont donc mises
+   de côté et envoyées après l'ouverture de session, quel que soit le
+   moment où elle survient. */
+let _profilEnAttente = null;
+
 async function finaliserInscription() {
   const prenom = (document.getElementById('prenom-ins')?.value || '').trim();
   const nom = (document.getElementById('nom-ins')?.value || '').trim();
   const email = (document.getElementById('email-ins')?.value || '').trim().toLowerCase();
   const mdp = document.getElementById('mdp-ins')?.value || '';
 
-  // Données collectées pendant l'onboarding
   const secteursChoisis = [...document.querySelectorAll('#etape-2 .chip-select.actif')]
     .map(c => c.textContent.trim().replace(/\s*×$/, '').replace(/^\+\s*Autre$/, '')).filter(Boolean);
   const d = infosEtape1();
+  const telephone = (document.getElementById('tel-ins')?.value || '').trim();
 
   try {
     const photoOnboarding = etat.utilisateur && etat.utilisateur.photo;
     const creation = await API.post('/auth/inscription', {
       prenom, nom, email, mot_de_passe: mdp,
       role: etat.roleChoisi || 'etudiant',
+      consentement: {
+        conditions: !!document.getElementById('cons-conditions')?.checked,
+        donnees: !!document.getElementById('cons-donnees')?.checked,
+        notifications: !!document.getElementById('cons-notifs')?.checked,
+      },
     });
-    MODE.utilisateur = await API.get('/profil/moi');
 
-    // Le pays et les secteurs etaient recueillis puis jetes : la
-    // requete ne les portait pas. On demandait donc une information
-    // pour la perdre aussitot, et le profil s'ouvrait vide juste apres
-    // l'avoir rempli.
-    const id_pays = d.pays ? await _idPaysDepuisLibelle(d.pays) : null;
-    const secteurs = await _idsSecteursDepuisLibelles(secteursChoisis);
-    const telephone = (document.getElementById('tel-ins')?.value || '').trim();
-    const aEnvoyer = {
+    // Mis de côté, envoyé dès qu'une session existe. Le pays et les
+    // secteurs étaient auparavant recueillis puis perdus.
+    _profilEnAttente = {
       bio: d.bio,
       ...(telephone ? { telephone } : {}),
       niveau_etudes: d.niveau_etudes,
       domaine: d.domaine,
       etablissement: d.etablissement,
+      _pays: d.pays,
+      _secteurs: secteursChoisis,
+      _photo: photoOnboarding,
     };
-    if (id_pays) aEnvoyer.id_pays = id_pays;
-    if (secteurs.length) aEnvoyer.secteurs = secteurs;
-    if (Object.values(aEnvoyer).some(Boolean)) {
-      await API.put('/profil/moi', aEnvoyer).catch(() => {});
-      MODE.utilisateur = await API.get('/profil/moi');
+
+    // Confirmation obligatoire : aucune session n'a été ouverte. On
+    // conduit directement à la saisie du code, sans toucher au profil.
+    if (creation && creation.verification_requise) {
+      if (creation.email_envoye === false) {
+        toast("Compte créé, mais le code n'a pas pu être envoyé. "
+              + 'Prévenez un administrateur.', 'erreur');
+      }
+      ouvrirEtapeConfirmation(email);
+      return 'confirmation';
     }
+
+    // Mode souple : la session est déjà ouverte.
+    MODE.utilisateur = await API.get('/profil/moi');
+    await envoyerProfilEnAttente();
     appliquerUtilisateur(MODE.utilisateur);
     if (photoOnboarding) etat.utilisateur.photo = photoOnboarding;
-    // Dire ce qui va se passer dans la boite aux lettres : sans cela,
-    // la personne ignore qu'un message l'attend, ou en guette un qui
-    // n'est jamais parti.
-    // Un message passager disparaissait avant qu'on l'ait lu, et rien
-    // n'indiquait ou saisir le code. La confirmation devient une etape
-    // du parcours, avec son ecran.
+
     if (creation && creation.email_envoye === false) {
-      toast('Compte créé. Le message de confirmation n\'a pas pu partir : '
+      toast("Compte créé. Le code de confirmation n'a pas pu partir : "
             + 'votre compte reste utilisable.', 'erreur');
-      return true;      // inutile de demander un code qui n'est pas parti
+      return true;
     }
     ouvrirEtapeConfirmation(email);
     return 'confirmation';
@@ -413,6 +538,33 @@ async function finaliserInscription() {
     afficherVue('vue-inscription'); return false;
   }
 }
+
+/* Envoie au serveur ce que l'accueil guidé avait recueilli. Appelée dès
+   qu'une session existe, c'est-à-dire après la saisie du code quand la
+   confirmation est obligatoire. */
+async function envoyerProfilEnAttente() {
+  if (!_profilEnAttente) return;
+  const p = _profilEnAttente;
+  _profilEnAttente = null;
+  try {
+    const corps = { ...p };
+    delete corps._pays; delete corps._secteurs; delete corps._photo;
+    const id_pays = p._pays ? await _idPaysDepuisLibelle(p._pays) : null;
+    const secteurs = await _idsSecteursDepuisLibelles(p._secteurs || []);
+    if (id_pays) corps.id_pays = id_pays;
+    if (secteurs.length) corps.secteurs = secteurs;
+    if (Object.values(corps).some(Boolean)) {
+      await API.put('/profil/moi', corps);
+      MODE.utilisateur = await API.get('/profil/moi');
+      appliquerUtilisateur(MODE.utilisateur);
+    }
+    if (p._photo) etat.utilisateur.photo = p._photo;
+  } catch (_) {
+    // Le profil se complète depuis les paramètres : mieux vaut laisser
+    // entrer que bloquer sur une information secondaire.
+  }
+}
+
 function majEtapeOnboarding() {
   const e = etat.etapeOnboarding;
   const labels = ['Informations de base', "Secteurs d'intérêt", 'Photo de profil', 'Découverte de la plateforme'];
@@ -2465,7 +2617,7 @@ function tableauUtilisateurs(liste) {
   if (!liste.length) {
     return `<div class="carte"><p class="desc">Aucun compte ne correspond.</p></div>`;
   }
-  return `<table class="tableau">
+  return `<div class="cadre-tableau"><table class="tableau">
       <thead><tr><th>Nom</th><th>E-mail</th><th>Rôle</th><th>Statut</th><th>Actions</th></tr></thead>
       <tbody>${liste.map(u => `<tr>
         <td><strong>${echapper(u.prenom)} ${echapper(u.nom)}</strong></td>
@@ -2479,7 +2631,7 @@ function tableauUtilisateurs(liste) {
           <button class="btn btn-fantome btn-petit" onclick="adminOuvrirRole(${u.id_utilisateur})">Rôle</button>
           <button class="btn btn-danger btn-petit" onclick="adminAction('supprimer',${u.id_utilisateur})">Supprimer</button>
         </td></tr>`).join('')}</tbody>
-    </table>`;
+    </table></div>`;
 }
 
 /* Filtrage dans le navigateur : la liste tient en mémoire, et une
@@ -2821,7 +2973,7 @@ async function adminAudit() {
       <div class="carte"><p style="color:var(--texte-doux);">Aucune action enregistrée.</p></div>`;
   }
   return `<h2 style="margin-bottom:18px;">Journal d'audit (${liste.length} dernières actions)</h2>
-    <table class="tableau">
+    <div class="cadre-tableau"><table class="tableau">
       <thead><tr><th>Date</th><th>Acteur</th><th>Action</th><th>Cible</th><th>Détails</th></tr></thead>
       <tbody>${liste.map(a => `<tr>
         <td class="horodatage">${formatHorodatage(a.cree_le, true)}</td>
@@ -2830,7 +2982,7 @@ async function adminAudit() {
         <td>${a.type_cible ? echapper(a.type_cible) + ' #' + a.id_cible : '·'}</td>
         <td style="font-size:12px; color:var(--texte-doux);">${echapper(a.details || '')}</td>
       </tr>`).join('')}</tbody>
-    </table>`;
+    </table></div>`;
 }
 
 /* ============================================================
@@ -4105,7 +4257,7 @@ async function adminExport() {
        dans un tableur, le JSON se traite par programme. Aucun mot de
        passe ni jeton de session n'y figure.</p>
     <div class="carte" style="margin-bottom:18px;">
-      <table class="table-export">
+      <div class="cadre-tableau"><table class="table-export">
         <thead><tr><th>Jeu de données</th><th>Lignes</th><th>Télécharger</th></tr></thead>
         <tbody>
           ${jeux.map(j => `<tr>
@@ -4118,7 +4270,7 @@ async function adminExport() {
                       onclick="telechargerExport('${j.cle}','json')">JSON</button>
             </td></tr>`).join('')}
         </tbody>
-      </table>
+      </table></div>
     </div>
     <div class="carte">
       <h3 class="titre-param">Dossier d'une personne</h3>
@@ -4614,8 +4766,17 @@ async function validerCodeInscription(bouton) {
   bouton.disabled = true;
   bouton.textContent = 'Vérification…';
   try {
-    await API.post('/auth/verifier-code',
-                   { email: _adresseAConfirmer, code });
+    const r = await API.post('/auth/verifier-code',
+                             { email: _adresseAConfirmer, code });
+    // Le serveur ouvre la session : saisir le code prouve qu'on relève
+    // bien cette adresse, redemander le mot de passe n'ajouterait rien.
+    if (r && r.session_ouverte) {
+      MODE.utilisateur = await API.get('/profil/moi').catch(() => null);
+      if (MODE.utilisateur) appliquerUtilisateur(MODE.utilisateur);
+      // Ce que l'accueil guidé avait recueilli part maintenant : il n'y
+      // avait pas de session au moment de l'inscription.
+      await envoyerProfilEnAttente();
+    }
     if (etat.utilisateur) etat.utilisateur.email_verifie = true;
     majRappelConfirmation();
     toast('Adresse confirmée. Bienvenue sur LaSourcee.');
@@ -4684,8 +4845,56 @@ function _compteARebours(bouton, libelle) {
 /* Le compte reste utilisable sans confirmation : bloquer quelqu'un qui
    vient de s'inscrire parce qu'un e-mail n'est pas arrivé le ferait
    partir pour de bon. Le rappel subsiste dans l'application. */
-function continuerSansConfirmer() {
+async function continuerSansConfirmer() {
+  // Sans session, « continuer » menait à une application vide : le
+  // compte existe, mais rien ne s'y charge. Dans ce cas on renvoie à la
+  // connexion, en le disant.
+  const profil = await API.get('/profil/moi').catch(() => null);
+  if (!profil) {
+    toast('Votre compte est créé. Saisissez le code pour y accéder, ou '
+          + 'connectez-vous une fois votre adresse confirmée.');
+    afficherVue('vue-connexion');
+    const champ = document.getElementById('email-conn');
+    if (champ) champ.value = _adresseAConfirmer;
+    return;
+  }
+  MODE.utilisateur = profil;
+  appliquerUtilisateur(profil);
   afficherVue('vue-app');
   initApp();
   majRappelConfirmation();
+}
+
+/* Saisie du code, atteignable à tout moment depuis la connexion.
+
+   Quelqu'un qui ferme la page après son inscription, ou qui revient le
+   lendemain, n'avait aucun chemin vers cet écran : il fallait échouer à
+   se connecter pour que l'interface le propose. L'adresse déjà saisie
+   dans le formulaire est reprise, pour ne pas la retaper. */
+function ouvrirSaisieCode() {
+  const saisie = (document.getElementById('email-conn')?.value || '').trim();
+  ouvrirEtapeConfirmation(saisie.toLowerCase());
+  if (!saisie) {
+    const zone = document.getElementById('conf-adresse');
+    if (zone) zone.textContent = 'votre adresse';
+    // Sans adresse, le code ne peut être rattaché à personne : on la
+    // demande avant tout le reste.
+    demanderAdresseCode();
+  }
+}
+
+function demanderAdresseCode() {
+  const retour = document.getElementById('conf-retour');
+  const adresse = prompt('Quelle adresse e-mail avez-vous utilisée pour '
+                         + "vous inscrire ?", '');
+  if (adresse === null) { afficherVue('vue-connexion'); return; }
+  const propre = adresse.trim().toLowerCase();
+  if (!propre.includes('@')) {
+    if (retour) { retour.style.color = 'var(--rouge-fonce)';
+                  retour.textContent = 'Adresse invalide.'; }
+    return;
+  }
+  _adresseAConfirmer = propre;
+  const zone = document.getElementById('conf-adresse');
+  if (zone) zone.textContent = propre;
 }

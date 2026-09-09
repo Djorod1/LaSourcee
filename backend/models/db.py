@@ -350,6 +350,12 @@ COLONNES_ATTENDUES = [
     # ou incomplète la manquerait sans que rien ne le signale, et la
     # mise à jour du profil échouerait en erreur serveur.
     ("utilisateur", "telephone", "TEXT"),
+    # Consentement daté et versionné. Un accord dont on ne sait ni
+    # quand il a été donné ni à quel texte il se rapportait ne
+    # prouve rien.
+    ("utilisateur", "consentement_le", "TEXT"),
+    ("utilisateur", "consentement_version", "TEXT"),
+    ("utilisateur", "accepte_notifs", "INTEGER NOT NULL DEFAULT 0"),
     # Code court de confirmation, saisi a la main quand le lien
     # n'aboutit pas.
     # Mesures d'usage, qui servent aussi de variables d'analyse.

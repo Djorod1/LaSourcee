@@ -2348,17 +2348,40 @@ img, svg, video { max-width: 100%; height: auto; }
 }
 
 /* Compteur sur une entrée du menu d'administration. */
+/* Compteur sur une entrée de menu. « margin-left: auto » le pousse à
+   droite dans le menu vertical, mais en dessous de 1024px le menu
+   devient une barre horizontale défilante : la marge automatique y
+   ajoutait un vide au milieu des boutons et décalait toute la rangée.
+   Elle n'est donc posée que là où le menu est en colonne. */
 .compteur-admin {
-  margin-left: auto;
   min-width: 20px;
   padding: 1px 6px;
+  margin-left: 6px;
   border-radius: 10px;
   background: var(--rouge);
   color: #fff;
   font-size: 11.5px;
   font-weight: 600;
+  line-height: 1.5;
   text-align: center;
+  flex-shrink: 0;
 }
+@media (min-width: 1025px) {
+  .menu-admin .compteur-admin { margin-left: auto; }
+}
+
+/* Un tableau plus large que l'écran était coupé, « overflow: hidden »
+   masquant les colonnes de droite sans que rien ne le signale : le
+   journal d'audit perdait ses trois dernières colonnes sur téléphone.
+   Il défile désormais dans son propre cadre, et lui seul : la page,
+   elle, ne défile jamais latéralement. */
+.cadre-tableau {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: var(--rayon-m);
+}
+.cadre-tableau .tableau,
+.cadre-tableau .table-export { min-width: 560px; }
 
 /* Rappel de profil dans le fil. Volontairement sobre : il informe d'un
    gain, il n'annonce pas un incident. Une bande rouge pour un profil
@@ -2889,3 +2912,72 @@ img, svg, video { max-width: 100%; height: auto; }
   color: var(--texte-doux);
   margin-left: 6px;
 }
+
+/* Deux liens sous le mot de passe, aux deux extrémités : « j'ai un
+   code » et « mot de passe oublié » répondent à des situations
+   différentes, les aligner à droite l'un sous l'autre les aurait
+   confondus. */
+.liens-connexion {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  font-size: 13.5px;
+}
+
+/* ==================================================================
+   CONSENTEMENT
+   ------------------------------------------------------------------
+   Ni l'inscription ni la connexion Google ne demandaient quoi que ce
+   soit : les données étaient collectées sans que personne ne l'ait
+   accepté, ni même lu. Les cases sont espacées et le texte lisible,
+   parce qu'un consentement illisible n'en est pas un.
+   ================================================================== */
+.bloc-consentement {
+  border: 1px solid var(--bordure);
+  border-radius: var(--rayon-s);
+  padding: 14px;
+  margin: 0 0 16px;
+}
+.bloc-consentement legend {
+  padding: 0 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--texte-doux);
+}
+.case-consentement {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.case-consentement input {
+  margin: 3px 0 0;
+  flex-shrink: 0;
+  width: 16px; height: 16px;
+  accent-color: var(--primaire);
+}
+.case-consentement em {
+  font-style: normal;
+  color: var(--texte-doux);
+  font-size: 12px;
+}
+.case-consentement a { text-decoration: underline; }
+.case-consentement:focus-within {
+  outline: 2px solid var(--primaire);
+  outline-offset: 3px;
+  border-radius: var(--rayon-s);
+}
+
+/* Énumération de ce qui sera reçu, avant de l'autoriser. */
+.liste-donnees {
+  margin: 10px 0 14px;
+  padding-left: 20px;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+.liste-donnees li { margin-bottom: 4px; }

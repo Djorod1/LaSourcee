@@ -46,6 +46,12 @@ CREATE TABLE utilisateur (
     -- droits par domaine, qui les conserve tous. Une liste vide est
     -- un choix explicite : aucun droit.
     permissions     TEXT,
+    -- Consentement recueilli a l'inscription. Sans date ni version,
+    -- on ne peut ni prouver qu'il a ete donne, ni savoir a quel
+    -- texte il se rapportait : un accord non date ne vaut rien.
+    consentement_le      TEXT,
+    consentement_version TEXT,
+    accepte_notifs       INTEGER NOT NULL DEFAULT 0,
     -- Situation actuelle : elle situe la question bien mieux que
     -- l'intitule d'un diplome.
     situation       TEXT,
