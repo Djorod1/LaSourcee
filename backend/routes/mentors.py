@@ -4,6 +4,7 @@ from flask import Blueprint, g, jsonify, request
 
 from models.db import recuperer_un, recuperer_tous, executer
 from utils.auth_helpers import connexion_requise
+from services.notifications import notifier_suivi
 
 bp_mentors = Blueprint("mentors", __name__, url_prefix="/api/mentors")
 
@@ -107,6 +108,10 @@ def suivre(id_mentor):
            VALUES (%s, %s)""",
         (id_user, id_mentor), commit=True,
     )
+    notifier_suivi(
+        id_mentor, id_user,
+        f"{g.utilisateur.get('prenom', '')} "
+        f"{(g.utilisateur.get('nom') or '')[:1]}.".strip())
     return jsonify({"suivi": True})
 
 

@@ -253,9 +253,14 @@ function appliquerUtilisateur(u) {
     doit_changer_mdp: !!u.doit_changer_mdp,
     email_verifie: !!u.email_verifie,
     email: u.email || '',
+    situation: u.situation || '',
+    objectif: u.objectif || '',
+    langues: u.langues || '',
+    profil_pro: u.profil_pro || '',
   };
   majRappelMotDePasse();
   majRappelConfirmation();
+  demarrerReleveNotifications();
 }
 /* Validation des champs de l'inscription AVANT de passer à l'onboarding. */
 function commencerOnboarding() {
@@ -1092,6 +1097,7 @@ function ongletProfil(elem, t) {
     // La complétion précède les publications : c'est ce qui manque au
     // profil qui décide de l'accueil réservé à ce qu'on y publie.
     c.innerHTML = carteCompletionProfil()
+      + detailsProfil(etat.utilisateur)
       + questions.slice(0,3).map(q => carteQuestionHTML(q)).join('');
   } else if (t === 'sauvees') {
     const liste = questions.filter(q => etat.sauvegardees.has(q.id));
@@ -1546,7 +1552,7 @@ function changerPanParam(elem, p) {
   document.querySelectorAll('#menu-param button').forEach(b => b.classList.remove('actif'));
   elem.classList.add('actif');
   const c = document.getElementById('contenu-param');
-  if (p === 'compte') c.innerHTML = panneauCompte();
+  if (p === 'compte') { chargerReferentielsProfil().then(() => { c.innerHTML = panneauCompte(); }); }
   if (p === 'notifs') { c.innerHTML = panneauNotifsParam(); chargerPreferences(); }
   if (p === 'securite') { c.innerHTML = panneauSecurite(); chargerSessions(); }
   if (p === 'confid') c.innerHTML = panneauConfid();
@@ -1567,6 +1573,30 @@ function panneauCompte() {
     <div class="champ"><label>E-mail</label><input id="pc-email" type="email" value="${echapper(u.email || (u.prenom.toLowerCase() + '.' + u.nom.toLowerCase() + '@email.com'))}" /></div>
     <div class="champ"><label>Pays</label>
       <select id="pc-pays"><option value="">Sélectionnez votre pays</option>${optsPays}</select>
+    </div>
+    <div class="champs-cote">
+      <div class="champ"><label for="pc-situation">Où en êtes-vous ?</label>
+        <select id="pc-situation">
+          <option value="">Préférer ne pas dire</option>
+          ${(etat.referentielsProfil?.situations || []).map(s =>
+            `<option value="${echapper(s)}"${s === u.situation ? ' selected' : ''}>${echapper(s)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="champ"><label for="pc-objectif">Ce que vous cherchez</label>
+        <select id="pc-objectif">
+          <option value="">Préférer ne pas dire</option>
+          ${(etat.referentielsProfil?.objectifs || []).map(o =>
+            `<option value="${echapper(o)}"${o === u.objectif ? ' selected' : ''}>${echapper(o)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="champs-cote">
+      <div class="champ"><label for="pc-langues">Langues parlées</label>
+        <input id="pc-langues" value="${echapper(u.langues || '')}" placeholder="Ex : français, anglais, fon" />
+      </div>
+      <div class="champ"><label for="pc-profilpro">Profil professionnel</label>
+        <input id="pc-profilpro" type="url" value="${echapper(u.profil_pro || '')}" placeholder="https://www.linkedin.com/in/..." />
+      </div>
     </div>
     <div class="champ"><label>Biographie</label>
       <textarea id="pc-bio" maxlength="500" oninput="document.getElementById('bio-cnt').textContent=this.value.length">${echapper(u.bio)}</textarea>
@@ -1626,6 +1656,10 @@ async function sauverCompte() {
   const email = (document.getElementById('pc-email')?.value || '').trim();
   const pays = document.getElementById('pc-pays')?.value || '';
   const bio = document.getElementById('pc-bio')?.value || '';
+  const situation = document.getElementById('pc-situation')?.value || '';
+  const objectif = document.getElementById('pc-objectif')?.value || '';
+  const langues = (document.getElementById('pc-langues')?.value || '').trim();
+  const profilPro = (document.getElementById('pc-profilpro')?.value || '').trim();
   const secteurs = [...document.querySelectorAll('#pc-chips .chip-select.actif')]
     .map(c => c.textContent.trim().replace(/\s*×$/, '').replace(/^\+\s*Autre$/, ''))
     .filter(Boolean);
@@ -1637,6 +1671,10 @@ async function sauverCompte() {
   etat.utilisateur.pays = pays;
   etat.utilisateur.bio = bio;
   etat.utilisateur.secteurs = secteurs;
+  etat.utilisateur.situation = situation;
+  etat.utilisateur.objectif = objectif;
+  etat.utilisateur.langues = langues;
+  etat.utilisateur.profil_pro = profilPro;
   // Rafraîchir la navigation immédiatement (retour visuel)
   const navAv = document.getElementById('avatar-nav');
   if (navAv && !etat.utilisateur.photo) navAv.textContent = etat.utilisateur.initiales;
@@ -1649,6 +1687,10 @@ async function sauverCompte() {
       prenom, nom, bio,
       photo_url: etat.utilisateur.photo || undefined,
       id_pays: id_pays || undefined,
+      // Une chaîne vide est envoyée telle quelle : c'est ainsi qu'on
+      // efface un champ. undefined le laisserait inchangé.
+      situation, objectif, langues,
+      profil_pro: profilPro,
     });
     SESSION.utilisateur = await API.get('/profil/moi');
     toast('Modifications enregistrées.');
@@ -2977,6 +3019,10 @@ function elementsProfil(u) {
       gain: 'Les conseils dépendent souvent du pays où vous étudiez.' },
     { fait: !!(u.secteurs && u.secteurs.length), libelle: "Secteurs d'intérêt",
       gain: 'Ils orientent les référents et les questions qui vous sont proposés.' },
+    { fait: !!u.situation, libelle: 'Votre situation',
+      gain: 'Savoir où vous en êtes change la réponse qu\'on vous donne.' },
+    { fait: !!u.objectif, libelle: 'Ce que vous cherchez',
+      gain: 'C\'est ce qui vous rapproche des référents qui peuvent aider.' },
   ];
 }
 
@@ -3112,4 +3158,119 @@ async function renvoyerMaConfirmation(bouton) {
     bouton.disabled = false;
     bouton.textContent = libelle;
   }
+}
+
+/* ============================================================
+   NOTIFICATIONS : RELÈVE PÉRIODIQUE
+   ------------------------------------------------------------
+   Une connexion permanente serait plus élégante, mais les fonctions
+   sans serveur ont une durée de vie bornée : elles ne peuvent pas
+   maintenir un canal ouvert. On interroge donc le serveur à
+   intervalle régulier.
+
+   Trente secondes quand l'onglet est visible, rien du tout quand il ne
+   l'est pas : interroger un onglet en arrière-plan consomme la batterie
+   du téléphone sans que personne ne regarde le résultat. La relève
+   reprend immédiatement au retour, pour que le compteur soit à jour
+   avant même que l'œil ne s'y pose.
+   ============================================================ */
+
+const RELEVE_NOTIFS_MS = 30000;
+let _minuteurNotifs = null;
+
+async function releverNotifications() {
+  if (!etat.utilisateur) return;
+  try {
+    const r = await API.get('/notifications/non-lues');
+    majPastilleNotifications(r && typeof r.non_lues === 'number' ? r.non_lues : 0);
+  } catch (err) {
+    // Un échec de relève ne doit rien interrompre : le prochain
+    // passage réessaiera.
+  }
+}
+
+function majPastilleNotifications(nb) {
+  const bouton = document.querySelector('.nav-bouton[data-section="notifs"]');
+  if (!bouton) return;
+  let pastille = bouton.querySelector('.pastille-notif');
+
+  if (!nb) {
+    if (pastille) pastille.remove();
+    bouton.removeAttribute('aria-label');
+    bouton.setAttribute('aria-label', 'Notifications');
+    return;
+  }
+  if (!pastille) {
+    pastille = document.createElement('span');
+    pastille.className = 'pastille-notif';
+    bouton.appendChild(pastille);
+  }
+  pastille.textContent = nb > 9 ? '9+' : String(nb);
+  bouton.setAttribute('aria-label',
+    `Notifications, ${nb} non lue${nb > 1 ? 's' : ''}`);
+}
+
+function demarrerReleveNotifications() {
+  arreterReleveNotifications();
+  releverNotifications();
+  _minuteurNotifs = setInterval(releverNotifications, RELEVE_NOTIFS_MS);
+}
+
+function arreterReleveNotifications() {
+  if (_minuteurNotifs) {
+    clearInterval(_minuteurNotifs);
+    _minuteurNotifs = null;
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    arreterReleveNotifications();
+  } else if (etat.utilisateur) {
+    demarrerReleveNotifications();
+  }
+});
+
+/* Listes servies par le serveur plutôt qu'écrites ici : la liste
+   affichée et celle que le serveur accepte ne peuvent alors pas
+   diverger, et un ajout se fait à un seul endroit. */
+async function chargerReferentielsProfil() {
+  if (etat.referentielsProfil) return etat.referentielsProfil;
+  try {
+    etat.referentielsProfil = await API.get('/profil/referentiels-profil');
+  } catch {
+    etat.referentielsProfil = { situations: [], objectifs: [] };
+  }
+  return etat.referentielsProfil;
+}
+
+/* Ligne d'identité affichée sous le nom, sur le profil. Elle réunit ce
+   qui situe la personne en un coup d'œil, sans obliger à lire la
+   présentation entière. */
+function ligneIdentiteProfil(u) {
+  const morceaux = [];
+  if (u.situation) morceaux.push(echapper(u.situation));
+  if (u.etudes) morceaux.push(echapper(u.etudes));
+  if (u.pays) morceaux.push(echapper(u.pays));
+  if (!morceaux.length) return '';
+  return `<div class="profil-identite">${morceaux.join(' · ')}</div>`;
+}
+
+function detailsProfil(u) {
+  const lignes = [];
+  if (u.objectif) {
+    lignes.push(['Recherche', echapper(u.objectif)]);
+  }
+  if (u.langues) {
+    lignes.push(['Langues', echapper(u.langues)]);
+  }
+  if (u.profil_pro) {
+    lignes.push(['Profil professionnel',
+      `<a href="${echapper(u.profil_pro)}" target="_blank" rel="noopener noreferrer">Consulter</a>`]);
+  }
+  if (!lignes.length) return '';
+  return `<div class="carte profil-details">
+    ${lignes.map(([cle, val]) =>
+      `<div class="profil-detail"><span>${cle}</span><strong>${val}</strong></div>`).join('')}
+  </div>`;
 }

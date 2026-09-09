@@ -48,6 +48,10 @@ CREATE TABLE utilisateur (
     doit_changer_mdp SMALLINT NOT NULL DEFAULT 0,
     -- Préférences de notification, en JSON. NULL = valeurs par défaut.
     preferences_notif TEXT,
+    situation       TEXT,
+    objectif        TEXT,
+    langues         TEXT,
+    profil_pro      TEXT,
     cree_le         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     maj_le          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     derniere_co     TIMESTAMP,

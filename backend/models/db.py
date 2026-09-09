@@ -323,6 +323,10 @@ def initialiser_si_necessaire(app):
 # défaut évite d'avoir à remplir les lignes existantes.
 COLONNES_ATTENDUES = [
     ("utilisateur", "preferences_notif", "TEXT"),
+    ("utilisateur", "situation", "TEXT"),
+    ("utilisateur", "objectif", "TEXT"),
+    ("utilisateur", "langues", "TEXT"),
+    ("utilisateur", "profil_pro", "TEXT"),
     ("utilisateur", "doit_changer_mdp", "INTEGER NOT NULL DEFAULT 0"),
     ("utilisateur", "email_verifie", "INTEGER NOT NULL DEFAULT 0"),
 ]

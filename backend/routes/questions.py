@@ -4,6 +4,7 @@ from flask import Blueprint, g, jsonify, request
 
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from utils.auth_helpers import connexion_requise
+from services.notifications import notifier_reaction
 
 bp_questions = Blueprint("questions", __name__, url_prefix="/api/questions")
 
@@ -172,6 +173,10 @@ def basculer_utile(id_q):
         )
         marque = False
     else:
+        notifier_reaction(
+            id_q, id_user,
+            f"{g.utilisateur.get('prenom', '')} "
+            f"{(g.utilisateur.get('nom') or '')[:1]}.".strip())
         executer(
             """INSERT INTO marquage_question
                   (id_question, id_utilisateur, type_marquage)

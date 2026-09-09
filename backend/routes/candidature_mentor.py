@@ -19,6 +19,7 @@ from flask import Blueprint, g, jsonify, request
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from utils.auth_helpers import connexion_requise
 from utils.urls import url_publique
+from services.notifications import notifier_decision_candidature
 from utils import email as mod_email
 
 bp_candidature = Blueprint("candidature", __name__, url_prefix="/api/mentors")
@@ -267,6 +268,10 @@ def notifier_decision(id_mentor, acceptee, motif=""):
 
     Appelée depuis routes/admin.py après validation ou refus.
     """
+    # Notification dans l'application, en plus de l'e-mail : la personne
+    # n'ouvre pas forcément sa boîte, mais elle revient sur le site.
+    notifier_decision_candidature(id_mentor, acceptee)
+
     u = recuperer_un(
         "SELECT prenom, nom, email FROM utilisateur WHERE id_utilisateur = %s",
         (id_mentor,),

@@ -916,7 +916,99 @@ def executer_tests():
              str(app.config.get("MAX_CONTENT_LENGTH")))
 
     print("\n" + "═" * 70)
-    print("  18. AUTHENTIFICATION EXTERNE (OAuth)")
+    print("  18. NOTIFICATIONS ET PROFIL ENRICHI")
+    print("═" * 70)
+
+    # -- Referentiels a choix ferme ---------------------------------------
+    r = app.test_client().get("/api/profil/referentiels-profil")
+    verifier("Référentiels de profil servis par le serveur",
+             r.status_code == 200)
+    ref = r.get_json() or {}
+    verifier("Situations et objectifs proposés",
+             len(ref.get("situations", [])) >= 5
+             and len(ref.get("objectifs", [])) >= 5, str(ref)[:120])
+
+    # -- Champs enrichis ---------------------------------------------------
+    situation = ref["situations"][1]
+    objectif = ref["objectifs"][0]
+    r = etu.put("/api/profil/moi", json={
+        "situation": situation, "objectif": objectif,
+        "langues": "français, anglais",
+        "profil_pro": "https://www.linkedin.com/in/exemple"})
+    verifier("Champs de profil enregistrés", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+    profil = etu.get("/api/profil/moi").get_json() or {}
+    verifier("La situation est relue", profil.get("situation") == situation)
+    verifier("L'objectif est relu", profil.get("objectif") == objectif)
+    verifier("Les langues sont relues",
+             profil.get("langues") == "français, anglais")
+
+    verifier("Situation inventée refusée (400)",
+             etu.put("/api/profil/moi",
+                     json={"situation": "Empereur"}).status_code == 400)
+    verifier("Objectif inventé refusé (400)",
+             etu.put("/api/profil/moi",
+                     json={"objectif": "Dominer le monde"}).status_code == 400)
+    verifier("Lien professionnel sans schéma refusé (400)",
+             etu.put("/api/profil/moi",
+                     json={"profil_pro": "javascript:alert(1)"}).status_code == 400)
+
+    # -- Notifications reellement creees ----------------------------------
+    poseur = app.test_client()
+    poseur.post("/api/auth/inscription", json={
+        "prenom": "Ida", "nom": "POSEUSE", "email": "ida.poseuse@test.io",
+        "mot_de_passe": "IdaPoseuse2026!", "role": "etudiant"})
+    r = poseur.post("/api/questions", json={
+        "titre": "Comment financer un master à l'étranger ?",
+        "corps": "Je cherche des pistes concrètes de bourses et de "
+                 "financement pour partir étudier après ma licence.",
+        "id_secteur": 1})
+    id_q = (r.get_json() or {}).get("id_question")
+    verifier("Question publiée pour éprouver les notifications", bool(id_q))
+
+    avant = jeton_sql("SELECT COUNT(*) FROM notification")
+    etu.post("/api/reponses", json={
+        "id_question": id_q,
+        "contenu": "Renseignez-vous sur les bourses de mobilité de votre "
+                   "université, elles sont souvent sous-utilisées."})
+    verifier("Une réponse crée une notification",
+             jeton_sql("SELECT COUNT(*) FROM notification") == avant + 1)
+    verifier("Elle est adressée à l'auteur de la question",
+             jeton_sql("SELECT COUNT(*) FROM notification n "
+                       "JOIN utilisateur u ON u.id_utilisateur = n.id_destinataire "
+                       "WHERE u.email = ? AND n.type_notif = 'reponse'",
+                       ("ida.poseuse@test.io",)) == 1)
+
+    # Repondre a sa propre question ne doit rien declencher.
+    avant = jeton_sql("SELECT COUNT(*) FROM notification")
+    poseur.post("/api/reponses", json={
+        "id_question": id_q,
+        "contenu": "Je complète ma propre question avec une précision "
+                   "utile pour ceux qui la liront plus tard."})
+    verifier("On ne se notifie pas soi-même",
+             jeton_sql("SELECT COUNT(*) FROM notification") == avant)
+
+    r = poseur.get("/api/notifications/non-lues")
+    verifier("Le compteur de non-lues répond", r.status_code == 200)
+    verifier("Il compte la notification reçue",
+             (r.get_json() or {}).get("non_lues", 0) >= 1,
+             r.get_data(as_text=True)[:80])
+
+    # Une preference decochee doit faire taire la notification.
+    prefs = poseur.get("/api/profil/preferences").get_json()
+    prefs["app"]["reponse_question"] = False
+    poseur.put("/api/profil/preferences", json=prefs)
+    avant = jeton_sql("SELECT COUNT(*) FROM notification")
+    etu.post("/api/reponses", json={
+        "id_question": id_q,
+        "contenu": "Une seconde piste : les fondations privées financent "
+                   "aussi des masters à l'étranger, renseignez-vous."})
+    verifier("Une préférence décochée fait taire la notification",
+             jeton_sql("SELECT COUNT(*) FROM notification") == avant,
+             "sinon le réglage ne servirait à rien")
+
+    print("\n" + "═" * 70)
+    print("  19. AUTHENTIFICATION EXTERNE (OAuth)")
     print("═" * 70)
     cfg = anon.get("/api/auth/config")
     verifier("Configuration OAuth exposée", cfg.status_code == 200)

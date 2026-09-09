@@ -42,6 +42,13 @@ CREATE TABLE utilisateur (
     doit_changer_mdp INTEGER NOT NULL DEFAULT 0,
     -- Préférences de notification, en JSON. NULL = valeurs par défaut.
     preferences_notif TEXT,
+    -- Situation actuelle : elle situe la question bien mieux que
+    -- l'intitule d'un diplome.
+    situation       TEXT,
+    -- Ce que la personne cherche, ou ce qu'un referent propose.
+    objectif        TEXT,
+    langues         TEXT,
+    profil_pro      TEXT,
     cree_le         TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     maj_le          TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     derniere_co     TEXT,

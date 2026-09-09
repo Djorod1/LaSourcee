@@ -91,3 +91,22 @@ CREATE TABLE IF NOT EXISTS tentative_auth (
 -- imposerait une jointure sans rien résoudre.
 
 ALTER TABLE utilisateur ADD COLUMN preferences_notif TEXT NULL;
+
+-- ----- 6. Informations de profil complémentaires -----
+--
+-- Quatre champs, choisis pour ce qu'ils changent à la qualité d'une
+-- mise en relation, et non pour remplir un formulaire :
+--
+--   situation   : « en licence 3 » situe une question bien mieux que
+--                 l'intitulé d'un diplôme.
+--   objectif    : ce que la personne cherche, ou ce qu'un référent
+--                 propose. C'est ce qui permet d'apparier les deux.
+--   langues     : une plateforme ouverte au-delà d'un pays ne peut pas
+--                 supposer que tout le monde échange en français.
+--   profil_pro  : une adresse professionnelle publique appuie la
+--                 crédibilité d'un référent sans rien exiger de secret.
+
+ALTER TABLE utilisateur ADD COLUMN situation  VARCHAR(40)  NULL;
+ALTER TABLE utilisateur ADD COLUMN objectif   VARCHAR(60)  NULL;
+ALTER TABLE utilisateur ADD COLUMN langues    VARCHAR(120) NULL;
+ALTER TABLE utilisateur ADD COLUMN profil_pro VARCHAR(255) NULL;

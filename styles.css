@@ -2332,3 +2332,43 @@ img, svg, video { max-width: 100%; height: auto; }
   .hero-nav .actions { gap: 0; }
   .bouton-theme { width: 40px; height: 40px; }
 }
+
+/* Compteur de notifications non lues. Posé sur l'icône plutôt qu'à
+   côté : la barre est étroite sur téléphone, et un badge décalé
+   pousserait les autres icônes. */
+.nav-bouton { position: relative; }
+.pastille-notif {
+  position: absolute;
+  top: 2px; right: 2px;
+  min-width: 17px; height: 17px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--rouge);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* Ligne d'identité et détails du profil. */
+.profil-identite {
+  color: var(--texte-doux);
+  font-size: 13.5px;
+  margin-top: 4px;
+}
+.profil-details {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.profil-detail {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  font-size: 13.5px;
+}
+.profil-detail > span { color: var(--texte-doux); flex-shrink: 0; }
+.profil-detail > strong { text-align: right; }

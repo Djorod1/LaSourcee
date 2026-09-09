@@ -7,6 +7,43 @@ from utils.auth_helpers import connexion_requise
 
 bp_profil = Blueprint("profil", __name__, url_prefix="/api/profil")
 
+# Valeurs a choix ferme. Une liste courte se remplit ; une liste longue
+# se survole et personne ne la renseigne. Ces intitules disent une
+# situation reelle, pas un niveau administratif : « en reconversion »
+# eclaire une question mieux que « bac+3 ».
+SITUATIONS = [
+    "Au lycee",
+    "En licence",
+    "En master",
+    "En doctorat",
+    "Jeune diplome",
+    "En activite",
+    "En reconversion",
+    "En recherche d'emploi",
+]
+
+# Ce que la personne cherche, ou ce qu'un referent propose. C'est ce
+# champ qui permet d'apparier les deux cotes de la plateforme.
+OBJECTIFS = [
+    "Choisir ma filiere",
+    "Preparer mes etudes a l'etranger",
+    "Trouver un stage",
+    "Decrocher mon premier emploi",
+    "Changer de voie",
+    "Gerer mon argent",
+    "Accompagner d'autres membres",
+]
+
+
+@bp_profil.get("/referentiels-profil")
+def referentiels_profil():
+    """Valeurs proposees pour les champs a choix ferme.
+
+    Servies par le serveur plutot qu'ecrites dans la page : la liste
+    validee et la liste affichee ne peuvent alors pas diverger.
+    """
+    return jsonify({"situations": SITUATIONS, "objectifs": OBJECTIFS})
+
 
 @bp_profil.get("/referentiels")
 def referentiels():
@@ -50,8 +87,30 @@ def modifier_profil():
         "etudes": d.get("etudes"),
         "ville": d.get("ville"),
         "id_pays": d.get("id_pays"),
+        "situation": d.get("situation"),
+        "objectif": d.get("objectif"),
+        "langues": d.get("langues"),
+        "profil_pro": d.get("profil_pro"),
     }
     champs = {k: v for k, v in champs.items() if v is not None}
+
+    # Les valeurs a choix ferme sont verifiees cote serveur : un client
+    # peut envoyer ce qu'il veut, et une valeur inventee remonterait
+    # telle quelle sur les profils publics.
+    if champs.get("situation") and champs["situation"] not in SITUATIONS:
+        return jsonify({"erreur": "Situation inconnue."}), 400
+    if champs.get("objectif") and champs["objectif"] not in OBJECTIFS:
+        return jsonify({"erreur": "Objectif inconnu."}), 400
+    if champs.get("profil_pro"):
+        lien = champs["profil_pro"].strip()
+        if lien and not lien.startswith(("https://", "http://")):
+            return jsonify({
+                "erreur": "Le lien professionnel doit commencer par https://"
+            }), 400
+        champs["profil_pro"] = lien[:255]
+    for cle in ("situation", "objectif", "langues"):
+        if cle in champs and champs[cle] is not None:
+            champs[cle] = str(champs[cle])[:120]
     if champs:
         fragments = ", ".join(f"{k} = %s" for k in champs)
         executer(
@@ -99,6 +158,8 @@ def _charger_profil(id_user, public=False):
                   u.role, u.photo_url, u.bio, u.etudes, u.ville,
                   u.id_pays, p.libelle AS pays,
                   u.est_admin, u.doit_changer_mdp, u.cree_le,
+                  u.situation, u.objectif, u.langues, u.profil_pro,
+                  u.email_verifie,
                   md.est_verifie, md.dispo, md.anciennete,
                   md.delai_reponse, md.note_moyenne, md.nb_reponses
              FROM utilisateur u

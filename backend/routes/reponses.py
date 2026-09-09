@@ -4,6 +4,7 @@ from flask import Blueprint, g, jsonify, request
 
 from models.db import recuperer_un, executer, curseur
 from utils.auth_helpers import connexion_requise
+from services.notifications import notifier_reponse
 
 bp_reponses = Blueprint("reponses", __name__, url_prefix="/api/reponses")
 
@@ -66,6 +67,13 @@ def publier():
                     WHERE id_utilisateur = %s""",
                 (g.utilisateur["id_utilisateur"],),
             )
+
+    # La notification vient apres l'enregistrement : elle ne doit ni le
+    # retarder ni le compromettre si elle echoue.
+    notifier_reponse(
+        int(id_q), g.utilisateur["id_utilisateur"],
+        f"{g.utilisateur.get('prenom', '')} "
+        f"{(g.utilisateur.get('nom') or '')[:1]}.".strip())
 
     return jsonify({"id_reponse": id_r}), 201
 
