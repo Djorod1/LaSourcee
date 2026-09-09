@@ -97,6 +97,30 @@ if __name__ == "__main__":
     verifier("Texte attenue sur une pastille bleue",
              j["--texte"], j["--primaire-clair"])
 
+    # Etiquettes en couleur, ecrites en dur dans la feuille : elles ne
+    # passent par aucun jeton et echapperaient donc au reste du
+    # controle. Le violet et le rose qu'elles remplacent ont ete retires
+    # parce qu'ils n'appartenaient pas a la marque ; leurs remplacants
+    # doivent au moins se lire.
+    for nom, regle in (
+            ("Etiquette ardoise, theme clair", r"\.tag-ardoise\s*\{([^}]*)\}"),
+            ("Etiquette terre cuite, theme clair", r"\.tag-terre\s*\{([^}]*)\}"),
+            ("Etiquette ardoise, theme sombre",
+             r'data-theme="dark"\]\s*\.tag-ardoise[^{]*\{([^}]*)\}'),
+            ("Etiquette terre cuite, theme sombre",
+             r'data-theme="dark"\]\s*\.tag-terre[^{]*\{([^}]*)\}'),
+    ):
+        bloc_tag = re.search(regle, css)
+        if not bloc_tag:
+            _echecs.append((nom, "?", "?", 0.0))
+            print("  [ECHEC] %-45s regle introuvable" % nom)
+            continue
+        corps = bloc_tag.group(1)
+        fond = re.search(r"background:\s*(#[0-9a-fA-F]{3,8})", corps)
+        texte = re.search(r"color:\s*(#[0-9a-fA-F]{3,8})", corps)
+        if fond and texte:
+            verifier(nom, texte.group(1), fond.group(1))
+
     print("\n" + "=" * 70)
     total = _reussites + len(_echecs)
     print("  BILAN : %d/%d couples au niveau AA (seuil %.1f:1)"

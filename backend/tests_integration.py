@@ -1288,6 +1288,77 @@ def executer_tests():
              any("HOUNKPATIN" in str(m.get("nom", "")) for m in liste),
              f"{len(liste)} référent(s) listé(s)")
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  23. MODÉRATION DES SIGNALEMENTS")
+    print("═" * 70)
+
+    gene = app.test_client()
+    gene.post("/api/auth/inscription", json={
+        "prenom": "Fataou", "nom": "BIO", "email": "fataou@test.io",
+        "mot_de_passe": "Fataou2026!", "role": "etudiant"})
+    r = gene.post("/api/questions", json={
+        "titre": "Contenu à modérer pour les besoins du test",
+        "corps": "Ce message existe pour éprouver la chaîne de modération "
+                 "de bout en bout, du signalement jusqu'à la décision.",
+        "id_secteur": 1})
+    id_q_mod = (r.get_json() or {}).get("id_question")
+    verifier("Question à modérer publiée", bool(id_q_mod))
+
+    r = etu.post(f"/api/questions/{id_q_mod}/signaler",
+                 json={"motif": "Propos inappropriés"})
+    verifier("Le signalement est enregistré", r.status_code in (200, 201),
+             r.get_data(as_text=True)[:110])
+
+    liste = adm.get("/api/admin/signalements?statut=ouvert").get_json() or []
+    mien = [s for s in liste if s.get("id_contenu") == id_q_mod]
+    verifier("Le signalement remonte à l'administrateur", bool(mien))
+    if mien:
+        s = mien[0]
+        verifier("On voit qui a signalé", bool(s.get("prenom")))
+        verifier("On voit le motif invoqué",
+                 "inappropri" in (s.get("motif") or ""))
+        # Sans le contenu, la decision se prendrait sur un numero.
+        verifier("On voit le contenu signalé",
+                 bool((s.get("contenu") or {}).get("texte")))
+        verifier("On voit l'auteur du contenu",
+                 (s.get("contenu") or {}).get("prenom") == "Fataou")
+        verifier("On voit combien de fois il a été signalé",
+                 s.get("signalements_contenu", 0) >= 1)
+
+    id_sig = mien[0]["id_signalement"] if mien else 0
+    r = adm.post(f"/api/admin/signalements/{id_sig}", json={"action": "farfelu"})
+    verifier("Une décision inconnue est refusée", r.status_code == 400)
+
+    r = adm.post(f"/api/admin/signalements/{id_sig}",
+                 json={"action": "suspendre", "note": "essai"})
+    verifier("Suspension du compte de l'auteur acceptée", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+    verifier("Le compte visé est bien désactivé",
+             jeton_sql("SELECT est_actif FROM utilisateur WHERE email = ?",
+                       ("fataou@test.io",)) == 0)
+    verifier("L'auteur est prévenu de la suspension",
+             jeton_sql("SELECT COUNT(*) FROM notification n "
+                       "JOIN utilisateur u ON u.id_utilisateur = n.id_destinataire "
+                       "WHERE u.email = ? AND n.texte LIKE ?",
+                       ("fataou@test.io", "%suspendu%")) >= 1)
+    verifier("La personne qui a signalé reçoit un retour",
+             jeton_sql("SELECT COUNT(*) FROM notification WHERE texte LIKE ?",
+                       ("%signalement a été examiné%",)) >= 1)
+    verifier("La décision est tracée",
+             jeton_sql("SELECT action FROM signalement WHERE id_signalement = ?",
+                       (id_sig,)) == "suspendre")
+    verifier("L'auteur de la décision est enregistré",
+             bool(jeton_sql("SELECT traite_par FROM signalement "
+                            "WHERE id_signalement = ?", (id_sig,))))
+
+    restants = adm.get("/api/admin/signalements?statut=ouvert").get_json() or []
+    verifier("Il quitte la file d'attente",
+             not any(s.get("id_signalement") == id_sig for s in restants))
+    traites = adm.get("/api/admin/signalements?statut=traite").get_json() or []
+    verifier("Il se retrouve parmi les traités",
+             any(s.get("id_signalement") == id_sig for s in traites))
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

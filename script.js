@@ -2497,36 +2497,136 @@ async function adminMentorAction(action, idMentor) {
     changerPanAdmin(document.querySelector('[data-adm=mentors]'), 'mentors');
   } catch (err) { toast(err.message, 'erreur'); }
 }
-async function adminSignalements() {
+/* Six décisions plutôt que deux. « Traité » ne disait pas si le contenu
+   avait été retiré, l'auteur averti, ou rien du tout : la même étiquette
+   couvrait le classement sans suite et la suppression. */
+const DECISIONS_SIGNALEMENT = [
+  { cle: 'rejeter', libelle: 'Non fondé', classe: 'btn-fantome',
+    aide: 'Le contenu reste en place, rien n\'est reproché à son auteur.' },
+  { cle: 'classer', libelle: 'Sans suite', classe: 'btn-secondaire',
+    aide: 'Examiné, jugé acceptable. Le signalement est clos.' },
+  { cle: 'avertir', libelle: 'Avertir', classe: 'btn-secondaire',
+    aide: 'Le contenu reste, son auteur reçoit un avertissement.' },
+  { cle: 'supprimer', libelle: 'Supprimer', classe: 'btn-danger',
+    aide: 'Le contenu est retiré, sans avertissement.' },
+  { cle: 'supprimer_avertir', libelle: 'Supprimer et avertir',
+    classe: 'btn-danger',
+    aide: 'Le contenu est retiré et son auteur en est informé.' },
+  { cle: 'suspendre', libelle: 'Suspendre le compte', classe: 'btn-danger',
+    aide: 'L\'auteur ne peut plus se connecter. À réserver aux récidives.' },
+];
+
+let _filtreSignalements = 'ouvert';
+
+async function adminSignalements(statut) {
   if (!MODE.api) return `<div class="carte"><p style="color:var(--texte-doux);">Ce module est disponible lorsque le serveur LaSourcee est connecté.</p></div>`;
-  const liste = await API.get('/admin/signalements?statut=ouvert');
+  if (statut) _filtreSignalements = statut;
+  const liste = await API.get('/admin/signalements?statut=' + _filtreSignalements);
+
+  const onglets = [['ouvert', 'En attente'], ['traite', 'Traités'],
+                   ['rejete', 'Rejetés'], ['tous', 'Tous']];
+  const entete = `<h2 style="margin-bottom:6px;">Modération</h2>
+    <p class="desc" style="margin-bottom:14px;">Chaque décision est tracée,
+       notifiée à l'auteur quand elle le concerne, et confirmée à la
+       personne qui a signalé.</p>
+    <div class="onglets onglets-scroll" style="margin-bottom:16px;">
+      ${onglets.map(([c, l]) => `<div class="onglet ${c === _filtreSignalements ? 'actif' : ''}"
+        onclick="rechargerSignalements('${c}')">${l}</div>`).join('')}
+    </div>`;
+
   if (!liste.length) {
-    return `<h2 style="margin-bottom:18px;">Signalements</h2>
-      <div class="carte"><p style="color:var(--texte-doux);">
-        Aucun signalement en attente.</p></div>`;
+    return entete + `<div class="carte"><p style="color:var(--texte-doux);">
+      Aucun signalement dans cette catégorie.</p></div>`;
   }
-  return `<h2 style="margin-bottom:18px;">Signalements (${liste.length})</h2>
-    ${liste.map(s => `<div class="carte" style="margin-bottom:12px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <strong>Signalement #${s.id_signalement}</strong>
-        <span class="tag tag-rose">${echapper(s.type_contenu)} #${s.id_contenu}</span>
-      </div>
-      <p style="color:var(--texte); font-size:14px;">« ${echapper(s.motif || 'Sans motif précisé')} »</p>
-      <div style="margin-top:8px; font-size:13px; color:var(--texte-doux);">
-        Signalé par <strong>${echapper(s.prenom + ' ' + s.nom)}</strong>
-        le ${new Date(s.cree_le).toLocaleDateString('fr-FR')}
-      </div>
-      <div style="display:flex; gap:8px; margin-top:12px;">
-        <button class="btn btn-primaire btn-petit" onclick="adminSignalementAction(${s.id_signalement},'traite')">${ic('check','ic ic-s')} Marquer traité</button>
-        <button class="btn btn-fantome btn-petit" onclick="adminSignalementAction(${s.id_signalement},'rejete')">Rejeter</button>
-      </div></div>`).join('')}`;
+  return entete + liste.map(carteSignalement).join('');
 }
 
-async function adminSignalementAction(idSig, decision) {
+function carteSignalement(s) {
+  const c = s.contenu || {};
+  const traite = s.statut !== 'ouvert';
+  const date = s.cree_le
+    ? new Date(String(s.cree_le).replace(' ', 'T')).toLocaleDateString('fr-FR')
+    : '';
+
+  // Le contenu incriminé, cité. Sans lui, décider revient à croire le
+  // signaleur sur parole ou à tout rejeter.
+  const extrait = c.supprime
+    ? `<p class="contenu-absent">Ce contenu n'existe plus : il a été
+         supprimé depuis le signalement.</p>`
+    : `<blockquote class="contenu-signale">
+         ${c.titre ? `<strong>${echapper(c.titre)}</strong>` : ''}
+         <p>${echapper((c.texte || '').slice(0, 600))}${
+             (c.texte || '').length > 600 ? '…' : ''}</p>
+       </blockquote>`;
+
+  const auteur = c.id_auteur
+    ? `<span>Publié par <strong>${echapper((c.prenom || '') + ' ' + (c.nom || ''))}</strong>${
+        c.est_actif === 0 ? ' <span class="tag tag-suspendu">compte suspendu</span>' : ''}</span>`
+    : '';
+
+  return `<div class="carte carte-signalement ${traite ? 'est-traite' : ''}">
+    <div class="signalement-entete">
+      <div>
+        <span class="tag">${echapper(s.type_contenu)}</span>
+        ${s.signalements_contenu > 1
+          ? `<span class="tag tag-alerte">${s.signalements_contenu} signalements
+             sur ce contenu</span>` : ''}
+        ${c.signalements_auteur > 2
+          ? `<span class="tag tag-alerte">auteur déjà signalé
+             ${c.signalements_auteur} fois</span>` : ''}
+      </div>
+      <span class="desc">#${s.id_signalement} · ${date}</span>
+    </div>
+
+    <div class="signalement-motif">
+      <strong>Motif invoqué</strong>
+      <p>« ${echapper(s.motif || 'Aucun motif précisé')} »</p>
+      <span class="desc">Signalé par ${echapper(s.prenom + ' ' + s.nom)}
+        (${echapper(s.email || '')})</span>
+    </div>
+
+    ${extrait}
+    <div class="signalement-auteur">${auteur}</div>
+
+    ${traite
+      ? `<div class="signalement-decision">Décision : <strong>${
+           echapper(libelleAction(s.action) || s.statut)}</strong>${
+           s.admin_prenom ? ` par ${echapper(s.admin_prenom + ' ' + s.admin_nom)}` : ''}${
+           s.traite_le ? ` le ${echapper(String(s.traite_le).slice(0, 10))}` : ''}</div>`
+      : `<div class="signalement-actions">
+          ${DECISIONS_SIGNALEMENT.map(d => `<button
+             class="btn ${d.classe} btn-petit" title="${echapper(d.aide)}"
+             onclick="adminSignalementAction(${s.id_signalement}, '${d.cle}')"
+             >${echapper(d.libelle)}</button>`).join('')}
+        </div>`}
+  </div>`;
+}
+
+function libelleAction(cle) {
+  const d = DECISIONS_SIGNALEMENT.find(x => x.cle === cle);
+  return d ? d.libelle : '';
+}
+
+async function rechargerSignalements(statut) {
+  const c = document.getElementById('contenu-admin');
+  if (c) c.innerHTML = await adminSignalements(statut);
+}
+
+async function adminSignalementAction(idSig, action) {
+  const d = DECISIONS_SIGNALEMENT.find(x => x.cle === action);
+  if (!d) return;
+  // Les décisions irréversibles se confirment, et laissent la place à
+  // une note : « supprimé » sans motif ne s'explique pas six mois après.
+  let note = '';
+  if (['supprimer', 'supprimer_avertir', 'suspendre'].includes(action)) {
+    note = prompt(`${d.libelle} : ${d.aide}\n\n`
+      + 'Motif (transmis à l\'auteur et conservé au journal) :', '');
+    if (note === null) return;
+  }
   try {
-    await API.post(`/admin/signalements/${idSig}`, { statut: decision });
-    toast('Signalement mis à jour.');
-    changerPanAdmin(document.querySelector('[data-adm=signalements]'), 'signalements');
+    const r = await API.post(`/admin/signalements/${idSig}`, { action, note });
+    toast(r.libelle || 'Signalement traité.');
+    rechargerSignalements();
   } catch (err) { toast(err.message, 'erreur'); }
 }
 async function adminCategories() {

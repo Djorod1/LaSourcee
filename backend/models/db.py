@@ -340,6 +340,11 @@ COLONNES_ATTENDUES = [
     ("mentor_details", "profession", "TEXT"),
     ("mentor_details", "organisation", "TEXT"),
     ("mentor_details", "depose_le", "TEXT"),
+    # Trace de la modération. « traité » ne disait pas si le contenu
+    # avait été retiré, l'auteur averti, ou rien du tout.
+    ("signalement", "action", "TEXT"),
+    ("signalement", "traite_par", "INTEGER"),
+    ("signalement", "traite_le", "TEXT"),
 ]
 
 

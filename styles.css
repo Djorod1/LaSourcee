@@ -92,12 +92,17 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   font-weight: 500; font-size: 14px; transition: all .15s;
   white-space: nowrap;
 }
+/* Aplat plutôt que dégradé, et pas de soulèvement au survol. Le
+   dégradé en diagonale, l'ombre colorée et le bouton qui monte d'un
+   pixel sont les trois signes les plus reconnaissables d'un gabarit
+   générique. Une couleur franche et une ombre discrète tiennent mieux
+   la comparaison, et vieillissent moins vite. */
 .btn-primaire {
-  background: linear-gradient(135deg, var(--bleu) 0%, var(--bleu-vif) 100%);
+  background: var(--bleu);
   color: #fff;
-  box-shadow: 0 4px 14px rgba(30,58,138,.30);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .12);
 }
-.btn-primaire:hover { background: linear-gradient(135deg, var(--bleu-fonce) 0%, var(--bleu) 100%); transform: translateY(-1px); }
+.btn-primaire:hover { background: var(--bleu-fonce); }
 .btn-ambre { background: var(--orange-vif); color: #fff; }
 .btn-ambre:hover { background: var(--orange-fonce); }
 .btn-secondaire { background: var(--surface); color: var(--primaire); border: 1.5px solid var(--primaire); }
@@ -129,8 +134,22 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
    convention universelle, pas une couleur de marque. Le rendre bleu
    le confondrait avec le reste de l'interface. */
 .tag-vert { background: #dcfce7; color: #166534; }
-.tag-violet { background: #ede9fe; color: #6d28d9; }
-.tag-rose { background: #fce7f3; color: #be185d; }
+/* Le violet et le rose ont disparu. Ils ne figurent nulle part dans le
+   logo, ni dans le reste de l'interface : c'était la paire par défaut
+   qu'on retrouve dans n'importe quel gabarit, et elle donnait à
+   l'ensemble un air d'échantillon plutôt que de marque.
+   Les deux teintes qui les remplacent viennent du bleu et de l'orange
+   de la source : une ardoise froide pour ce qui est neutre, une
+   terre cuite pour ce qui demande attention sans être une erreur. */
+.tag-ardoise    { background: #E7ECF3; color: #334155; }
+.tag-terre      { background: #FBE4D5; color: #9A3412; }
+/* Alias : d'anciens gabarits emploient encore ces noms. */
+.tag-violet     { background: #E7ECF3; color: #334155; }
+.tag-rose       { background: #FBE4D5; color: #9A3412; }
+/* Un contenu signalé plusieurs fois, ou un compte suspendu : le rouge
+   est réservé à ces deux cas, pour qu'il garde son sens. */
+.tag-alerte     { background: var(--rouge-clair); color: var(--rouge-fonce); }
+.tag-suspendu   { background: var(--rouge-clair); color: var(--rouge-fonce); }
 .badge-role {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 600;
@@ -152,7 +171,7 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
 /* ---------- Avatar ---------- */
 .avatar {
   width: 40px; height: 40px; border-radius: 50%;
-  background: linear-gradient(135deg, var(--bleu-vif), var(--primaire));
+  background: var(--bleu);
   color: #fff;
   display: inline-flex; align-items: center; justify-content: center;
   font-weight: 600; font-size: 14px; flex-shrink: 0;
@@ -535,7 +554,8 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
    ============================================================ */
 .banniere {
   height: 180px; border-radius: var(--rayon-l);
-  background: linear-gradient(135deg, var(--primaire), var(--bleu-vif) 55%, var(--orange-vif));
+  background: var(--bleu);
+  border-bottom: 4px solid var(--orange-vif);
   margin-bottom: -40px;
 }
 .entete-profil {
@@ -1343,8 +1363,8 @@ img, svg, video { max-width: 100%; height: auto; }
 
 /* Petite vignette « réponse de mentor vérifié » dans le fil */
 .reponse.mentor {
-  border-left: 3px solid var(--vert);
-  background: linear-gradient(90deg, rgba(22,163,74,.04), transparent 30%);
+  border-left: 3px solid var(--primaire);
+  background: linear-gradient(90deg, rgba(30, 58, 138, .05), transparent 30%);
 }
 
 /* Onglet « Espace mentor » accessible depuis le menu profil */
@@ -2032,6 +2052,53 @@ img, svg, video { max-width: 100%; height: auto; }
 /* ==================================================================
    COMPLÉTION DU PROFIL
    ================================================================== */
+/* ------------------------------------------------------------------
+   MODÉRATION
+   ------------------------------------------------------------------
+   L'écran n'affichait que « question #14 ». Une décision se prend sur
+   ce qui est reproché, pas sur un numéro : le contenu incriminé occupe
+   donc la place centrale, cité comme une pièce au dossier.
+   ------------------------------------------------------------------ */
+.carte-signalement { margin-bottom: 14px; }
+.carte-signalement.est-traite { opacity: .72; }
+.signalement-entete {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.signalement-entete > div { display: flex; gap: 6px; flex-wrap: wrap; }
+.signalement-motif {
+  background: var(--fond);
+  border-radius: var(--rayon-s);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.signalement-motif strong { font-size: 13px; }
+.signalement-motif p { margin: 4px 0; font-size: 14px; }
+.contenu-signale {
+  margin: 0 0 10px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--bordure);
+  background: var(--surface);
+}
+.contenu-signale strong { display: block; margin-bottom: 4px; }
+.contenu-signale p {
+  margin: 0; font-size: 14px; line-height: 1.6; white-space: pre-wrap;
+}
+.contenu-absent {
+  font-size: 13px; color: var(--texte-doux); font-style: italic;
+  margin: 0 0 10px;
+}
+.signalement-auteur { font-size: 13px; color: var(--texte-doux); }
+.signalement-actions {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px;
+  padding-top: 12px; border-top: 1px solid var(--bordure);
+}
+.signalement-decision {
+  margin-top: 12px; padding-top: 10px;
+  border-top: 1px solid var(--bordure);
+  font-size: 13px; color: var(--texte-doux);
+}
+
 /* Dossier de candidature, dans l'écran de validation. Présenté en
    couples libellé/valeur : un administrateur balaie une liste alignée
    bien plus vite qu'un paragraphe, et rien ne s'y perd. */
@@ -2123,11 +2190,11 @@ img, svg, video { max-width: 100%; height: auto; }
 .jauge-completion > div {
   height: 100%;
   border-radius: 4px;
-  background: linear-gradient(90deg, var(--primaire), var(--bleu-vif));
+  background: var(--primaire);
   transition: width .4s ease;
 }
 .carte-completion.complete .jauge-completion > div {
-  background: linear-gradient(90deg, var(--accent), var(--orange-fonce));
+  background: var(--accent);
 }
 .completion-liste {
   list-style: none;
@@ -2244,8 +2311,15 @@ img, svg, video { max-width: 100%; height: auto; }
    raison. Le rapport s'inverse donc : fond sourd, texte clair.
    ------------------------------------------------------------------ */
 :root[data-theme="dark"] .tag-vert      { background: #14352A; color: #86EFAC; }
-:root[data-theme="dark"] .tag-violet    { background: #2A1F44; color: #C4B5FD; }
-:root[data-theme="dark"] .tag-rose      { background: #3A1C2C; color: #F9A8D4; }
+/* Ardoise et terre cuite en sombre. Le violet et le rose ont disparu
+   du thème clair ; leurs anciens noms restent en alias pour ne pas
+   laisser un gabarit oublié sans couleur. */
+:root[data-theme="dark"] .tag-ardoise,
+:root[data-theme="dark"] .tag-violet    { background: #1E293B; color: #CBD5E1; }
+:root[data-theme="dark"] .tag-terre,
+:root[data-theme="dark"] .tag-rose      { background: #3B2415; color: #FDBA74; }
+:root[data-theme="dark"] .tag-alerte,
+:root[data-theme="dark"] .tag-suspendu  { background: #3A1618; color: #FCA5A5; }
 :root[data-theme="dark"] .tag-ambre,
 :root[data-theme="dark"] .badge-mentor  { background: #3A2415; color: #FDBA74; }
 :root[data-theme="dark"] .bandeau-verif.ok      { background: #14352A; color: #86EFAC; }

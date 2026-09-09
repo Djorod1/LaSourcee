@@ -1,11 +1,14 @@
 """Routes d'administration : tableau de bord, utilisateurs, secteurs,
 mentors, signalements, audit."""
 
+from datetime import datetime
+
 from flask import Blueprint, jsonify, request, g
 
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from utils.auth_helpers import admin_requis
 from utils.audit import journaliser
+from services.notifications import notifier
 
 bp_admin = Blueprint("admin", __name__, url_prefix="/api/admin")
 
@@ -370,42 +373,178 @@ def refuser_mentor(id_mentor):
 # SIGNALEMENTS
 # ============================================================
 
+def _contenu_signale(type_contenu, id_contenu):
+    """Le contenu visé, son auteur, et de quoi le juger.
+
+    L'écran n'affichait que « question #14 ». Décider sans lire ce qui
+    est reproché revient à trancher au hasard : soit on croit le
+    signaleur sur parole, soit on rejette tout.
+    """
+    if type_contenu == "question":
+        ligne = recuperer_un(
+            """SELECT q.titre, q.corps AS texte, q.publiee_le AS cree_le,
+                      u.id_utilisateur AS id_auteur, u.prenom, u.nom,
+                      u.est_actif
+                 FROM question q
+                 JOIN utilisateur u ON u.id_utilisateur = q.id_auteur
+                WHERE q.id_question = %s""", (id_contenu,))
+    elif type_contenu == "reponse":
+        ligne = recuperer_un(
+            """SELECT r.contenu AS texte, r.cree_le,
+                      u.id_utilisateur AS id_auteur, u.prenom, u.nom,
+                      u.est_actif
+                 FROM reponse r
+                 JOIN utilisateur u ON u.id_utilisateur = r.id_auteur
+                WHERE r.id_reponse = %s""", (id_contenu,))
+    else:
+        ligne = recuperer_un(
+            """SELECT bio AS texte, cree_le,
+                      id_utilisateur AS id_auteur, prenom, nom, est_actif
+                 FROM utilisateur WHERE id_utilisateur = %s""", (id_contenu,))
+
+    if not ligne:
+        # Contenu deja supprime : le dire plutot que d'afficher un vide
+        # qu'on prendrait pour un defaut d'affichage.
+        return {"supprime": True}
+
+    ligne["supprime"] = False
+    # Le passe de l'auteur pese dans la decision : un premier
+    # signalement n'appelle pas la meme reponse qu'un cinquieme.
+    ligne["signalements_auteur"] = (recuperer_un(
+        """SELECT COUNT(*) AS n FROM signalement s
+            WHERE s.type_contenu = 'question'
+              AND s.id_contenu IN (SELECT id_question FROM question
+                                    WHERE id_auteur = %s)""",
+        (ligne["id_auteur"],)) or {}).get("n", 0)
+    return ligne
+
+
 @bp_admin.get("/signalements")
 @admin_requis
 def signalements():
     statut = request.args.get("statut", "ouvert")
-    if statut not in ("ouvert", "traite", "rejete"):
+    if statut not in ("ouvert", "traite", "rejete", "tous"):
         statut = "ouvert"
-    return jsonify(recuperer_tous(
-        """SELECT s.id_signalement, s.type_contenu, s.id_contenu,
-                  s.motif, s.statut, s.cree_le,
-                  u.id_utilisateur AS id_signaleur,
-                  u.prenom, u.nom
-             FROM signalement s
-             JOIN utilisateur u ON u.id_utilisateur = s.id_signaleur
-            WHERE s.statut = %s
-         ORDER BY s.cree_le DESC
-            LIMIT 100""",
-        (statut,),
-    ))
+
+    condition = "" if statut == "tous" else "WHERE s.statut = %s"
+    params = () if statut == "tous" else (statut,)
+    lignes = recuperer_tous(
+        f"""SELECT s.id_signalement, s.type_contenu, s.id_contenu,
+                   s.motif, s.statut, s.cree_le, s.action, s.traite_le,
+                   u.id_utilisateur AS id_signaleur,
+                   u.prenom, u.nom, u.email,
+                   a.prenom AS admin_prenom, a.nom AS admin_nom
+              FROM signalement s
+              JOIN utilisateur u ON u.id_utilisateur = s.id_signaleur
+         LEFT JOIN utilisateur a ON a.id_utilisateur = s.traite_par
+              {condition}
+          ORDER BY s.cree_le DESC
+             LIMIT 100""", params)
+
+    for ligne in lignes:
+        ligne["contenu"] = _contenu_signale(ligne["type_contenu"],
+                                            ligne["id_contenu"])
+        # Plusieurs personnes signalant la meme chose, c'est un signal
+        # en soi : le nombre doit sauter aux yeux.
+        ligne["signalements_contenu"] = (recuperer_un(
+            "SELECT COUNT(*) AS n FROM signalement "
+            "WHERE type_contenu = %s AND id_contenu = %s",
+            (ligne["type_contenu"], ligne["id_contenu"])) or {}).get("n", 1)
+    return jsonify(lignes)
+
+
+# Décisions possibles : chacune dit ce qu'elle fait, et à qui. Un simple
+# « traité » laissait ignorer si le contenu avait été retiré ou non.
+ACTIONS_SIGNALEMENT = {
+    "rejeter":            ("rejete", "Signalement non fondé"),
+    "classer":            ("traite", "Examiné, aucune suite"),
+    "avertir":            ("traite", "Auteur averti"),
+    "supprimer":          ("traite", "Contenu supprimé"),
+    "supprimer_avertir":  ("traite", "Contenu supprimé et auteur averti"),
+    "suspendre":          ("traite", "Compte de l'auteur suspendu"),
+}
 
 
 @bp_admin.post("/signalements/<int:id_sig>")
 @admin_requis
 def traiter_signalement(id_sig):
     d = request.get_json(silent=True) or {}
-    decision = d.get("statut")
-    if decision not in ("traite", "rejete"):
-        return jsonify({"erreur": "Décision invalide."}), 400
-    n = executer(
-        "UPDATE signalement SET statut = %s WHERE id_signalement = %s",
-        (decision, id_sig), commit=True,
-    )
-    if not n:
+    # « statut » reste accepté : d'anciens appels l'utilisent encore.
+    action = d.get("action") or {"traite": "classer",
+                                 "rejete": "rejeter"}.get(d.get("statut"))
+    if action not in ACTIONS_SIGNALEMENT:
+        return jsonify({"erreur": "Décision inconnue."}), 400
+    statut, libelle = ACTIONS_SIGNALEMENT[action]
+    note = (d.get("note") or "").strip()[:500]
+
+    sig = recuperer_un(
+        "SELECT type_contenu, id_contenu, id_signaleur, statut "
+        "FROM signalement WHERE id_signalement = %s", (id_sig,))
+    if not sig:
         return jsonify({"erreur": "Signalement introuvable."}), 404
-    journaliser(g.utilisateur["id_utilisateur"], "traiter_signalement",
-                "signalement", id_sig, decision)
-    return jsonify({"ok": True})
+
+    cible = _contenu_signale(sig["type_contenu"], sig["id_contenu"])
+    id_auteur = cible.get("id_auteur")
+    moi = g.utilisateur["id_utilisateur"]
+
+    # Un administrateur ne se suspend pas lui-même, et ne suspend pas un
+    # autre administrateur sur un simple signalement.
+    if action == "suspendre":
+        if id_auteur == moi:
+            return jsonify({"erreur":
+                "Vous ne pouvez pas suspendre votre propre compte."}), 400
+        vise = recuperer_un(
+            "SELECT est_admin, role FROM utilisateur WHERE id_utilisateur = %s",
+            (id_auteur,)) or {}
+        if vise.get("est_admin") or vise.get("role") in ("admin", "super_admin"):
+            return jsonify({"erreur":
+                "Un administrateur ne se suspend pas depuis un "
+                "signalement."}), 400
+
+    if action in ("supprimer", "supprimer_avertir") and not cible.get("supprime"):
+        table, cle = {"question": ("question", "id_question"),
+                      "reponse": ("reponse", "id_reponse")}.get(
+                          sig["type_contenu"], (None, None))
+        if table:
+            executer(f"DELETE FROM {table} WHERE {cle} = %s",
+                     (sig["id_contenu"],), commit=True)
+
+    if action == "suspendre" and id_auteur:
+        executer("UPDATE utilisateur SET est_actif = 0 WHERE id_utilisateur = %s",
+                 (id_auteur,), commit=True)
+
+    if action in ("avertir", "supprimer_avertir", "suspendre") and id_auteur:
+        messages = {
+            "avertir": "Un de vos contenus a été signalé et examiné. "
+                       "Merci de veiller au respect des règles de la "
+                       "plateforme.",
+            "supprimer_avertir": "Un de vos contenus a été retiré après "
+                                 "signalement, car il ne respectait pas les "
+                                 "règles de la plateforme.",
+            "suspendre": "Votre compte a été suspendu à la suite d'un "
+                         "signalement. Contactez un administrateur pour en "
+                         "connaître le motif.",
+        }
+        notifier(id_auteur, messages[action] + (f" Motif : {note}" if note else ""),
+                 type_notif="systeme")
+
+    # Le signaleur est prévenu que son signalement a servi à quelque
+    # chose. Sans retour, on cesse de signaler.
+    notifier(sig["id_signaleur"],
+             f"Votre signalement a été examiné : {libelle.lower()}.",
+             type_notif="systeme")
+
+    executer(
+        """UPDATE signalement
+              SET statut = %s, action = %s, traite_par = %s, traite_le = %s
+            WHERE id_signalement = %s""",
+        (statut, action, moi,
+         datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), id_sig),
+        commit=True,
+    )
+    journaliser(moi, "traiter_signalement", "signalement", id_sig,
+                libelle + (f" ({note})" if note else ""))
+    return jsonify({"ok": True, "libelle": libelle})
 
 
 # ============================================================

@@ -195,6 +195,10 @@ CREATE TABLE signalement (
     statut          TEXT    NOT NULL DEFAULT 'ouvert'
                     CHECK (statut IN ('ouvert','traite','rejete')),
     cree_le         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- Trace de la moderation : qui a tranche, quand, et ce qui a ete fait.
+    action          TEXT,
+    traite_par      INTEGER,
+    traite_le       TIMESTAMP,
     FOREIGN KEY (id_signaleur) REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE
 );
 CREATE INDEX idx_signalement_statut ON signalement(statut);

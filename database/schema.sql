@@ -230,6 +230,10 @@ CREATE TABLE signalement (
     motif            VARCHAR(300) NOT NULL,
     statut           ENUM('ouvert','traite','rejete') NOT NULL DEFAULT 'ouvert',
     cree_le          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- Trace de la modération : qui a tranché, quand, et ce qui a été fait.
+    action           VARCHAR(30)  NULL,
+    traite_par       INT UNSIGNED NULL,
+    traite_le        DATETIME     NULL,
     PRIMARY KEY (id_signalement),
     KEY idx_signalement_statut (statut),
     CONSTRAINT fk_signal_user FOREIGN KEY (id_signaleur)
