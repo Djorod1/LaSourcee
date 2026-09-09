@@ -332,6 +332,14 @@ COLONNES_ATTENDUES = [
     ("utilisateur", "etablissement", "TEXT"),
     ("utilisateur", "doit_changer_mdp", "INTEGER NOT NULL DEFAULT 0"),
     ("utilisateur", "email_verifie", "INTEGER NOT NULL DEFAULT 0"),
+    # Dossier de candidature d'un référent. Il ne partait que par
+    # e-mail : l'administrateur n'avait rien pour juger, et la
+    # motivation écrite disparaissait avec le message.
+    ("mentor_details", "motivation", "TEXT"),
+    ("mentor_details", "lien_pro", "TEXT"),
+    ("mentor_details", "profession", "TEXT"),
+    ("mentor_details", "organisation", "TEXT"),
+    ("mentor_details", "depose_le", "TEXT"),
 ]
 
 

@@ -2032,6 +2032,75 @@ img, svg, video { max-width: 100%; height: auto; }
 /* ==================================================================
    COMPLÉTION DU PROFIL
    ================================================================== */
+/* Dossier de candidature, dans l'écran de validation. Présenté en
+   couples libellé/valeur : un administrateur balaie une liste alignée
+   bien plus vite qu'un paragraphe, et rien ne s'y perd. */
+.dossier-candidature {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 12px 0;
+  font-size: 13px;
+}
+.dossier-candidature dt { color: var(--texte-doux); }
+.dossier-candidature dd { margin: 0; }
+.bloc-motivation {
+  background: var(--fond);
+  border-radius: var(--rayon-s);
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.bloc-motivation strong { font-size: 13px; }
+.bloc-motivation p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+/* Compteur sur une entrée du menu d'administration. */
+.compteur-admin {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: var(--rouge);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* Rappel de profil dans le fil. Volontairement sobre : il informe d'un
+   gain, il n'annonce pas un incident. Une bande rouge pour un profil
+   incomplet ferait croire à un problème de compte. */
+.rappel-profil {
+  margin-bottom: 16px;
+  border-left: 3px solid var(--primaire);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.rappel-profil-texte { flex: 1 1 260px; }
+.rappel-profil-texte strong { display: block; margin-bottom: 4px; }
+.rappel-profil-texte p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--texte-doux);
+  line-height: 1.55;
+}
+.rappel-profil-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+@media (max-width: 640px) {
+  .rappel-profil-actions { width: 100%; }
+  .rappel-profil-actions .btn { flex: 1; justify-content: center; }
+}
+
 .carte-completion { margin-bottom: 16px; }
 .completion-entete {
   display: flex;

@@ -300,14 +300,21 @@ def supprimer_secteur(id_s):
 @admin_requis
 def mentors_a_verifier():
     return jsonify(recuperer_tous(
+        # Le dossier complet, et non le seul nom : valider quelqu'un sur
+        # sa ville et sa biographie n'est pas une vérification. La
+        # motivation, la profession et le lien professionnel sont ce qui
+        # permet de décider.
         """SELECT u.id_utilisateur, u.prenom, u.nom, u.email, u.bio,
                   u.ville, p.libelle AS pays,
-                  md.est_verifie, md.dispo, md.anciennete
+                  u.niveau_etudes, u.domaine, u.etablissement,
+                  md.est_verifie, md.dispo, md.anciennete,
+                  md.motivation, md.lien_pro, md.profession,
+                  md.organisation, md.depose_le
              FROM utilisateur u
              JOIN mentor_details md ON md.id_utilisateur = u.id_utilisateur
         LEFT JOIN pays p ON p.id_pays = u.id_pays
             WHERE md.est_verifie = 0 AND u.est_actif = 1
-         ORDER BY u.cree_le DESC
+         ORDER BY md.depose_le DESC, u.cree_le DESC
             LIMIT 100"""
     ))
 

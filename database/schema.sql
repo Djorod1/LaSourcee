@@ -97,6 +97,13 @@ CREATE TABLE mentor_details (
     delai_reponse    VARCHAR(40)  NULL,               -- "sous 24 h"
     note_moyenne     DECIMAL(3,2) NOT NULL DEFAULT 0.00,
     nb_reponses      INT UNSIGNED NOT NULL DEFAULT 0,
+    -- Dossier de candidature, conservé plutôt qu'envoyé seulement par
+    -- e-mail : sans lui l'administrateur n'a rien pour juger.
+    motivation       TEXT         NULL,
+    lien_pro         VARCHAR(255) NULL,
+    profession       VARCHAR(120) NULL,
+    organisation     VARCHAR(120) NULL,
+    depose_le        DATETIME     NULL,
     PRIMARY KEY (id_utilisateur),
     CONSTRAINT fk_md_user FOREIGN KEY (id_utilisateur)
         REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE

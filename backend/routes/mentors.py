@@ -19,7 +19,12 @@ def lister():
     terme = (request.args.get("q") or "").strip()
     limite = min(request.args.get("limite", default=30, type=int), 100)
 
-    conditions = ["u.role = 'mentor'", "u.est_actif = 1"]
+    # md.est_verifie s'ajoute au rôle plutôt que de s'y substituer.
+    # L'annuaire est ce qu'un bénéficiaire consulte pour choisir à qui
+    # confier une question : n'y faire figurer que des dossiers examinés
+    # est le minimum. La condition tient même si un rôle était accordé
+    # par erreur ailleurs dans le code.
+    conditions = ["u.role = 'mentor'", "u.est_actif = 1", "md.est_verifie = 1"]
     params = []
     if id_pays:
         conditions.append("u.id_pays = %s")

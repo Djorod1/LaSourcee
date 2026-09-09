@@ -1202,6 +1202,92 @@ def executer_tests():
             os.environ.pop(cle, None)
         os.environ["EMAIL_MODE"] = "console"
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  22. CANDIDATURE DE RÉFÉRENT ET VALIDATION")
+    print("═" * 70)
+
+    cand = app.test_client()
+    cand.post("/api/auth/inscription", json={
+        "prenom": "Odile", "nom": "HOUNKPATIN", "email": "odile@test.io",
+        "mot_de_passe": "Odile2026!", "role": "etudiant"})
+    r = cand.post("/api/mentors/candidature", json={
+        "bio": "Ingénieure en génie civil depuis douze ans, je suis les "
+               "chantiers publics et j'accompagne des jeunes diplômés.",
+        "motivation": "J'ai commencé sans savoir à qui demander conseil et "
+                      "j'aimerais éviter cela à d'autres. Je peux parler du "
+                      "métier, des concours et des premières années.",
+        "profession": "Ingénieure travaux",
+        "organisation": "Direction des infrastructures",
+        "annees_experience": 12,
+        "lien_professionnel": "https://exemple.org/odile",
+        "secteurs": [1]})
+    verifier("Une candidature complète est acceptée", r.status_code in (200, 201),
+             r.get_data(as_text=True)[:110])
+
+    role = jeton_sql("SELECT role FROM utilisateur WHERE email = ?",
+                     ("odile@test.io",))
+    verifier("Le dépôt ne confère pas le rôle de référent", role != "mentor",
+             "sinon la candidate figure dans l'annuaire avant tout examen")
+
+    # Le dossier doit survivre a l'e-mail : c'est sur lui que la
+    # decision se prend.
+    verifier("La motivation est conservée en base",
+             bool(jeton_sql("SELECT motivation FROM mentor_details md "
+                            "JOIN utilisateur u USING (id_utilisateur) "
+                            "WHERE u.email = ?", ("odile@test.io",))))
+    verifier("La profession est conservée en base",
+             jeton_sql("SELECT profession FROM mentor_details md "
+                       "JOIN utilisateur u USING (id_utilisateur) "
+                       "WHERE u.email = ?",
+                       ("odile@test.io",)) == "Ingénieure travaux")
+
+    # L'annuaire ne presente que des dossiers examines.
+    annuaire = cand.get("/api/mentors").get_json() or []
+    noms = [str(m.get("email", "")) + str(m.get("nom", "")) for m in
+            (annuaire if isinstance(annuaire, list) else annuaire.get("mentors", []))]
+    verifier("Une candidate non validée n'est pas dans l'annuaire",
+             not any("HOUNKPATIN" in n for n in noms))
+
+    # L'administrateur doit disposer du dossier, pas seulement du nom.
+    dossiers = adm.get("/api/admin/mentors-a-verifier").get_json() or []
+    mien = [d for d in dossiers if d.get("email") == "odile@test.io"]
+    verifier("La candidature apparaît chez l'administrateur", bool(mien))
+    if mien:
+        d = mien[0]
+        verifier("Le dossier porte la motivation", bool(d.get("motivation")))
+        verifier("Le dossier porte la profession", bool(d.get("profession")))
+        verifier("Le dossier porte le lien professionnel",
+                 bool(d.get("lien_pro")))
+
+    # Les administrateurs sont prevenus dans l'application : l'e-mail
+    # peut etre hors service sans que personne s'en apercoive.
+    verifier("Les administrateurs reçoivent une notification",
+             jeton_sql("SELECT COUNT(*) FROM notification "
+                       "WHERE texte LIKE ?", ("%devenir référent%",)) >= 1)
+
+    id_cand = jeton_sql("SELECT id_utilisateur FROM utilisateur WHERE email = ?",
+                        ("odile@test.io",))
+    r = adm.post(f"/api/admin/mentors/{id_cand}/verifier", json={})
+    verifier("La validation aboutit", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+    verifier("La validation confère le rôle de référent",
+             jeton_sql("SELECT role FROM utilisateur WHERE email = ?",
+                       ("odile@test.io",)) == "mentor")
+    verifier("La validation pose le badge vérifié",
+             jeton_sql("SELECT est_verifie FROM mentor_details "
+                       "WHERE id_utilisateur = ?", (id_cand,)) == 1)
+    verifier("La candidate est prévenue dans l'application",
+             jeton_sql("SELECT COUNT(*) FROM notification "
+                       "WHERE id_destinataire = ? AND texte LIKE ?",
+                       (id_cand, "%acceptée%")) >= 1)
+
+    apres = cand.get("/api/mentors").get_json() or []
+    liste = apres if isinstance(apres, list) else apres.get("mentors", [])
+    verifier("Une fois validée, elle entre dans l'annuaire",
+             any("HOUNKPATIN" in str(m.get("nom", "")) for m in liste),
+             f"{len(liste)} référent(s) listé(s)")
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

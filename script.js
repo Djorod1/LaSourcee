@@ -268,6 +268,8 @@ function appliquerUtilisateur(u) {
   };
   majRappelMotDePasse();
   majRappelConfirmation();
+  majRappelProfil();
+  chargerCompteurCandidatures();
   demarrerReleveNotifications();
 }
 /* Validation des champs de l'inscription AVANT de passer à l'onboarding. */
@@ -2423,27 +2425,67 @@ async function adminValiderRole(idUser) {
 
 async function adminMentors() {
   const att = await API.get('/admin/mentors-a-verifier');
+  majCompteurCandidatures(att.length);
   if (!att.length) {
     return `<h2 style="margin-bottom:18px;">Validation des référents</h2>
       <div class="carte"><p style="color:var(--texte-doux);">
-        Aucun mentor en attente de vérification.</p></div>`;
+        Aucune candidature en attente.</p></div>`;
   }
-  return `<h2 style="margin-bottom:18px;">Validation des référents (${att.length})</h2>
-    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap:14px;">
+  return `<h2 style="margin-bottom:6px;">Validation des référents (${att.length})</h2>
+    <p class="desc" style="margin-bottom:18px;">Tant qu'une candidature n'est
+       pas validée, la personne n'apparaît pas dans l'annuaire et ne porte
+       aucun badge. Vérifiez le parcours annoncé avant de valider.</p>
+    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap:14px;">
       ${att.map(m => {
         const init = ((m.prenom||'?')[0] + (m.nom||'?')[0]).toUpperCase();
+        const poste = [m.profession, m.organisation].filter(Boolean).join(', ');
+        const parcours = [m.niveau_etudes, m.domaine, m.etablissement]
+          .filter(Boolean).map(echapper).join(' · ');
         return `<div class="carte"><div style="display:flex; gap:12px; align-items:center;">
           ${avatarHTML(init, 'l')}
           <div><strong>${echapper(m.prenom + ' ' + m.nom)}</strong>
+            <div style="color:var(--texte-doux); font-size:13px;">
+              ${echapper(m.email || '')}</div>
             <div style="color:var(--texte-doux); font-size:13px;">${echapper((m.ville||'') + (m.pays?', '+m.pays:''))}</div></div>
         </div>
-        <p style="margin:12px 0; font-size:14px;">${echapper(m.bio || 'Pas de biographie.')}</p>
+        <dl class="dossier-candidature">
+          ${poste ? `<dt>Poste</dt><dd>${echapper(poste)}</dd>` : ''}
+          ${m.anciennete ? `<dt>Expérience</dt><dd>${echapper(m.anciennete)}</dd>` : ''}
+          ${parcours ? `<dt>Parcours</dt><dd>${parcours}</dd>` : ''}
+          ${m.lien_pro ? `<dt>Profil professionnel</dt><dd>
+             <a href="${echapper(m.lien_pro)}" target="_blank" rel="noopener noreferrer nofollow">Ouvrir le lien</a></dd>` : ''}
+          ${m.depose_le ? `<dt>Déposée le</dt><dd>${echapper(String(m.depose_le).slice(0,16))}</dd>` : ''}
+        </dl>
+        ${m.motivation ? `<div class="bloc-motivation">
+            <strong>Motivation</strong>
+            <p>${echapper(m.motivation)}</p>
+          </div>` : `<p class="desc" style="margin:12px 0;">Aucune motivation
+            enregistrée : candidature déposée avant la conservation des
+            dossiers. Demandez-la avant de valider.</p>`}
+        <p style="margin:12px 0; font-size:14px;">${echapper(m.bio || 'Pas de présentation.')}</p>
         <div style="display:flex; gap:8px;">
           <button class="btn btn-primaire btn-petit" onclick="adminMentorAction('verifier',${m.id_utilisateur})">${ic('check','ic ic-s')} Valider</button>
           <button class="btn btn-danger btn-petit" onclick="adminMentorAction('refuser',${m.id_utilisateur})">${ic('croix','ic ic-s')} Refuser</button>
         </div></div>`;
       }).join('')}
     </div>`;
+}
+
+/* Compteur sur l'entrée de menu : une candidature qui attend doit se
+   voir sans avoir à ouvrir l'onglet pour la découvrir. */
+function majCompteurCandidatures(n) {
+  const p = document.getElementById('compteur-candidatures');
+  if (!p) return;
+  p.textContent = n > 99 ? '99+' : String(n);
+  p.hidden = !n;
+}
+
+async function chargerCompteurCandidatures() {
+  if (!etat.utilisateur || !etat.utilisateur.estAdmin) return;
+  try {
+    majCompteurCandidatures(
+      (await API.get('/admin/mentors-a-verifier') || []).length);
+  } catch (_) { /* le compteur n'est pas essentiel */ }
 }
 
 async function adminMentorAction(action, idMentor) {
@@ -3196,7 +3238,74 @@ function elementsProfil(u) {
       gain: 'Savoir où vous en êtes change la réponse qu\'on vous donne.' },
     { fait: !!u.objectif, libelle: 'Ce que vous cherchez',
       gain: 'C\'est ce qui vous rapproche des référents qui peuvent aider.' },
+    { fait: !!u.domaine, libelle: 'Domaine ou métier',
+      gain: 'Il décide des questions et des référents qu\'on vous propose.' },
+    { fait: !!u.niveau_etudes, libelle: 'Niveau d\'études',
+      gain: 'Une même question n\'appelle pas la même réponse selon le niveau.' },
   ];
+}
+
+/* Part des éléments renseignés, de 0 à 100. */
+function completudeProfil(u) {
+  const el = elementsProfil(u || etat.utilisateur || {});
+  if (!el.length) return 100;
+  return Math.round((el.filter(e => e.fait).length / el.length) * 100);
+}
+
+/* Rappel affiché dans le fil quand le profil reste très incomplet.
+
+   La carte de complétion vit sur la page du profil, que personne ne
+   visite spontanément : celles et ceux qui auraient le plus à gagner à
+   la voir sont exactement celles et ceux qui n'y vont jamais. Le rappel
+   vient donc à eux, une fois, et se referme.
+
+   Il ne bloque rien et ne se répète pas : un rappel qu'on ne peut pas
+   faire taire cesse d'être lu au bout de deux fois. */
+const SEUIL_RAPPEL_PROFIL = 60;
+const JOURS_AVANT_RELANCE = 7;
+
+function majRappelProfil() {
+  const u = etat.utilisateur;
+  const zone = document.getElementById('rappel-profil');
+  if (!zone) return;
+  if (!u || !u.email) { zone.innerHTML = ''; return; }
+
+  const part = completudeProfil(u);
+  if (part >= SEUIL_RAPPEL_PROFIL) { zone.innerHTML = ''; return; }
+
+  let masqueJusquA = 0;
+  try { masqueJusquA = +(localStorage.getItem('lasourcee-rappel-profil') || 0); }
+  catch (_) { /* stockage refusé : le rappel s'affichera à chaque visite */ }
+  if (Date.now() < masqueJusquA) { zone.innerHTML = ''; return; }
+
+  const manquants = elementsProfil(u).filter(e => !e.fait).slice(0, 2);
+  zone.innerHTML = `<div class="carte rappel-profil">
+    <div class="rappel-profil-texte">
+      <strong>Votre profil est complété à ${part}&nbsp;%.</strong>
+      <p>Les référents répondent d'abord aux profils qu'ils comprennent, et
+         vos questions sont proposées aux membres qui partagent votre
+         domaine. Un profil renseigné touche donc un public plus large.
+         ${manquants.length
+           ? 'Il manque surtout : ' + manquants.map(e =>
+               echapper(e.libelle.toLowerCase())).join(' et ') + '.'
+           : ''}</p>
+    </div>
+    <div class="rappel-profil-actions">
+      <button class="btn btn-primaire btn-petit"
+              onclick="naviguerApp('parametres')">Compléter mon profil</button>
+      <button class="btn btn-secondaire btn-petit"
+              onclick="reporterRappelProfil()">Plus tard</button>
+    </div>
+  </div>`;
+}
+
+function reporterRappelProfil() {
+  try {
+    localStorage.setItem('lasourcee-rappel-profil',
+      String(Date.now() + JOURS_AVANT_RELANCE * 86400000));
+  } catch (_) { /* sans stockage, le rappel reviendra : sans gravité */ }
+  const zone = document.getElementById('rappel-profil');
+  if (zone) zone.innerHTML = '';
 }
 
 function carteCompletionProfil() {

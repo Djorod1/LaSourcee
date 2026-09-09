@@ -101,7 +101,7 @@ def notifier_reponse(id_question, id_auteur_reponse, nom_repondant):
     extrait = titre if len(titre) <= 60 else titre[:57] + "..."
     return notifier(
         question["id_auteur"],
-        f"{nom_repondant} a repondu a votre question : « {extrait} »",
+        f"{nom_repondant} a répondu à votre question : « {extrait} »",
         type_notif="reponse",
         id_question=id_question,
         id_acteur=id_auteur_reponse,
@@ -120,7 +120,7 @@ def notifier_reaction(id_question, id_acteur, nom_acteur):
     extrait = titre if len(titre) <= 60 else titre[:57] + "..."
     return notifier(
         question["id_auteur"],
-        f"{nom_acteur} a trouve votre question utile : « {extrait} »",
+        f"{nom_acteur} a trouvé votre question utile : « {extrait} »",
         type_notif="reaction",
         id_question=id_question,
         id_acteur=id_acteur,
@@ -131,7 +131,7 @@ def notifier_suivi(id_referent, id_suiveur, nom_suiveur):
     """Previent un referent qu'on s'est abonne a ses reponses."""
     return notifier(
         id_referent,
-        f"{nom_suiveur} suit desormais vos reponses.",
+        f"{nom_suiveur} suit désormais vos réponses.",
         type_notif="suivi",
         id_acteur=id_suiveur,
     )
@@ -140,9 +140,9 @@ def notifier_suivi(id_referent, id_suiveur, nom_suiveur):
 def notifier_decision_candidature(id_candidat, acceptee):
     """Previent un candidat de la decision prise sur son dossier."""
     if acceptee:
-        texte = ("Votre candidature de referent est acceptee. Le badge "
-                 "Referent verifie apparait desormais sur vos reponses.")
+        texte = ("Votre candidature de référent est acceptée. Le badge "
+                 "Référent vérifié apparaît désormais sur vos réponses.")
     else:
-        texte = ("Votre candidature de referent n'a pas ete retenue cette "
-                 "fois. Vous pouvez la deposer a nouveau.")
+        texte = ("Votre candidature de référent n'a pas été retenue cette "
+                 "fois. Vous pouvez la déposer à nouveau.")
     return notifier(id_candidat, texte, type_notif="systeme")

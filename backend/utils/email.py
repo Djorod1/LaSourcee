@@ -101,7 +101,35 @@ def configuration_valide():
     ]
     if manquants:
         return False, "Variables manquantes : " + ", ".join(manquants)
+
+    # Le protocole d'authentification SMTP transporte les identifiants
+    # en ASCII. Un caractere hors de cet alphabet fait echouer la
+    # connexion sur une erreur d'encodage, indechiffrable pour qui n'a
+    # pas le code sous les yeux. Le cas se produit pour de bon : un
+    # panneau d'hebergement affiche le mot de passe tronque par des
+    # points de suspension, et c'est cet affichage qui est recopie, le
+    # caractere « … » compris.
+    for nom, cle in (("SMTP_UTILISATEUR", "utilisateur"),
+                     ("SMTP_MOTDEPASSE", "motdepasse")):
+        faute = _premier_caractere_non_ascii(c[cle])
+        if faute:
+            position, caractere = faute
+            return False, (
+                f"{nom} contient le caractère « {caractere} » en position "
+                f"{position + 1}, que le protocole SMTP n'accepte pas. "
+                f"Recopiez la valeur depuis sa source plutôt que depuis un "
+                f"affichage abrégé : les points de suspension d'un mot de "
+                f"passe masqué en font partie."
+            )
     return True, "Configuration SMTP complète."
+
+
+def _premier_caractere_non_ascii(valeur):
+    """(position, caractère) du premier octet hors ASCII, sinon None."""
+    for i, caractere in enumerate(valeur or ""):
+        if ord(caractere) > 127:
+            return i, caractere
+    return None
 
 
 def _construire_message(destinataire, sujet, corps_texte, corps_html, expediteur):
@@ -218,6 +246,14 @@ def envoyer_detaille(destinataire, sujet, corps, corps_html=None):
                  f"Gmail, il faut un mot de passe d'application.")
     except smtplib.SMTPRecipientsRefused:
         motif = f"Le serveur a refusé l'adresse destinataire {destinataire}."
+    except UnicodeEncodeError as exc:
+        # Remontait jusqu'a l'ecran d'administration sous la forme
+        # « 'ascii' codec can't encode character '…' », ce qui
+        # n'indiquait ni la variable en cause ni la correction.
+        motif = (f"Un identifiant SMTP contient le caractère « "
+                 f"{exc.object[exc.start:exc.start + 1]} », interdit par le "
+                 f"protocole. Recopiez SMTP_UTILISATEUR et SMTP_MOTDEPASSE "
+                 f"depuis leur source, sans passer par un affichage abrégé.")
     except (smtplib.SMTPException, OSError) as exc:
         motif = (f"Contact impossible avec {c['hote']}:{c['port']} "
                  f"({type(exc).__name__} : {str(exc)[:120]}). Vérifiez "

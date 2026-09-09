@@ -84,6 +84,14 @@ CREATE TABLE mentor_details (
     delai_reponse   TEXT,
     note_moyenne    NUMERIC(4,2)    NOT NULL DEFAULT 0.0,
     nb_reponses     SMALLINT NOT NULL DEFAULT 0,
+    -- Dossier de candidature, conservé plutôt qu'envoyé seulement par
+    -- e-mail : sans lui l'administrateur n'a rien pour juger, et la
+    -- motivation écrite disparaît avec le message.
+    motivation      TEXT,
+    lien_pro        TEXT,
+    profession      TEXT,
+    organisation    TEXT,
+    depose_le       TIMESTAMP,
     FOREIGN KEY (id_utilisateur) REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE
 );
 

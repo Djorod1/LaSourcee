@@ -13,13 +13,14 @@ Parcours complet :
 """
 
 import os
+from datetime import datetime
 
 from flask import Blueprint, g, jsonify, request
 
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from utils.auth_helpers import connexion_requise
 from utils.urls import url_publique
-from services.notifications import notifier_decision_candidature
+from services.notifications import notifier, notifier_decision_candidature
 from utils import email as mod_email
 
 bp_candidature = Blueprint("candidature", __name__, url_prefix="/api/mentors")
@@ -89,24 +90,41 @@ def deposer_candidature():
 
     # ---- Enregistrement --------------------------------------------------
     with curseur(commit=True) as cur:
+        # Le rôle ne change pas ici. Il passait à « mentor » dès le
+        # dépôt : l'annuaire listant tous les comptes de ce rôle, un
+        # candidat y figurait comme référent avant le moindre examen, et
+        # la validation ne changeait plus grand-chose. Le rôle suit
+        # désormais la décision de l'administrateur.
         cur.execute(
-            "UPDATE utilisateur SET bio = %s, role = 'mentor' "
-            "WHERE id_utilisateur = %s",
+            "UPDATE utilisateur SET bio = %s WHERE id_utilisateur = %s",
             (bio, id_user),
         )
 
+        # Le dossier est conservé en base, et non seulement expédié par
+        # e-mail. Un message perdu, ou un envoi hors service, laissait
+        # l'administrateur devant une fiche vide : ni motivation, ni
+        # profession, rien sur quoi fonder une décision.
+        anciennete = f"{annees} an{'s' if annees > 1 else ''}"
+        depose_le = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         if details:
             cur.execute(
-                "UPDATE mentor_details SET anciennete = %s, dispo = 'disponible' "
-                "WHERE id_utilisateur = %s",
-                (f"{annees} an{'s' if annees > 1 else ''}", id_user),
+                """UPDATE mentor_details
+                      SET anciennete = %s, dispo = 'disponible',
+                          motivation = %s, lien_pro = %s, profession = %s,
+                          organisation = %s, depose_le = %s
+                    WHERE id_utilisateur = %s""",
+                (anciennete, motivation[:4000], lien_pro[:255],
+                 profession[:120], organisation[:120], depose_le, id_user),
             )
         else:
             cur.execute(
-                "INSERT INTO mentor_details "
-                "(id_utilisateur, est_verifie, dispo, anciennete) "
-                "VALUES (%s, 0, 'disponible', %s)",
-                (id_user, f"{annees} an{'s' if annees > 1 else ''}"),
+                """INSERT INTO mentor_details
+                      (id_utilisateur, est_verifie, dispo, anciennete,
+                       motivation, lien_pro, profession, organisation,
+                       depose_le)
+                   VALUES (%s, 0, 'disponible', %s, %s, %s, %s, %s, %s)""",
+                (id_user, anciennete, motivation[:4000], lien_pro[:255],
+                 profession[:120], organisation[:120], depose_le),
             )
 
         # Domaines d'expertise : remplacement complet
@@ -197,7 +215,7 @@ def _prevenir_administrateurs(profil, profession, organisation, annees,
                               motivation, lien_pro):
     """Alerte tous les administrateurs qu'une candidature attend."""
     admins = recuperer_tous(
-        "SELECT prenom, email FROM utilisateur "
+        "SELECT id_utilisateur, prenom, email FROM utilisateur "
         "WHERE (role IN ('admin','super_admin') OR est_admin = 1) "
         "AND est_actif = 1"
     )
@@ -205,6 +223,18 @@ def _prevenir_administrateurs(profil, profession, organisation, annees,
         return
 
     candidat = f"{profil['prenom']} {profil['nom']}"
+
+    # Notification dans l'application, en plus de l'e-mail. L'envoi
+    # d'e-mails peut être hors service sans que personne s'en rende
+    # compte, et une candidature qui attend indéfiniment décourage
+    # exactement les personnes qu'on cherche à retenir.
+    for admin in admins:
+        notifier(
+            admin["id_utilisateur"],
+            f"{candidat} demande à devenir référent. Sa candidature "
+            f"attend un examen.",
+            type_notif="systeme",
+        )
     poste = profession + (f" chez {organisation}" if organisation else "")
     lien_admin = url_publique("/index.html")
 

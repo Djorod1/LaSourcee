@@ -81,6 +81,14 @@ CREATE TABLE mentor_details (
     delai_reponse   TEXT,
     note_moyenne    REAL    NOT NULL DEFAULT 0.0,
     nb_reponses     INTEGER NOT NULL DEFAULT 0,
+    -- Dossier de candidature. Il n'etait envoye que par e-mail : une
+    -- fois le message parti, ou perdu, l'administrateur n'avait plus
+    -- rien pour juger, et la motivation ecrite etait perdue.
+    motivation      TEXT,
+    lien_pro        TEXT,
+    profession      TEXT,
+    organisation    TEXT,
+    depose_le       TEXT,
     FOREIGN KEY (id_utilisateur) REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE
 );
 
