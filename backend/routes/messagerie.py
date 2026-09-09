@@ -48,6 +48,94 @@ def lister_conversations():
     return jsonify(lignes)
 
 
+def peut_ecrire_a(moi, id_autre):
+    """Cette personne peut-elle ouvrir une conversation avec l'autre ?
+
+    Retourne ``(autorise, motif)``. Le motif est destine a etre lu : un
+    refus sans explication passe pour une panne.
+
+    N'importe qui pouvait ecrire a n'importe qui. Sur une plateforme qui
+    s'adresse a des jeunes, c'est le premier vecteur d'abus : un adulte
+    y aborde un mineur en prive sans que rien ne l'ait amene, et
+    personne ne le voit. Les regles ci-dessous ne suppriment pas ce
+    risque, elles exigent qu'un lien existe deja.
+
+      - **Vers un referent verifie** : ouvert a tous. C'est l'objet meme
+        de la plateforme, et le referent a demande ce role.
+      - **Vers un administrateur** : ouvert a tous. Il faut pouvoir
+        signaler un probleme a quelqu'un.
+      - **Depuis un administrateur** : ouvert vers tous, pour la
+        moderation et l'assistance.
+      - **Vers quelqu'un d'autre** : seulement si un lien existe deja,
+        c'est-a-dire une conversation ouverte, ou une reponse apportee a
+        sa question. Un referent peut donc ecrire a celles et ceux qu'il
+        a aides, mais pas a un inconnu.
+
+    Deux beneficiaires ne s'ecrivent pas en prive. Ils n'ont pas de
+    raison de le faire ici, et l'ouvrir reviendrait a offrir une
+    messagerie anonyme entre inconnus sur un service frequente par des
+    lyceens.
+    """
+    autre = recuperer_un(
+        """SELECT id_utilisateur, role, est_admin, prenom
+             FROM utilisateur
+            WHERE id_utilisateur = %s AND est_actif = 1""", (id_autre,))
+    if not autre:
+        return False, "Ce compte n'existe pas ou n'est plus actif."
+
+    if moi.get("est_admin") or moi.get("role") in ("admin", "super_admin"):
+        return True, ""
+    if autre.get("est_admin") or autre.get("role") in ("admin", "super_admin"):
+        return True, ""
+
+    if autre["role"] == "mentor":
+        verifie = recuperer_un(
+            "SELECT est_verifie FROM mentor_details WHERE id_utilisateur = %s",
+            (id_autre,))
+        if verifie and verifie["est_verifie"]:
+            return True, ""
+        return False, ("Cette candidature de référent n'est pas encore "
+                       "validée. Vous pourrez lui écrire ensuite.")
+
+    # Lien deja etabli : une conversation existante, ou une reponse
+    # apportee a l'une de ses questions.
+    id_moi = moi["id_utilisateur"]
+    deja = recuperer_un(
+        """SELECT 1 FROM conversation_participant cp1
+             JOIN conversation_participant cp2
+               ON cp1.id_conversation = cp2.id_conversation
+            WHERE cp1.id_utilisateur = %s AND cp2.id_utilisateur = %s
+            LIMIT 1""", (id_moi, id_autre))
+    if deja:
+        return True, ""
+
+    aide = recuperer_un(
+        """SELECT 1 FROM reponse r
+             JOIN question q ON q.id_question = r.id_question
+            WHERE r.id_auteur = %s AND q.id_auteur = %s
+            LIMIT 1""", (id_moi, id_autre))
+    if aide:
+        return True, ""
+
+    return False, ("Vous ne pouvez écrire en privé qu'aux référents "
+                   "vérifiés, à l'administration, et aux personnes dont "
+                   "vous avez déjà répondu à une question.")
+
+
+@bp_messagerie.get("/peut-ecrire/<int:id_autre>")
+@connexion_requise
+def verifier_droit_ecrire(id_autre):
+    """L'interface s'en sert pour n'afficher le bouton que s'il aboutit.
+
+    Proposer un bouton qui repondra par un refus fait passer une regle
+    pour une panne, et pousse a reessayer plutot qu'a comprendre.
+    """
+    if id_autre == g.utilisateur["id_utilisateur"]:
+        return jsonify({"autorise": False, "motif": ""})
+    autorise, motif = peut_ecrire_a(g.utilisateur, id_autre)
+    return jsonify({"autorise": autorise, "motif": motif})
+
+
 @bp_messagerie.post("/conversations")
 @connexion_requise
 def ouvrir():
@@ -67,6 +155,10 @@ def ouvrir():
     )
     if not autre:
         return jsonify({"erreur": "Destinataire introuvable."}), 404
+
+    autorise, motif = peut_ecrire_a(g.utilisateur, id_autre)
+    if not autorise:
+        return jsonify({"erreur": motif}), 403
 
     existante = recuperer_un(
         """SELECT cp1.id_conversation

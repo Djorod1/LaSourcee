@@ -2059,6 +2059,98 @@ def executer_tests():
     verifier("Le Message-ID porte le domaine de l'expéditeur",
              "@lasourcee.org>" in msg["Message-ID"], msg["Message-ID"])
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  31. QUI PEUT ÉCRIRE À QUI, ET PROFILS PAR RÔLE")
+    print("═" * 70)
+
+    def _compte(prenom, email, role="etudiant"):
+        c = app.test_client()
+        c.post("/api/auth/inscription", json={
+            "prenom": prenom, "nom": "ESSAI", "email": email,
+            "mot_de_passe": "Essai2026!", "role": role,
+            "consentement": CONSENT_TESTS})
+        c.post("/api/auth/connexion",
+               json={"email": email, "mot_de_passe": "Essai2026!"})
+        return c
+
+    beneficiaire = _compte("Ayaba", "ayaba@test.io")
+    isole = _compte("Vierge", "vierge@test.io")
+    referent = _compte("Sègbédji", "segbedji@test.io", "mentor")
+
+    with app.app_context():
+        from models.db import executer as _ex
+        _ex("UPDATE mentor_details SET est_verifie = 1 "
+            "WHERE id_utilisateur = (SELECT id_utilisateur FROM utilisateur "
+            "WHERE email = %s)", ("segbedji@test.io",), commit=True)
+
+    def _id(email):
+        return jeton_sql("SELECT id_utilisateur FROM utilisateur "
+                         "WHERE email = ?", (email,))
+
+    def _ouvrir(client, cible):
+        return client.post("/api/messagerie/conversations",
+                           json={"id_utilisateur": cible}).status_code
+
+    # Le coeur de la plateforme : ecrire a un referent verifie.
+    verifier("Un bénéficiaire écrit à un référent vérifié",
+             _ouvrir(beneficiaire, _id("segbedji@test.io")) in (200, 201))
+
+    # Deux beneficiaires n'ont pas de raison d'echanger en prive ici, et
+    # l'ouvrir reviendrait a offrir une messagerie entre inconnus sur un
+    # service frequente par des lyceens.
+    verifier("Deux bénéficiaires ne s'écrivent pas en privé",
+             _ouvrir(isole, _id("ayaba@test.io")) == 403)
+
+    # Il faut pouvoir signaler un probleme a quelqu'un.
+    verifier("Tout le monde peut écrire à l'administration",
+             _ouvrir(isole, jeton_sql(
+                 "SELECT id_utilisateur FROM utilisateur "
+                 "WHERE est_admin = 1 LIMIT 1")) in (200, 201))
+    verifier("Un administrateur écrit à qui il veut",
+             _ouvrir(adm, _id("vierge@test.io")) in (200, 201))
+
+    # Un referent ne demarche pas un inconnu : le lien doit exister.
+    verifier("Un référent n'aborde pas un inconnu",
+             _ouvrir(referent, _id("vierge@test.io")) == 403,
+             "c'est le premier vecteur d'abus sur ce type de plateforme")
+
+    # Mais il peut ecrire a quelqu'un qu'il a aide.
+    r = isole.post("/api/questions", json={
+        "titre": "Question servant à établir un lien",
+        "corps": "Un corps assez long pour passer la validation du serveur.",
+        "id_secteur": 1})
+    referent.post("/api/reponses", json={
+        "id_question": (r.get_json() or {}).get("id_question"),
+        "contenu": "Une réponse assez longue pour être acceptée."})
+    verifier("Un référent écrit à qui il a répondu",
+             _ouvrir(referent, _id("vierge@test.io")) in (200, 201))
+
+    # L'interface doit connaitre la regle sans la dupliquer.
+    r = isole.get("/api/messagerie/peut-ecrire/%d" % _id("ayaba@test.io"))
+    verifier("L'interface peut demander si l'envoi est permis",
+             r.status_code == 200)
+    verifier("Le refus est motivé, non muet",
+             (r.get_json() or {}).get("autorise") is False
+             and len((r.get_json() or {}).get("motif", "")) > 30,
+             "un refus sans explication passe pour une panne")
+
+    # --- Statistiques par role ---
+    prof_adm = etu.get("/api/profil/%d" % jeton_sql(
+        "SELECT id_utilisateur FROM utilisateur WHERE est_admin = 1 LIMIT 1")
+    ).get_json() or {}
+    verifier("Le profil porte des comptes réels",
+             all(c in prof_adm for c in
+                 ("nb_questions", "nb_reponses_publiees", "nb_suivis")),
+             "« 0 Réponses » sur un profil d'administrateur venait d'un "
+             "compteur réservé aux référents")
+
+    prof_ben = etu.get("/api/profil/%d" % _id("ayaba@test.io")).get_json() or {}
+    verifier("Les comptes d'un bénéficiaire sont chiffrés",
+             isinstance(prof_ben.get("nb_questions"), int))
+    verifier("Le nombre de réponses reçues comme utiles est compté",
+             "nb_utiles_recus" in prof_ben)
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

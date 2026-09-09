@@ -324,7 +324,7 @@ python tests_integration.py                                    # SQLite
 DB_TYPE=postgres DATABASE_URL="postgresql://..." python tests_integration.py
 ```
 
-Elle doit afficher `414/414 tests réussis` dans les deux cas.
+Elle doit afficher `425/425 tests réussis` dans les deux cas.
 
 ---
 

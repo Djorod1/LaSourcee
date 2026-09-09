@@ -404,6 +404,28 @@ def _charger_profil(id_user, public=False):
     # ce que les deux cotes s'accordent mal sur le separateur.
     base["objectifs"] = _eclater_objectifs(base.get("objectif"))
 
+    # Statistiques reelles, comptees plutot que denormalisees. Le
+    # compteur de mentor_details n'existe que pour les referents : le
+    # servir a tout le monde affichait « 0 Reponses » sur le profil d'un
+    # administrateur, ce qui donne l'impression d'un compte vide ou
+    # casse. Chaque role a ses chiffres, et l'interface choisit ceux qui
+    # ont un sens pour lui.
+    def _compter(requete):
+        return (recuperer_un(requete, (id_user,)) or {}).get("n", 0)
+
+    base["nb_questions"] = _compter(
+        "SELECT COUNT(*) AS n FROM question WHERE id_auteur = %s")
+    base["nb_reponses_publiees"] = _compter(
+        "SELECT COUNT(*) AS n FROM reponse WHERE id_auteur = %s")
+    base["nb_utiles_recus"] = _compter(
+        """SELECT COUNT(*) AS n FROM marquage_reponse m
+             JOIN reponse r ON r.id_reponse = m.id_reponse
+            WHERE r.id_auteur = %s AND m.type_marquage = 'utile'""")
+    base["nb_suivis"] = _compter(
+        "SELECT COUNT(*) AS n FROM suivi_mentor WHERE id_suiveur = %s")
+    base["nb_abonnes"] = _compter(
+        "SELECT COUNT(*) AS n FROM suivi_mentor WHERE id_mentor = %s")
+
     # Presence. Calculee ici plutot que dans le navigateur : celui-ci ne
     # connait ni l'heure du serveur ni le seuil retenu, et deux
     # navigateurs mal regles afficheraient deux etats differents pour la

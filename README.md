@@ -134,7 +134,7 @@ DATABASE_URL="postgresql://..." ./demarrer.sh tests   # ajoute PostgreSQL
 |---|---|
 | `tests_redaction.py` | aucun tiret cadratin dans les 18 fichiers dont le texte atteint un utilisateur |
 | `tests_contraste.py` | 16 couples de couleurs au niveau WCAG AA, en clair comme en sombre |
-| `tests_integration.py` | 414 tests fonctionnels, sur SQLite puis sur PostgreSQL |
+| `tests_integration.py` | 425 tests fonctionnels, sur SQLite puis sur PostgreSQL |
 | `tests_deploiement.py` | 85 vérifications de mise en ligne |
 
 Sans `DATABASE_URL`, les deux dernières lignes sont annoncées comme non
@@ -194,7 +194,7 @@ frontend et pourrait servir une autre interface sans modification.
 │   ├── app.py                Application Flask, erreurs, fichiers statiques
 │   ├── config.py             Configuration et diagnostic de démarrage
 │   ├── gerer_admins.py       Gestion des comptes administrateurs
-│   ├── tests_integration.py  414 tests fonctionnels
+│   ├── tests_integration.py  425 tests fonctionnels
 │   ├── tests_deploiement.py  85 vérifications de mise en ligne
 │   ├── tests_redaction.py    absence de tiret dans les textes visibles
 │   ├── tests_contraste.py    lisibilité des couleurs (WCAG AA)
@@ -311,6 +311,32 @@ Un référent n'est pas un administrateur : il ne dispose d'aucun droit sur
 les comptes ni sur les contenus des autres. Le passage au rôle référent
 suppose une candidature validée par un administrateur : **le dépôt seul
 ne l'accorde pas**, et l'annuaire ne présente que des dossiers examinés.
+
+### Qui peut écrire à qui
+
+N'importe qui pouvait écrire à n'importe qui. Sur une plateforme qui
+s'adresse à des jeunes, c'est le premier vecteur d'abus : un adulte y
+aborde un mineur en privé sans que rien ne l'ait amené, et personne ne
+le voit passer.
+
+| Vers | Autorisé ? |
+|---|---|
+| un **référent vérifié** | oui, c'est l'objet même de la plateforme |
+| l'**administration** | oui, il faut pouvoir signaler un problème |
+| depuis l'**administration** | oui, pour la modération et l'assistance |
+| une personne dont on a **répondu à une question** | oui, le lien existe déjà |
+| une personne avec qui une **conversation existe** | oui |
+| **toute autre personne** | non |
+
+Deux bénéficiaires ne s'écrivent donc pas en privé. Un référent ne
+démarche pas un inconnu : il peut écrire à celles et ceux qu'il a aidés,
+pas aux autres. Un référent dont la candidature n'est pas encore validée
+ne reçoit pas de messages.
+
+Le bouton « Écrire » n'apparaît que si la règle le permet, et affiche
+sinon la raison : proposer un bouton qui répondra par un refus fait
+passer une règle pour une panne. La règle vit uniquement sur le serveur ;
+l'interface la lui demande plutôt que de la dupliquer.
 
 ### Droits d'administration
 

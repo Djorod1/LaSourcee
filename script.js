@@ -384,8 +384,20 @@ function appliquerUtilisateur(u) {
     bio: u.bio || '',
     secteurs: (u.secteurs || []).map(s => s.libelle),
     estAdmin: !!u.est_admin,
-    questionsPosees: 0,
-    mentorsSuivis: 0,
+    // Comptes reels, et non zeros figes : ces deux valeurs etaient
+    // posees a 0 puis jamais mises a jour, si bien qu'un profil de
+    // vingt questions affichait « 0 Questions posees ».
+    questionsPosees: u.nb_questions || 0,
+    mentorsSuivis: u.nb_suivis || 0,
+    nb_questions: u.nb_questions || 0,
+    nb_reponses_publiees: u.nb_reponses_publiees || 0,
+    nb_utiles_recus: u.nb_utiles_recus || 0,
+    nb_suivis: u.nb_suivis || 0,
+    nb_abonnes: u.nb_abonnes || 0,
+    note_moyenne: u.note_moyenne || 0,
+    anciennete: u.anciennete || '',
+    cree_le: u.cree_le || null,
+    en_ligne: true,
     photo: u.photo_url || null,
     verifie: !!u.est_verifie,
     doit_changer_mdp: !!u.doit_changer_mdp,
@@ -1393,20 +1405,12 @@ function rendreProfil() {
       <button class="btn btn-secondaire" onclick="naviguerApp('parametres')">${ic('crayon')} Modifier</button>
     </div>`;
   const stats = document.getElementById('stats-profil');
-  stats.style.display = '';
-  stats.innerHTML = `
-    <div class="stat-item">
-      <span class="stat-valeur">${u.questionsPosees}</span>
-      <span class="stat-label">Questions</span>
-    </div>
-    <div class="stat-item">
-      <span class="stat-valeur">${u.mentorsSuivis}</span>
-      <span class="stat-label">Référents suivis</span>
-    </div>
-    ${estMentor() ? `<div class="stat-item accent">
-      <span class="stat-valeur">12</span>
-      <span class="stat-label">Réponses publiées</span>
-    </div>` : ''}`;
+  // Les memes regles que pour le profil d'autrui : un
+  // administrateur n'a ni reponses ni note, et trois zeros
+  // font croire a un compte casse.
+  const chiffres = statistiquesProfil(u);
+  stats.style.display = chiffres ? '' : 'none';
+  stats.innerHTML = chiffres;
   document.getElementById('tabs-profil').innerHTML = `
     <div class="tab-profil actif" onclick="ongletProfil(this, 'questions')">Mes questions</div>
     <div class="tab-profil" onclick="ongletProfil(this, 'sauvees')">Questions sauvegardées</div>
@@ -4564,8 +4568,7 @@ function rendreProfilAutre(u) {
       ${blocParcoursProfil(u)}
     </div>
     <div class="col-actions">
-      <button class="btn btn-primaire"
-        onclick="ecrireA(${u.id_utilisateur}, '${echapper(nomComplet)}')">Écrire</button>
+      <span id="zone-ecrire"></span>
       ${u.role === 'mentor' ? `<button class="btn ${suivi ? 'btn-secondaire' : 'btn-primaire'}"
         onclick="basculerSuiviProfil(${u.id_utilisateur}, this)">${
         suivi ? 'Suivi' : 'Suivre'}</button>` : ''}
@@ -4574,21 +4577,14 @@ function rendreProfilAutre(u) {
 
   const stats = document.getElementById('stats-profil');
   if (stats) {
-    stats.style.display = '';
-    stats.innerHTML = `
-      <div class="stat-item">
-        <span class="stat-valeur">${u.nb_reponses ?? 0}</span>
-        <span class="stat-label">Réponses</span>
-      </div>
-      ${u.note_moyenne ? `<div class="stat-item">
-        <span class="stat-valeur">${u.note_moyenne}</span>
-        <span class="stat-label">Note moyenne</span>
-      </div>` : ''}
-      ${u.anciennete ? `<div class="stat-item">
-        <span class="stat-valeur">${echapper(u.anciennete)}</span>
-        <span class="stat-label">Expérience</span>
-      </div>` : ''}`;
+    const chiffres = statistiquesProfil(u);
+    stats.style.display = chiffres ? '' : 'none';
+    stats.innerHTML = chiffres;
   }
+  // Le bouton n'apparait que si la regle le permet : en proposer un
+  // qui repondra par un refus fait passer une regle pour une panne.
+  majBoutonEcrire(u.id_utilisateur, nomComplet);
+
   const onglets = document.getElementById('onglets-profil');
   if (onglets) onglets.style.display = 'none';
   const contenu = document.getElementById('contenu-profil');
@@ -4956,4 +4952,76 @@ function demanderAdresseCode() {
   _adresseAConfirmer = propre;
   const zone = document.getElementById('conf-adresse');
   if (zone) zone.textContent = propre;
+}
+
+
+/* Statistiques d'un profil, choisies selon le rôle.
+
+   Les mêmes chiffres étaient servis à tout le monde : « 0 Réponses » et
+   « 0 étoile » s'affichaient sur le profil d'un administrateur, qui n'en
+   a ni ne doit en avoir. Un zéro affiché n'est pas neutre, il donne
+   l'impression d'un compte vide ou cassé.
+
+   Un chiffre nul est donc tu, sauf quand son absence serait elle-même
+   une information : un référent sans aucune réponse, c'est utile à
+   savoir. */
+function statistiquesProfil(u) {
+  const bloc = (valeur, libelle, accent) =>
+    `<div class="stat-item${accent ? ' accent' : ''}">
+      <span class="stat-valeur">${echapper(String(valeur))}</span>
+      <span class="stat-label">${echapper(libelle)}</span>
+    </div>`;
+
+  const items = [];
+  const role = u.role;
+
+  if (role === 'mentor') {
+    // Le nombre de réponses se montre même à zéro : un référent qui n'a
+    // pas encore répondu, cela se voit et cela se comprend.
+    items.push(bloc(u.nb_reponses_publiees ?? 0, 'Réponses'));
+    if (u.nb_utiles_recus) items.push(bloc(u.nb_utiles_recus, 'Jugées utiles'));
+    if (Number(u.note_moyenne) > 0) {
+      items.push(bloc(u.note_moyenne + ' ★', 'Note moyenne', true));
+    }
+    if (u.anciennete) items.push(bloc(u.anciennete, 'Expérience'));
+    if (u.nb_abonnes) items.push(bloc(u.nb_abonnes, 'Abonnés'));
+  } else if (role === 'admin' || role === 'super_admin') {
+    // Un administrateur n'a ni réponses ni note : lui en afficher
+    // reviendrait à le juger sur une activité qui n'est pas la sienne.
+    items.push(bloc(nomRole(role), 'Rôle'));
+    if (u.cree_le) items.push(bloc(formatDate(u.cree_le), 'Membre depuis'));
+  } else {
+    if (u.nb_questions) items.push(bloc(u.nb_questions, 'Questions posées'));
+    if (u.nb_reponses_publiees) {
+      items.push(bloc(u.nb_reponses_publiees, 'Réponses apportées'));
+    }
+    if (u.nb_suivis) items.push(bloc(u.nb_suivis, 'Référents suivis'));
+    if (!items.length && u.cree_le) {
+      // Un compte tout neuf : plutôt que trois zéros, la date d'arrivée.
+      items.push(bloc(formatDate(u.cree_le), 'Membre depuis'));
+    }
+  }
+  return items.join('');
+}
+
+
+/* Affiche le bouton « Écrire », ou la raison pour laquelle il n'y est
+   pas. Le serveur tranche : dupliquer la règle ici la ferait diverger
+   au premier changement, et laisserait croire à une autorisation que le
+   serveur refuserait ensuite. */
+async function majBoutonEcrire(id, nom) {
+  const zone = document.getElementById('zone-ecrire');
+  if (!zone || !id) return;
+  try {
+    const r = await API.get('/messagerie/peut-ecrire/' + id);
+    if (r.autorise) {
+      zone.innerHTML = `<button class="btn btn-primaire"
+        onclick="ecrireA(${id}, '${echapper(nom)}')">Écrire</button>`;
+    } else if (r.motif) {
+      zone.innerHTML = `<p class="aide-champ" style="max-width:280px;">${
+        echapper(r.motif)}</p>`;
+    } else {
+      zone.innerHTML = '';
+    }
+  } catch (_) { zone.innerHTML = ''; }
 }
