@@ -65,9 +65,9 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/lasource_test
         run: python tests_integration.py
 
-      # La suite de déploiement exige une base vierge : elle vérifie
-      # entre autres qu'aucun compte n'existe après création du schéma.
-      - name: Préparer une base vierge pour la vérification de déploiement
+      # La suite de déploiement vide elle-même le schéma avant de
+      # contrôler : seule la base doit exister.
+      - name: Créer la base de la vérification de déploiement
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -c 'CREATE DATABASE lasource_deploi;'

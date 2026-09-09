@@ -52,6 +52,38 @@ os.environ.pop("URL_PLATEFORME", None)   # doit être déduite de VERCEL_URL
 
 sys.path.insert(0, str(RACINE / "backend"))
 
+
+def _vider_base():
+    """Repart d'une base vierge avant de contrôler.
+
+    Plusieurs vérifications supposent une base neuve : l'absence de
+    compte après création du schéma, et une inscription qui aboutit. Un
+    second passage sur la même base les faisait échouer, non parce que
+    l'application était en cause, mais parce que la trace du passage
+    précédent subsistait. Un test qui n'aboutit que sur une base
+    préparée à la main finit par être cru sur parole.
+    """
+    try:
+        import psycopg2
+    except ImportError:
+        return
+    try:
+        cx = psycopg2.connect(os.environ["DATABASE_URL"])
+    except Exception:
+        return          # base injoignable : la sonde le signalera
+    try:
+        cx.autocommit = True
+        cur = cx.cursor()
+        cur.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+        tables = [r[0] for r in cur.fetchall()]
+        if tables:
+            cur.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
+    finally:
+        cx.close()
+
+
+_vider_base()
+
 # En-têtes que Vercel ajoute systématiquement devant la fonction.
 ENTETES_PROXY = {
     "X-Forwarded-Proto": "https",
