@@ -1359,6 +1359,141 @@ def executer_tests():
     verifier("Il se retrouve parmi les traités",
              any(s.get("id_signalement") == id_sig for s in traites))
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  24. DROITS D'ADMINISTRATION ET EXPORTS")
+    print("═" * 70)
+
+    from utils.permissions import PERMISSIONS, permissions_de
+
+    r = adm.get("/api/admin/permissions")
+    verifier("Le catalogue des droits est servi", r.status_code == 200)
+    cat = r.get_json() or {}
+    verifier("Le super administrateur a tous les droits",
+             len(cat.get("les_miennes") or []) == len(PERMISSIONS))
+
+    # Un compte sans droits ne doit rien pouvoir, pas meme lire.
+    verifier("Une liste vide n'accorde rien",
+             permissions_de({"est_admin": 1, "role": "admin",
+                             "permissions": "[]"}) == [])
+    # Un compte anterieur aux droits garde tout : sinon la mise a jour
+    # verrouillerait l'equipe hors de son propre site.
+    verifier("Un compte antérieur conserve ses droits",
+             len(permissions_de({"est_admin": 1, "role": "admin",
+                                 "permissions": None})) == len(PERMISSIONS))
+    verifier("Un non-administrateur n'a aucun droit",
+             permissions_de({"est_admin": 0, "role": "etudiant"}) == [])
+
+    r = adm.post("/api/admin/administrateurs", json={
+        "prenom": "Mariano", "nom": "DOSSOUGAN",
+        "email": "mariano.modo@test.io",
+        "permissions": ["signalements"]})
+    verifier("Un administrateur restreint est créé", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+
+    id_restreint = jeton_sql("SELECT id_utilisateur FROM utilisateur "
+                             "WHERE email = ?", ("mariano.modo@test.io",))
+    verifier("Ses droits sont enregistrés",
+             "signalements" in (jeton_sql(
+                 "SELECT permissions FROM utilisateur WHERE id_utilisateur = ?",
+                 (id_restreint,)) or ""))
+
+    # Il faut pouvoir se connecter pour eprouver ses droits : on lui
+    # pose un mot de passe connu, comme le ferait une reinitialisation.
+    from utils.auth_helpers import hacher_mot_de_passe
+    with app.app_context():
+        from models.db import executer as _ex
+        _ex("UPDATE utilisateur SET mot_de_passe = %s, doit_changer_mdp = 0 "
+            "WHERE id_utilisateur = %s",
+            (hacher_mot_de_passe("Mariano2026!"), id_restreint), commit=True)
+
+    res = app.test_client()
+    r = res.post("/api/auth/connexion", json={
+        "email": "mariano.modo@test.io", "mot_de_passe": "Mariano2026!"})
+    verifier("L'administrateur restreint se connecte", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+
+    verifier("Il accède aux signalements, son droit",
+             res.get("/api/admin/signalements").status_code == 200)
+    verifier("Le journal d'audit lui est refusé (403)",
+             res.get("/api/admin/audit").status_code == 403)
+    verifier("La liste des comptes lui est refusée (403)",
+             res.get("/api/admin/utilisateurs").status_code == 403)
+    verifier("L'export lui est refusé (403)",
+             res.get("/api/admin/export/utilisateurs").status_code == 403)
+    verifier("La configuration lui est refusée (403)",
+             res.get("/api/admin/diagnostic").status_code == 403)
+    verifier("Il ne peut pas nommer d'administrateur (403)",
+             res.post("/api/admin/administrateurs",
+                      json={"prenom": "A", "nom": "B",
+                            "email": "z@test.io"}).status_code == 403)
+
+    # Le refus doit nommer le droit manquant : « acces refuse » seul
+    # fait conclure a une panne plutot qu'a un droit a demander.
+    verifier("Le refus nomme le droit manquant",
+             "audit" in (res.get("/api/admin/audit").get_json()
+                         or {}).get("erreur", ""))
+
+    # --- Exports ---
+    for jeu in ("utilisateurs", "questions", "reponses", "referents",
+                "signalements", "audit", "activite"):
+        r = adm.get(f"/api/admin/export/{jeu}")
+        verifier(f"Export « {jeu} »", r.status_code == 200,
+                 r.get_data(as_text=True)[:90])
+
+    r = adm.get("/api/admin/export/utilisateurs")
+    corps = r.get_data(as_text=True)
+    verifier("Le CSV porte un en-tête de colonnes",
+             corps.lstrip("\ufeff").startswith("id_utilisateur;"))
+    verifier("Le CSV est proposé en téléchargement",
+             "attachment" in r.headers.get("Content-Disposition", ""))
+    verifier("L'export n'est pas mis en cache",
+             "no-store" in r.headers.get("Cache-Control", ""))
+    # Un export circule et s'oublie : aucun secret n'a a y figurer.
+    verifier("Aucun mot de passe dans l'export",
+             "$2b$" not in corps and "mot_de_passe" not in corps)
+
+    r = adm.get("/api/admin/export/inexistant")
+    verifier("Un jeu inconnu renvoie 404", r.status_code == 404)
+
+    r = adm.get(f"/api/admin/export/compte/{id_restreint}")
+    verifier("Le dossier d'un compte s'exporte", r.status_code == 200)
+    dossier = r.get_json() or {}
+    verifier("Le dossier contient le profil", "profil" in dossier)
+    verifier("Le dossier ne contient aucun mot de passe",
+             "mot_de_passe" not in (dossier.get("profil") or {}))
+    verifier("Le dossier dit qui l'a exporté et quand",
+             bool(dossier.get("exporte_par") and dossier.get("exporte_le")))
+
+    # --- Garde-fous ---
+    moi = jeton_sql("SELECT id_utilisateur FROM utilisateur WHERE email = ?",
+                    ("rodriguedjossou93@gmail.com",))
+    verifier("On ne modifie pas ses propres droits",
+             adm.put(f"/api/admin/administrateurs/{moi}",
+                     json={"permissions": []}).status_code == 400)
+    verifier("On ne retire pas sa propre administration",
+             adm.delete(f"/api/admin/administrateurs/{moi}").status_code == 400)
+
+    r = adm.put(f"/api/admin/administrateurs/{id_restreint}",
+                json={"permissions": ["signalements", "referents"]})
+    verifier("Les droits d'un autre se modifient", r.status_code == 200)
+    verifier("Le droit ajouté prend effet",
+             res.get("/api/admin/mentors-a-verifier").status_code == 200)
+
+    verifier("Un droit inventé est ignoré",
+             "invente" not in (adm.put(
+                 f"/api/admin/administrateurs/{id_restreint}",
+                 json={"permissions": ["signalements", "invente"]}
+             ).get_json() or {}).get("droits", []))
+
+    r = adm.delete(f"/api/admin/administrateurs/{id_restreint}")
+    verifier("L'administration se retire", r.status_code == 200)
+    verifier("Le compte survit au retrait des droits",
+             bool(jeton_sql("SELECT id_utilisateur FROM utilisateur "
+                            "WHERE email = ?", ("mariano.modo@test.io",))))
+    verifier("Les droits retirés ferment l'accès",
+             res.get("/api/admin/signalements").status_code in (401, 403))
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

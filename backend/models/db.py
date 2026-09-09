@@ -342,6 +342,9 @@ COLONNES_ATTENDUES = [
     ("mentor_details", "depose_le", "TEXT"),
     # Trace de la modération. « traité » ne disait pas si le contenu
     # avait été retiré, l'auteur averti, ou rien du tout.
+    # Droits d'administration par domaine. NULL distingue un compte
+    # antérieur, qui garde tout, d'une liste vide, qui n'accorde rien.
+    ("utilisateur", "permissions", "TEXT"),
     ("signalement", "action", "TEXT"),
     ("signalement", "traite_par", "INTEGER"),
     ("signalement", "traite_le", "TEXT"),

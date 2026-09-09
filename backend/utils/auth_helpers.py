@@ -54,7 +54,7 @@ def utilisateur_depuis_jeton(token):
         return None
     return recuperer_un(
         """SELECT u.id_utilisateur, u.prenom, u.nom, u.email,
-                  u.role, u.est_admin
+                  u.role, u.est_admin, u.permissions
              FROM session_web s
              JOIN utilisateur u ON u.id_utilisateur = s.id_utilisateur
             WHERE s.id_token = %s

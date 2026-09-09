@@ -282,11 +282,11 @@ def _accuser_reception(profil):
     )
     texte = (
         f"Bonjour {profil['prenom']},\n\n"
-        f"Nous avons bien recu votre candidature au statut de referent verifie "
+        f"Nous avons bien reçu votre candidature au statut de référent vérifié "
         f"sur LaSourcee.\n\n"
         f"Un administrateur va l'examiner. Vous recevrez un e-mail des qu'une "
-        f"decision sera prise.\n\n"
-        f"L'equipe LaSourcee"
+        f"décision sera prise.\n\n"
+        f"L'équipe LaSourcee"
     )
     mod_email.envoyer(profil["email"],
                       "Votre candidature de référent sur LaSourcee", texte,
@@ -326,9 +326,9 @@ def notifier_decision(id_mentor, acceptee, motif=""):
         )
         texte = (
             f"Felicitations {u['prenom']},\n\n"
-            f"Votre candidature de referent a ete acceptee. Votre compte porte "
-            f"desormais le badge Referent verifie.\n\n"
-            f"Connectez-vous : {lien}\n\nL'equipe LaSourcee"
+            f"Votre candidature de référent a été acceptée. Votre compte porte "
+            f"désormais le badge Référent vérifié.\n\n"
+            f"Connectez-vous : {lien}\n\nL'équipe LaSourcee"
         )
         sujet = "Votre candidature de référent est acceptée"
     else:

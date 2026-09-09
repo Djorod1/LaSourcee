@@ -130,7 +130,13 @@ function naviguerApp(panneau) {
   if (panneau === 'profil') rendreProfil();
   if (panneau === 'mentor') rendreEspaceMentor();
   if (panneau === 'parametres') changerPanParam(document.querySelector('#menu-param button.actif'), 'compte');
-  if (panneau === 'admin') changerPanAdmin(document.querySelector('.menu-admin button.actif'), 'dashboard');
+  if (panneau === 'admin') {
+    // Le menu est ajusté avant l'affichage : montrer un onglet puis le
+    // faire disparaître serait plus déroutant que de ne jamais le
+    // montrer.
+    ajusterMenuAdmin();
+    changerPanAdmin(document.querySelector('.menu-admin button.actif'), 'dashboard');
+  }
 }
 
 function majNavActif() {
@@ -1064,7 +1070,7 @@ function majSimilaires() {
 
   if (!scored.length) { bloc.style.display = 'none'; return; }
   liste.innerHTML = scored.map(({q}) =>
-    `<li>• <a href="#" onclick="event.preventDefault(); fermerModal('modalPublier'); ouvrirQuestion(${q.id});">${q.titre}</a>
+    `<li>• <a href="#" onclick="event.preventDefault(); fermerModal('modalPublier'); ouvrirQuestion(${q.id});">${echapper(q.titre)}</a>
        <span style="color:var(--texte-doux); font-size:12px;"> · ${q.repCount} réponse(s)</span></li>`
   ).join('');
   bloc.style.display = 'block';
@@ -2261,6 +2267,8 @@ async function changerPanAdmin(elem, p) {
     else if (p === 'categories')   c.innerHTML = await adminCategories();
     else if (p === 'audit')        c.innerHTML = await adminAudit();
     else if (p === 'diagnostic')   c.innerHTML = await adminDiagnostic();
+    else if (p === 'administrateurs') c.innerHTML = await adminAdministrateurs();
+    else if (p === 'export')       c.innerHTML = await adminExport();
   } catch (err) {
     c.innerHTML = `<div class="carte"><p style="color:var(--rouge);">
       Erreur de chargement : ${echapper(err.message || 'inconnue')}.</p></div>`;
@@ -2692,7 +2700,18 @@ function toast(message, type = 'succes') {
   const zone = document.getElementById('zoneToasts');
   const t = document.createElement('div');
   t.className = 'toast' + (type === 'erreur' ? ' erreur' : '');
-  t.innerHTML = `<span class="toast-ic">${type === 'erreur' ? ic('alerte','ic ic-s') : ic('check','ic ic-s')}</span><span>${message}</span>`;
+  // L'icone est du balisage choisi ici, le message ne l'est pas : il
+  // contient souvent un nom, un titre de question ou une erreur venue
+  // du serveur. Insere en innerHTML, il executait le balisage qu'on y
+  // avait glisse. Il passe donc par textContent, qui affiche le texte
+  // sans jamais l'interpreter.
+  const icone = document.createElement('span');
+  icone.className = 'toast-ic';
+  icone.innerHTML = type === 'erreur' ? ic('alerte', 'ic ic-s')
+                                      : ic('check', 'ic ic-s');
+  const texte = document.createElement('span');
+  texte.textContent = message == null ? '' : String(message);
+  t.append(icone, texte);
   zone.appendChild(t);
   setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; }, 3000);
   setTimeout(() => t.remove(), 3400);
@@ -3683,4 +3702,255 @@ function detailsProfil(u) {
     ${lignes.map(([cle, val]) =>
       `<div class="profil-detail"><span>${cle}</span><strong>${val}</strong></div>`).join('')}
   </div>`;
+}
+
+/* ============================================================
+   ADMINISTRATEURS, DROITS ET EXPORTS
+   ============================================================ */
+
+/* Le menu n'affiche que les écrans réellement accessibles. Proposer un
+   onglet qui répondra « accès refusé » fait passer un refus de droits
+   pour une panne, et pousse à demander de l'aide au lieu de demander
+   le droit qui manque. */
+async function ajusterMenuAdmin() {
+  const menu = document.querySelector('.menu-admin');
+  if (!menu) return;
+  let droits = [], superAdmin = false;
+  try {
+    const r = await API.get('/admin/permissions');
+    droits = r.les_miennes || [];
+    superAdmin = !!r.super_admin;
+    etat.droitsAdmin = droits;
+    etat.superAdmin = superAdmin;
+  } catch (_) { return; }
+
+  menu.querySelectorAll('button[data-adm]').forEach(b => {
+    const p = b.dataset.adm;
+    // Le tableau de bord reste ouvert : il ne montre que des totaux.
+    const requis = { users: 'utilisateurs', mentors: 'referents',
+                     signalements: 'signalements', categories: 'categories',
+                     audit: 'audit', diagnostic: 'diagnostic',
+                     administrateurs: 'administrateurs', export: 'export' }[p];
+    b.hidden = !!requis && !droits.includes(requis);
+  });
+}
+
+async function adminAdministrateurs() {
+  const [liste, cat] = await Promise.all([
+    API.get('/admin/administrateurs'),
+    API.get('/admin/permissions'),
+  ]);
+  const catalogue = cat.catalogue || {};
+  const suis_super = !!cat.super_admin;
+
+  const cases = (prefixe, coches) => Object.entries(catalogue).map(([cle, txt]) =>
+    `<label class="case-droit">
+       <input type="checkbox" id="${prefixe}-${cle}" value="${cle}"
+              ${coches.includes(cle) ? 'checked' : ''} />
+       <span><strong>${echapper(cle)}</strong><em>${echapper(txt)}</em></span>
+     </label>`).join('');
+
+  const formulaire = suis_super ? `
+    <div class="carte" style="margin-bottom:18px;">
+      <h3 class="titre-param">Nommer un administrateur</h3>
+      <p class="desc">Si l'adresse correspond à un membre existant, son
+         compte est promu et son mot de passe reste le sien. Sinon un
+         compte est créé, et ses accès lui sont envoyés par e-mail.</p>
+      <div class="champs-cote">
+        <div class="champ"><label>Prénom</label><input id="na-prenom" placeholder="Chabi" /></div>
+        <div class="champ"><label>Nom</label><input id="na-nom" placeholder="Gbaguidi" /></div>
+      </div>
+      <div class="champ"><label>Adresse e-mail</label>
+        <input id="na-email" type="email" placeholder="prenom@lasourcee.org" /></div>
+      <div class="champ"><label>Droits accordés</label>
+        <div class="grille-droits">${cases('na', cat.par_defaut || [])}</div>
+      </div>
+      <label class="case-droit" style="margin-top:8px;">
+        <input type="checkbox" id="na-super" />
+        <span><strong>super administrateur</strong><em>Tous les droits, y
+          compris nommer d'autres administrateurs. À n'accorder qu'à
+          quelqu'un dont vous répondez.</em></span>
+      </label>
+      <button class="btn btn-primaire" style="margin-top:12px;"
+              onclick="creerAdministrateur(this)">Créer le compte</button>
+      <p class="note-param" id="na-retour"></p>
+    </div>` : `
+    <div class="carte" style="margin-bottom:18px;">
+      <p class="desc">Seul un super administrateur peut nommer des
+         administrateurs ou modifier leurs droits. Vous pouvez consulter
+         la liste ci-dessous.</p>
+    </div>`;
+
+  return `<h2 style="margin-bottom:6px;">Administrateurs</h2>
+    <p class="desc" style="margin-bottom:16px;">Les droits se donnent un
+       par un. Confier la modération ne revient pas à confier le journal
+       d'audit, les adresses de tous les membres ou la configuration du
+       serveur.</p>
+    ${formulaire}
+    ${liste.map(a => {
+      const est_super = a.role === 'super_admin';
+      const droits = a.droits || [];
+      return `<div class="carte carte-admin">
+        <div class="signalement-entete">
+          <div>
+            <strong>${echapper(a.prenom + ' ' + a.nom)}</strong>
+            <span class="tag ${est_super ? 'tag-terre' : 'tag-ardoise'}">
+              ${est_super ? 'super administrateur' : 'administrateur'}</span>
+            ${a.est_actif ? '' : '<span class="tag tag-suspendu">suspendu</span>'}
+          </div>
+          <span class="desc">${echapper(a.email)}</span>
+        </div>
+        <div class="grille-droits">
+          ${Object.entries(catalogue).map(([cle, txt]) => `
+            <label class="case-droit ${est_super ? 'fige' : ''}">
+              <input type="checkbox" id="dr-${a.id_utilisateur}-${cle}"
+                     value="${cle}" ${droits.includes(cle) ? 'checked' : ''}
+                     ${(!suis_super || est_super) ? 'disabled' : ''} />
+              <span><strong>${echapper(cle)}</strong><em>${echapper(txt)}</em></span>
+            </label>`).join('')}
+        </div>
+        ${suis_super && !est_super ? `<div style="display:flex; gap:8px; margin-top:12px;">
+          <button class="btn btn-secondaire btn-petit"
+                  onclick="enregistrerDroits(${a.id_utilisateur}, this)">Enregistrer les droits</button>
+          <button class="btn btn-danger btn-petit"
+                  onclick="retirerAdministrateur(${a.id_utilisateur})">Retirer l'administration</button>
+        </div>` : ''}
+      </div>`;
+    }).join('')}`;
+}
+
+function _droitsCoches(prefixe) {
+  return [...document.querySelectorAll(`[id^="${prefixe}-"]`)]
+    .filter(e => e.type === 'checkbox' && e.checked && e.value)
+    .map(e => e.value);
+}
+
+async function creerAdministrateur(bouton) {
+  const retour = document.getElementById('na-retour');
+  const corps = {
+    prenom: (document.getElementById('na-prenom')?.value || '').trim(),
+    nom: (document.getElementById('na-nom')?.value || '').trim(),
+    email: (document.getElementById('na-email')?.value || '').trim(),
+    permissions: _droitsCoches('na').filter(d => d !== 'super'),
+    super_admin: !!document.getElementById('na-super')?.checked,
+  };
+  bouton.disabled = true;
+  try {
+    const r = await API.post('/admin/administrateurs', corps);
+    if (r.mot_de_passe) {
+      // L'e-mail n'est pas parti : sans cela l'accès serait créé sans
+      // que personne puisse s'en servir. Affiché une seule fois.
+      retour.style.color = 'var(--rouge-fonce)';
+      retour.textContent = "L'e-mail n'a pas pu être envoyé. Transmettez ce "
+        + `mot de passe provisoire vous-même : ${r.mot_de_passe}`;
+    } else {
+      retour.style.color = 'var(--texte-doux)';
+      retour.textContent = r.cree
+        ? 'Compte créé, ses accès viennent de lui être envoyés.'
+        : 'Compte existant promu administrateur.';
+    }
+    toast('Administrateur enregistré.');
+    setTimeout(() => changerPanAdmin(
+      document.querySelector('[data-adm=administrateurs]'), 'administrateurs'), 1800);
+  } catch (err) {
+    retour.style.color = 'var(--rouge-fonce)';
+    retour.textContent = err.message || 'Création impossible.';
+  } finally { bouton.disabled = false; }
+}
+
+async function enregistrerDroits(id, bouton) {
+  bouton.disabled = true;
+  try {
+    await API.put(`/admin/administrateurs/${id}`,
+                  { permissions: _droitsCoches('dr-' + id) });
+    toast('Droits mis à jour.');
+  } catch (err) { toast(err.message, 'erreur'); }
+  finally { bouton.disabled = false; }
+}
+
+async function retirerAdministrateur(id) {
+  if (!confirm("Retirer les droits d'administration de ce compte ?\n\n"
+      + "Le compte et ses contenus sont conservés : seuls les droits "
+      + "sont retirés.")) return;
+  try {
+    await API.delete(`/admin/administrateurs/${id}`);
+    toast('Droits retirés.');
+    changerPanAdmin(document.querySelector('[data-adm=administrateurs]'),
+                    'administrateurs');
+  } catch (err) { toast(err.message, 'erreur'); }
+}
+
+async function adminExport() {
+  const jeux = await API.get('/admin/export');
+  return `<h2 style="margin-bottom:6px;">Export des données</h2>
+    <p class="desc" style="margin-bottom:16px;">Pour analyser l'activité,
+       préparer un rapport ou garder une copie hors ligne. Le CSV s'ouvre
+       dans un tableur, le JSON se traite par programme. Aucun mot de
+       passe ni jeton de session n'y figure.</p>
+    <div class="carte" style="margin-bottom:18px;">
+      <table class="table-export">
+        <thead><tr><th>Jeu de données</th><th>Lignes</th><th>Télécharger</th></tr></thead>
+        <tbody>
+          ${jeux.map(j => `<tr>
+            <td><strong>${echapper(j.libelle)}</strong></td>
+            <td class="desc">${j.lignes === null ? '' : j.lignes}</td>
+            <td style="display:flex; gap:6px;">
+              <button class="btn btn-secondaire btn-petit"
+                      onclick="telechargerExport('${j.cle}','csv')">CSV</button>
+              <button class="btn btn-fantome btn-petit"
+                      onclick="telechargerExport('${j.cle}','json')">JSON</button>
+            </td></tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="carte">
+      <h3 class="titre-param">Dossier d'une personne</h3>
+      <p class="desc">Tout ce que la plateforme conserve sur un compte :
+         profil, questions, réponses, signalements émis. Utile pour
+         répondre à une demande d'accès ou instruire un signalement.</p>
+      <div style="display:flex; gap:8px; align-items:flex-end;">
+        <div class="champ" style="flex:1; margin:0;">
+          <label>Identifiant du compte</label>
+          <input id="exp-id" type="number" min="1" placeholder="Ex : 12" />
+        </div>
+        <button class="btn btn-secondaire" onclick="telechargerDossier()">Télécharger</button>
+      </div>
+      <p class="aide-champ">L'identifiant figure dans l'écran Utilisateurs.</p>
+    </div>`;
+}
+
+/* Le téléchargement passe par une requête authentifiée puis un objet
+   Blob : un simple lien n'emporterait pas le cookie de session sur
+   toutes les configurations, et renverrait un fichier d'erreur. */
+async function _telecharger(url, nomDefaut) {
+  try {
+    const r = await fetch(API_BASE + url, { credentials: 'same-origin' });
+    if (!r.ok) {
+      const t = await r.json().catch(() => ({}));
+      throw new Error(t.erreur || `Échec (${r.status}).`);
+    }
+    const nom = (r.headers.get('Content-Disposition') || '')
+      .match(/filename="([^"]+)"/)?.[1] || nomDefaut;
+    const blob = await r.blob();
+    const lien = document.createElement('a');
+    lien.href = URL.createObjectURL(blob);
+    lien.download = nom;
+    document.body.appendChild(lien);
+    lien.click();
+    lien.remove();
+    setTimeout(() => URL.revokeObjectURL(lien.href), 2000);
+    toast(`${nom} téléchargé.`);
+  } catch (err) { toast(err.message || 'Téléchargement impossible.', 'erreur'); }
+}
+
+function telechargerExport(jeu, format) {
+  _telecharger(`/admin/export/${jeu}?format=${format}`,
+               `lasourcee-${jeu}.${format}`);
+}
+
+function telechargerDossier() {
+  const id = (document.getElementById('exp-id')?.value || '').trim();
+  if (!id) return toast('Indiquez un identifiant de compte.', 'erreur');
+  _telecharger(`/admin/export/compte/${encodeURIComponent(id)}`,
+               `lasourcee-compte-${id}.json`);
 }

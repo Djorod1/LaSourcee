@@ -53,6 +53,8 @@ CREATE TABLE utilisateur (
     -- Mot de passe temporaire : impose le changement à la 1re connexion
     doit_changer_mdp BOOLEAN      NOT NULL DEFAULT FALSE,
     preferences_notif TEXT        NULL,
+    -- Droits d'administration, en JSON. NULL = compte antérieur.
+    permissions      TEXT         NULL,
     situation        VARCHAR(40)  NULL,
     objectif         VARCHAR(60)  NULL,
     langues          VARCHAR(120) NULL,

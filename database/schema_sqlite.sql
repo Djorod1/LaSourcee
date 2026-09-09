@@ -42,6 +42,10 @@ CREATE TABLE utilisateur (
     doit_changer_mdp INTEGER NOT NULL DEFAULT 0,
     -- Préférences de notification, en JSON. NULL = valeurs par défaut.
     preferences_notif TEXT,
+    -- Droits d'administration, en JSON. NULL = compte anterieur aux
+    -- droits par domaine, qui les conserve tous. Une liste vide est
+    -- un choix explicite : aucun droit.
+    permissions     TEXT,
     -- Situation actuelle : elle situe la question bien mieux que
     -- l'intitule d'un diplome.
     situation       TEXT,
