@@ -2114,15 +2114,11 @@ img, svg, video { max-width: 100%; height: auto; }
     justify-content: space-between;
     gap: 10px;
   }
-  .hero-nav .actions {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-  }
-  /* Le bouton de thème reste en haut, les deux actions descendent. */
-  .hero-nav .actions .btn {
-    display: none;
-  }
+  /* .actions n'est pas une rangée ici : c'est le panneau que le burger
+     ouvre, défini plus haut. Le forcer en display:flex le laissait
+     ouvert en permanence, gardant son fond blanc et son ombre, avec le
+     seul bouton de thème au milieu : la barre blanche flottante. Sa
+     visibilité appartient donc au burger seul. */
   .hero-actions-mobile {
     display: flex;
     flex-direction: column;
@@ -2247,34 +2243,43 @@ img, svg, video { max-width: 100%; height: auto; }
    menu, où il devient une ligne nommée. Une icône lune sans libellé,
    coincée entre deux autres, ne se comprend de toute façon pas.
    ------------------------------------------------------------------ */
-@media (max-width: 640px) {
-  .hero-nav .actions {
-    gap: 0;
-    margin-left: auto;
-  }
-  .bouton-theme {
-    width: 40px; height: 40px;
-    margin: 0;
-  }
-  /* Dans la barre de l'application, il cède la place au menu. */
-  .navbar .theme-barre { display: none; }
+/* Le seuil est celui des deux burgers, 720px, et non 640. Avec 640, la
+   bande entre les deux laissait un menu ouvert par le burger tout en y
+   masquant la ligne de thème : le réglage devenait alors introuvable. */
+@media (max-width: 720px) {
+  .theme-barre { display: none; }
+  .bouton-theme { width: 40px; height: 40px; margin: 0; }
 }
 
-/* Sur écran large, le bouton reste dans la barre et la ligne du menu
-   n'a pas lieu d'être : le menu ne s'y ouvre pas. */
-@media (min-width: 641px) {
-  .menu-burger-app .ligne-theme { display: none; }
-}
+/* Ligne « Thème » des menus : libellé à gauche, état courant à droite,
+   comme un réglage de système. On voit ce qu'on a avant de toucher, ce
+   qu'une icône lune seule ne dit jamais.
 
-/* Ligne « Thème » du menu : libellé à gauche, état courant à droite,
-   comme un réglage de système. On voit ce qu'on va obtenir avant de
-   toucher, ce qu'une icône seule ne dit jamais. */
-.menu-burger-app .ligne-theme {
+   Elle sert dans les deux menus, celui de l'accueil et celui de
+   l'application, dont les styles de bouton diffèrent : la mise en forme
+   propre à la ligne est donc portée ici, sans dépendre du parent.
+
+   Cette définition précède la requête de média qui la masque sur grand
+   écran. Placée après, son « display: flex » l'emportait à spécificité
+   égale et la ligne réapparaissait sur ordinateur, en double du bouton
+   de la barre. */
+.ligne-theme {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 10px 12px;
+  border-radius: var(--rayon-s);
+  font: inherit;
+  font-size: 14px;
+  color: var(--noir);
+  text-align: left;
+  cursor: pointer;
 }
+.ligne-theme:hover { background: var(--fond); }
 .ligne-theme-etat {
   font-size: 12px;
   color: var(--texte-doux);
@@ -2282,6 +2287,12 @@ img, svg, video { max-width: 100%; height: auto; }
   border-radius: 999px;
   padding: 2px 10px;
   white-space: nowrap;
+}
+
+/* Au-delà du seuil des burgers, les menus ne s'ouvrent pas : la ligne
+   n'aurait nulle part où s'afficher, et l'icône de la barre suffit. */
+@media (min-width: 721px) {
+  .ligne-theme { display: none; }
 }
 
 /* ------------------------------------------------------------------
@@ -2341,26 +2352,26 @@ img, svg, video { max-width: 100%; height: auto; }
    sans hauteur de référence. Une hauteur de ligne nulle et un
    alignement centré le calent sur les éléments voisins, quelle que
    soit leur taille.
+
+   Cette règle ne pose surtout pas « display », et c'est le point le
+   plus important du bloc : elle vient après la règle du menu déroulant,
+   à spécificité égale, sans être dans une requête de média. Un
+   « display: flex » ici rouvrait donc le panneau sur téléphone, quoi
+   qu'en dise la règle d'origine. C'est ce qui produisait la barre
+   blanche flottante sous l'en-tête.
    ------------------------------------------------------------------ */
 .hero-nav .actions,
 .navbar .actions-nav {
-  display: flex;
   align-items: center;
   gap: 10px;
 }
+.navbar .actions-nav { display: flex; }
 .bouton-theme {
   line-height: 0;
   padding: 0;
   align-self: center;
 }
 .bouton-theme svg { display: block; }
-
-@media (max-width: 640px) {
-  /* Sur téléphone, il prend la place laissée par les deux boutons
-     descendus sous l'introduction, sans gouttière résiduelle. */
-  .hero-nav .actions { gap: 0; }
-  .bouton-theme { width: 40px; height: 40px; }
-}
 
 /* Compteur de notifications non lues. Posé sur l'icône plutôt qu'à
    côté : la barre est étroite sur téléphone, et un badge décalé

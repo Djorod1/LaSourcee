@@ -2626,10 +2626,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     // le message habituel qu'une alerte alarmante à tort.
     window.ENVOI_EMAIL_ACTIF = cfg.envoi_email_actif !== false;
     majRappelConfirmation();
-    // Le thème est posé par le script du <head>, avant que cette ligne
-    // du menu existe : sans cette synchronisation elle annoncerait
-    // « Sombre » sur un site resté clair, jusqu'au premier basculement.
-    appliquerTheme(themeActuel());
     // Masquer les boutons sociaux si non configurés (UX honnête)
     document.querySelectorAll('.btn-social').forEach(btn => {
       const t = btn.textContent;
@@ -2640,6 +2636,13 @@ window.addEventListener('DOMContentLoaded', async () => {
       document.querySelectorAll('.sep-ou').forEach(s => s.style.display = 'none');
     }
   } catch (_) { /* tolérance */ }
+
+  // Hors du bloc précédent, et sans condition : le thème est posé par le
+  // script du <head>, avant que les lignes de menu existent. Placée dans
+  // un try qui dépend du réseau, cette synchronisation aurait été sautée
+  // dès que la configuration ne répond pas, et les menus auraient
+  // annoncé « Clair » sur un site affiché en sombre.
+  appliquerTheme(themeActuel());
 
   // Une session valide ramène dans l'application, jamais sur la page de
   // bienvenue. Auparavant il fallait que l'adresse porte exactement
@@ -2979,11 +2982,14 @@ function appliquerTheme(theme) {
   // La barre d'adresse des navigateurs mobiles suit cette couleur.
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', theme === 'dark' ? '#0B1220' : '#1E3A8A');
-  // La ligne du menu annonce le thème en cours, pas celui qu'on
+  // Les lignes de menu annoncent le thème en cours, pas celui qu'on
   // obtiendrait : un libellé qui décrit l'état se lit sans hésiter,
   // alors qu'un libellé d'action laisse toujours douter du sens.
-  const etat = document.getElementById('etat-theme');
-  if (etat) etat.textContent = (theme === 'dark') ? 'Sombre' : 'Clair';
+  // Il y en a une par menu, celui de l'accueil et celui de
+  // l'application : les deux se mettent à jour ensemble.
+  document.querySelectorAll('.ligne-theme-etat').forEach(el => {
+    el.textContent = (theme === 'dark') ? 'Sombre' : 'Clair';
+  });
 }
 
 function basculerTheme() {

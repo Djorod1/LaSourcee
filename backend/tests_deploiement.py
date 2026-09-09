@@ -341,12 +341,31 @@ def executer():
              "Sophie M." not in page and "Karim B." not in page)
 
     for libelle, marque in [
-        ("Bouton de thème présent", 'class="bouton-theme"'),
+        ("Bouton de thème présent", "bouton-theme"),
         ("Thème appliqué avant le rendu", "lasourcee-theme"),
         ("Pied de page présent", 'class="pied-page"'),
         ("Signature du développeur", "Coding_DJOROD"),
     ]:
         verifier(libelle, marque in page)
+
+    # Le reglage du theme existe sous deux formes, une par largeur
+    # d'ecran : l'icone dans la barre au-dessus de 720px, la ligne
+    # nommee dans le menu en dessous. Il en faut exactement deux de
+    # chaque, une pour l'accueil et une pour l'application ; en manquer
+    # une rendrait le reglage introuvable sur l'un des deux ecrans.
+    verifier("Deux icônes de thème, une par barre",
+             page.count("theme-barre") == 2, page.count("theme-barre"))
+    verifier("Deux lignes de thème, une par menu",
+             page.count('class="ligne-theme"') == 2,
+             page.count('class="ligne-theme"'))
+    verifier("Chaque ligne affiche l'état du thème",
+             page.count("ligne-theme-etat") == 2)
+    # Le bouton etait imbrique dans le bloc cliquable du profil :
+    # changer de theme ouvrait aussi le menu.
+    apres_profil = page.split('class="nav-profil"')
+    verifier("Le bouton de thème n'est plus dans le bloc du profil",
+             len(apres_profil) < 2
+             or "bouton-theme" not in apres_profil[1].split("</div>")[0])
 
     # -----------------------------------------------------------------
     titre("9. CONFIGURATION DE DÉPLOIEMENT")
