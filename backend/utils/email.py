@@ -33,19 +33,57 @@ logger = logging.getLogger("lasource.email")
 
 # Timeout réseau : évite qu'une requête HTTP reste bloquée si le serveur
 # SMTP ne répond pas.
-TIMEOUT_SMTP = 15
+# Volontairement sous la limite de l'hébergeur. Une fonction Vercel est
+# interrompue au bout de dix secondes par défaut : avec une attente de
+# quinze, un serveur SMTP lent faisait tuer la requête d'inscription
+# avant que le code ait pu constater l'échec et le dire. Le compte
+# existait, la personne voyait une erreur brute, et aucun message
+# n'expliquait pourquoi.
+TIMEOUT_SMTP = int(os.getenv("SMTP_TIMEOUT", "8") or 8)
+
+
+def _port(valeur):
+    """Port SMTP, en tolérant les espaces et les valeurs aberrantes."""
+    try:
+        n = int(str(valeur).strip())
+        return n if 1 <= n <= 65535 else 587
+    except (TypeError, ValueError):
+        return 587
+
+
+def _securite(valeur, port):
+    """Mode de chiffrement, le port tranchant ce que le mot laisse ouvert.
+
+    Le port 465 attend du chiffrement dès la poignée de main, le 587 une
+    connexion en clair passée en TLS par STARTTLS. S'y tromper ne
+    produit pas une erreur nette : la connexion reste suspendue jusqu'au
+    délai d'attente.
+
+    « tls » ne départage rien, les deux camps l'emploient. Sur 465 il ne
+    peut désigner que le chiffrement immédiat. Seuls « ssl » et
+    « starttls », sans équivoque, sont pris au mot.
+    """
+    v = (valeur or "").strip().lower()
+    if v in ("ssl", "smtps", "tls_implicite"):
+        return "ssl"
+    if v == "starttls":
+        return "starttls"
+    # « tls », vide, ou valeur inconnue : le port décide.
+    return "ssl" if port == 465 else "starttls"
 
 
 def _config():
     """Lit la configuration SMTP depuis l'environnement."""
+    port = _port(os.getenv("SMTP_PORT", "587"))
     return {
-        "mode": (os.getenv("EMAIL_MODE", "console") or "console").lower(),
-        "hote": os.getenv("SMTP_HOTE", ""),
-        "port": int(os.getenv("SMTP_PORT", "587") or 587),
-        "utilisateur": os.getenv("SMTP_UTILISATEUR", ""),
+        "mode": (os.getenv("EMAIL_MODE", "console") or "console").strip().lower(),
+        "hote": os.getenv("SMTP_HOTE", "").strip(),
+        "port": port,
+        "utilisateur": os.getenv("SMTP_UTILISATEUR", "").strip(),
         "motdepasse": os.getenv("SMTP_MOTDEPASSE", ""),
-        "expediteur": os.getenv("SMTP_EXPEDITEUR", "") or os.getenv("SMTP_UTILISATEUR", ""),
-        "securite": (os.getenv("SMTP_SECURITE", "starttls") or "starttls").lower(),
+        "expediteur": (os.getenv("SMTP_EXPEDITEUR", "").strip()
+                       or os.getenv("SMTP_UTILISATEUR", "").strip()),
+        "securite": _securite(os.getenv("SMTP_SECURITE"), port),
     }
 
 

@@ -425,6 +425,38 @@ def consulter_audit():
 # DIAGNOSTIC DE CONFIGURATION
 # ============================================================
 
+def _etat_email(smtp_ok, smtp_motif):
+    """Configuration d'envoi telle que le code la lit, sans le secret.
+
+    Rapporter les variables brutes cachait les écarts introduits en
+    chemin : « SMTP » avec une espace finale devient « smtp », un port
+    465 impose le chiffrement immédiat quelle que soit la valeur saisie.
+    Montrer le résultat de cette normalisation évite de chercher une
+    faute là où il n'y en a pas, et de la manquer là où elle est.
+    """
+    from flask import current_app
+    from utils.email import _config, envoi_operationnel, TIMEOUT_SMTP
+
+    c = _config()
+    return {
+        "mode": c["mode"],
+        "operationnel": smtp_ok,
+        "motif": smtp_motif,
+        # Vrai seulement si un message peut réellement atteindre une
+        # boîte : en production, le mode console n'y suffit pas.
+        "envoi_effectif": envoi_operationnel(),
+        "hote": c["hote"],
+        "port": c["port"],
+        "securite": c["securite"],
+        "utilisateur": c["utilisateur"],
+        "expediteur": c["expediteur"],
+        "delai_secondes": TIMEOUT_SMTP,
+        "motdepasse_fourni": bool(c["motdepasse"]),
+        "confirmation_obligatoire": bool(
+            current_app.config.get("VERIFICATION_EMAIL_OBLIGATOIRE")),
+    }
+
+
 @bp_admin.get("/diagnostic")
 @admin_requis
 def diagnostic():
@@ -478,15 +510,13 @@ def diagnostic():
                 "SELECT COUNT(*) AS n FROM utilisateur "
                 "WHERE est_admin = 1") or {}).get("n", 0),
         },
-        "email": {
-            "mode": (os.getenv("EMAIL_MODE", "console") or "console").lower(),
-            "operationnel": smtp_ok,
-            "motif": smtp_motif,
-            "expediteur": os.getenv("SMTP_EXPEDITEUR", ""),
-            "hote": os.getenv("SMTP_HOTE", ""),
-            "confirmation_obligatoire": bool(
-                current_app.config.get("VERIFICATION_EMAIL_OBLIGATOIRE")),
-        },
+        # La configuration telle que le code d'envoi la lit vraiment, et
+        # non telle qu'elle a été saisie. Le port et le mode de sécurité
+        # sont normalisés en chemin, et c'est précisément là que se
+        # cachent les écarts : une espace en fin de valeur, un « tls »
+        # ambigu, un port qui ne s'accorde pas avec le chiffrement. Le
+        # mot de passe n'y figure pas.
+        "email": _etat_email(smtp_ok, smtp_motif),
         "google": google,
         "linkedin": linkedin,
         "cle_signature_fournie": bool(

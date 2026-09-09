@@ -1138,6 +1138,47 @@ def executer_tests():
     verifier("L'état d'origine est rétabli après le test",
              mod_config.Config.EST_PRODUCTION == prod_avant)
 
+    # --- Tolerance de la configuration saisie a la main ----------------
+    from utils.email import _config, _port, _securite, TIMEOUT_SMTP
+
+    verifier("Le délai SMTP reste sous la coupure de l'hébergeur",
+             TIMEOUT_SMTP <= 9,
+             "une fonction Vercel est interrompue à 10 s : au-delà, "
+             "l'échec ne peut plus être signalé")
+
+    verifier("Un port entouré d'espaces est accepté", _port(" 465 ") == 465)
+    verifier("Un port absurde retombe sur 587", _port("abc") == 587)
+    verifier("Un port vide retombe sur 587", _port("") == 587)
+    verifier("Un port hors bornes retombe sur 587", _port("99999") == 587)
+
+    # « tls » ne departage rien : les deux camps l'emploient. Sur 465 il
+    # ne peut designer que le chiffrement immediat, et s'y tromper ne
+    # donne pas une erreur nette mais une connexion suspendue.
+    verifier("« tls » sur le port 465 vaut ssl",
+             _securite("tls", 465) == "ssl",
+             "sinon la connexion reste suspendue jusqu'au délai")
+    verifier("« tls » sur le port 587 vaut starttls",
+             _securite("tls", 587) == "starttls")
+    verifier("Le port 465 impose ssl quand rien n'est précisé",
+             _securite(None, 465) == "ssl")
+    verifier("Le port 465 corrige une valeur inconnue",
+             _securite("n_importe_quoi", 465) == "ssl")
+    verifier("Le port 587 reste en starttls",
+             _securite(None, 587) == "starttls")
+    verifier("Un choix explicite « ssl » est respecté",
+             _securite("ssl", 587) == "ssl")
+    verifier("Un choix explicite « starttls » est respecté",
+             _securite("starttls", 465) == "starttls")
+
+    # Une espace en fin de valeur, tres facile a laisser dans une
+    # interface web, laissait le mode a « console » sans rien dire.
+    os.environ["EMAIL_MODE"] = " SMTP "
+    try:
+        verifier("Une espace parasite autour du mode est ignorée",
+                 _config()["mode"] == "smtp")
+    finally:
+        os.environ["EMAIL_MODE"] = "console"
+
     # Un echec doit se corriger sans aller lire les journaux : sur un
     # hebergement sans etat, personne ne les consulte.
     from utils.email import envoyer_detaille

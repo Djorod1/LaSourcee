@@ -2794,7 +2794,24 @@ async function adminDiagnostic() {
                    d.email.motif,
                    'Sans SMTP, ni confirmation d\'inscription ni '
                    + 'réinitialisation de mot de passe ne partent.')}
+      ${_ligneDiag('Un message peut réellement partir', d.email.envoi_effectif,
+                   d.email.envoi_effectif ? '' :
+                     'Aucune confirmation n\'atteint sa destinataire : '
+                     + 'les liens ne sont écrits que dans les journaux.')}
       ${d.email.expediteur ? _ligneDiag('Expéditeur', true, d.email.expediteur) : ''}
+      <div class="desc" style="margin-top:10px; line-height:1.7;">
+        <strong>Ce que le serveur a lu</strong> (après nettoyage des valeurs) :<br />
+        EMAIL_MODE : <code>${echapper(d.email.mode || '(vide)')}</code><br />
+        Hôte : <code>${echapper(d.email.hote || '(vide)')}</code>
+        &nbsp;Port : <code>${echapper(String(d.email.port ?? ''))}</code>
+        &nbsp;Sécurité : <code>${echapper(d.email.securite || '')}</code><br />
+        Utilisateur : <code>${echapper(d.email.utilisateur || '(vide)')}</code><br />
+        Mot de passe : <code>${d.email.motdepasse_fourni ? 'fourni' : 'absent'}</code>
+        &nbsp;Délai : <code>${echapper(String(d.email.delai_secondes ?? ''))} s</code>
+      </div>
+      <p class="aide-champ">Le port 465 va avec « ssl », le port 587 avec
+        « starttls ». Ces valeurs sont celles réellement utilisées, pas
+        celles saisies : un écart signale une variable mal orthographiée.</p>
       ${_ligneDiag('Confirmation d\'adresse exigée',
                    d.email.confirmation_obligatoire,
                    d.email.confirmation_obligatoire
