@@ -47,6 +47,33 @@ LIMITE_OBJECTIFS = 4          # au-dela, le profil ne dit plus rien
 LONGUEUR_OBJECTIFS = 255
 
 
+def normaliser_telephone(valeur):
+    """Numéro nettoyé, ou None si la valeur ne peut pas en être un.
+
+    Le champ existait en base depuis l'origine sans jamais être rempli.
+    Il compte : au Bénin comme ailleurs, on se joint par téléphone bien
+    plus souvent que par e-mail, et un référent injoignable autrement
+    que par la plateforme l'est à peu près complètement.
+
+    On ne valide pas le pays, seulement la forme : espaces, points et
+    tirets sont retirés, le « + » initial conservé. Imposer un indicatif
+    exclurait des numéros parfaitement valides ailleurs, pour une
+    rigueur que personne n'a demandée.
+    """
+    brut = (valeur or "").strip()
+    if not brut:
+        return ""
+    plus = brut.startswith("+")
+    chiffres = "".join(c for c in brut if c.isdigit())
+    if not (LONGUEUR_TEL_MIN <= len(chiffres) <= LONGUEUR_TEL_MAX):
+        return None
+    return ("+" if plus else "") + chiffres
+
+
+LONGUEUR_TEL_MIN = 8      # un numero beninois local en compte huit
+LONGUEUR_TEL_MAX = 15     # maximum prevu par la norme internationale
+
+
 def _eclater_objectifs(valeur):
     """Liste des objectifs a partir de la colonne stockee."""
     if not valeur:
@@ -214,6 +241,7 @@ def modifier_profil():
         "niveau_etudes": d.get("niveau_etudes"),
         "domaine": d.get("domaine"),
         "etablissement": d.get("etablissement"),
+        "telephone": d.get("telephone"),
     }
     champs = {k: v for k, v in champs.items() if v is not None}
 
@@ -258,6 +286,15 @@ def modifier_profil():
 
     # L'etablissement reste libre : aucune liste ne contiendra l'atelier
     # ou quelqu'un apprend son metier.
+    if "telephone" in champs:
+        numero = normaliser_telephone(champs["telephone"])
+        if numero is None:
+            return jsonify({"erreur":
+                "Numéro de téléphone invalide : entre "
+                f"{LONGUEUR_TEL_MIN} et {LONGUEUR_TEL_MAX} chiffres, "
+                "avec ou sans indicatif."}), 400
+        champs["telephone"] = numero
+
     if "etablissement" in champs:
         champs["etablissement"] = \
             str(champs["etablissement"]).strip()[:LONGUEUR_ETABLISSEMENT]
@@ -323,6 +360,7 @@ def _charger_profil(id_user, public=False):
                   u.est_admin, u.doit_changer_mdp, u.cree_le,
                   u.situation, u.objectif, u.langues, u.profil_pro,
                   u.niveau_etudes, u.domaine, u.etablissement,
+                  u.telephone,
                   u.email_verifie,
                   md.est_verifie, md.dispo, md.anciennete,
                   md.delai_reponse, md.note_moyenne, md.nb_reponses
@@ -336,6 +374,10 @@ def _charger_profil(id_user, public=False):
         return None
     if public:
         base.pop("email", None)
+        # Le numéro ne se montre pas au tout-venant : il sert à joindre
+        # quelqu'un, pas à être collecté. Seule la personne le voit sur
+        # son propre profil.
+        base.pop("telephone", None)
         base.pop("est_admin", None)
         # Ne jamais révéler qu'un compte tourne encore avec un mot de
         # passe temporaire : ce serait désigner une cible.
@@ -553,7 +595,7 @@ def exporter_mes_donnees():
         """SELECT prenom, nom, email, role, bio, etudes, ville,
                   photo_url, cree_le, derniere_co, email_verifie,
                   situation, objectif, langues, profil_pro,
-                  niveau_etudes, domaine, etablissement
+                  niveau_etudes, domaine, etablissement, telephone
              FROM utilisateur WHERE id_utilisateur = %s""", (id_user,))
 
     return jsonify({

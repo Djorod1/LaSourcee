@@ -2879,3 +2879,13 @@ img, svg, video { max-width: 100%; height: auto; }
   padding: 0; margin: -1px; overflow: hidden;
   clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
+
+/* Mention discrète à côté d'un libellé : « facultatif », « visible de
+   vous seul ». Sans elle, on hésite à remplir, ou l'on croit publier ce
+   qu'on garde pour soi. */
+.facultatif {
+  font-weight: 400;
+  font-size: 11.5px;
+  color: var(--texte-doux);
+  margin-left: 6px;
+}

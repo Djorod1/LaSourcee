@@ -133,14 +133,23 @@ def _envoyer_email_verification(id_user: int, email: str, prenom: str):
     from utils.email import envoyer
 
     jeton = secrets.token_hex(32)
-    # Un code de six chiffres accompagne le lien. Le lien reste le
-    # chemin le plus court, mais il dépend de l'adresse du site, de la
-    # messagerie qui peut le tronquer, et du navigateur qui l'ouvre.
-    # Six chiffres se recopient depuis n'importe quel écran, y compris
-    # depuis un téléphone où l'e-mail s'ouvre dans une autre
-    # application. Ils ne dépendent d'aucune URL.
+    # Un code, et rien d'autre. Le lien a été retiré du message.
+    #
+    # Il dépendait de l'adresse du site, que l'hébergeur change à chaque
+    # mise en ligne ; les messageries le coupaient en deux ou le
+    # réécrivaient pour le pister ; sur téléphone, l'e-mail s'ouvre dans
+    # une application et le lien dans une autre, sans la session. Il a
+    # échoué de toutes ces façons.
+    #
+    # Six chiffres se recopient depuis n'importe quel écran. Ils ne
+    # dépendent d'aucune adresse, d'aucune messagerie, d'aucun
+    # navigateur. C'est la seule partie du parcours que rien ne peut
+    # abîmer en route.
+    #
+    # Le jeton reste en base : il identifie la ligne, et les liens déjà
+    # partis restent valables. Il n'en part simplement plus de nouveau.
     code = f"{secrets.randbelow(1000000):06d}"
-    expire = datetime.utcnow() + timedelta(hours=24)
+    expire = datetime.utcnow() + timedelta(hours=DUREE_CODE_HEURES)
     try:
         executer(
             """INSERT INTO verification_email
@@ -149,19 +158,20 @@ def _envoyer_email_verification(id_user: int, email: str, prenom: str):
             (jeton, code, id_user, expire),
             commit=True,
         )
-        lien = url_publique("/verifier-email.html?jeton=" + jeton)
+        espace = " ".join((code[:3], code[3:]))
         parti = envoyer(
             email,
-            "Bienvenue sur LaSourcee, confirmez votre adresse",
+            f"Votre code LaSourcee : {espace}",
             f"Bonjour {prenom},\n\n"
-            f"Bienvenue sur LaSourcee. Pour activer votre compte, saisissez\n"
-            f"ce code dans la page qui vous le demande :\n\n"
-            f"    {code}\n\n"
-            f"Vous pouvez aussi cliquer directement sur ce lien :\n\n"
-            f"{lien}\n\n"
-            f"Le code et le lien sont valables 24 heures.\n"
+            f"Voici votre code de confirmation :\n\n"
+            f"        {espace}\n\n"
+            f"Saisissez-le sur la page qui vous le demande pour activer\n"
+            f"votre compte. Il est valable {DUREE_CODE_HEURES} heures.\n\n"
+            f"Ce message ne contient aucun lien : si vous en recevez un\n"
+            f"qui prétend venir de LaSourcee, ne le suivez pas.\n\n"
             f"Si vous n'avez pas créé ce compte, ignorez ce message.\n\n"
             f"L'équipe LaSourcee",
+            corps_html=_gabarit_code(prenom, espace),
         )
         if not parti:
             logger.error(
@@ -274,6 +284,33 @@ def verifier_email():
 # robot y parvient. Dix essais par code suffisent largement à qui
 # recopie depuis sa boîte, et ferment la porte au tâtonnement.
 MAX_ESSAIS_CODE = 10
+
+# Vingt-quatre heures : assez pour qui consulte sa boîte le lendemain,
+# assez court pour qu'un code oublié dans une messagerie partagée cesse
+# vite de valoir quelque chose.
+DUREE_CODE_HEURES = 24
+
+
+def _gabarit_code(prenom, code_espace):
+    """Version HTML du message, le code en gros et rien autour.
+
+    Un code noyé dans un paragraphe se recopie mal, surtout depuis un
+    téléphone. Celui-ci occupe le centre du message, en gros caractères
+    espacés, et reste sélectionnable d'un geste.
+    """
+    from utils import email as mod_email
+    return mod_email.gabarit_html(
+        "Votre code de confirmation",
+        [f"Bonjour {prenom},",
+         "Saisissez ce code sur la page qui vous le demande :",
+         f'<div style="font-size:34px; font-weight:700; letter-spacing:.18em;'
+         f' text-align:center; padding:18px 0; font-family:monospace;'
+         f' color:#1E3A8A;">{code_espace}</div>',
+         f"Il est valable {DUREE_CODE_HEURES} heures.",
+         "<b>Ce message ne contient aucun lien.</b> Si vous recevez un "
+         "message qui prétend venir de LaSourcee et vous demande de "
+         "cliquer quelque part, ne le suivez pas."],
+        note_bas="Si vous n'avez pas créé ce compte, ignorez ce message.")
 
 
 @bp_auth.post("/verifier-code")

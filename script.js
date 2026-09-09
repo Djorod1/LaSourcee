@@ -272,6 +272,8 @@ function appliquerUtilisateur(u) {
     niveau_etudes: u.niveau_etudes || '',
     domaine: u.domaine || '',
     etablissement: u.etablissement || '',
+    telephone: u.telephone || '',
+    objectifs: u.objectifs || [],
   };
   majRappelMotDePasse();
   majRappelConfirmation();
@@ -311,6 +313,9 @@ async function naviguerEtape(delta) {
   if (nouv > 4) {
     const ok = await finaliserInscription();
     if (!ok) return;   // on reste sur l'étape pour corriger
+    // « confirmation » : l'écran de saisie du code est déjà affiché,
+    // il ne faut pas passer par-dessus.
+    if (ok === 'confirmation') return;
     afficherVue('vue-app'); initApp(); return;
   }
   etat.etapeOnboarding = nouv;
@@ -374,8 +379,10 @@ async function finaliserInscription() {
     // l'avoir rempli.
     const id_pays = d.pays ? await _idPaysDepuisLibelle(d.pays) : null;
     const secteurs = await _idsSecteursDepuisLibelles(secteursChoisis);
+    const telephone = (document.getElementById('tel-ins')?.value || '').trim();
     const aEnvoyer = {
       bio: d.bio,
+      ...(telephone ? { telephone } : {}),
       niveau_etudes: d.niveau_etudes,
       domaine: d.domaine,
       etablissement: d.etablissement,
@@ -391,14 +398,16 @@ async function finaliserInscription() {
     // Dire ce qui va se passer dans la boite aux lettres : sans cela,
     // la personne ignore qu'un message l'attend, ou en guette un qui
     // n'est jamais parti.
+    // Un message passager disparaissait avant qu'on l'ait lu, et rien
+    // n'indiquait ou saisir le code. La confirmation devient une etape
+    // du parcours, avec son ecran.
     if (creation && creation.email_envoye === false) {
-      toast('Compte créé, mais le message de confirmation n\'a pas pu être '
-            + 'envoyé. Prévenez un administrateur.', 'erreur');
-    } else {
-      toast('Bienvenue sur LaSourcee. Un e-mail de confirmation vient de '
-            + `partir vers ${email} : ouvrez-le pour valider votre adresse.`);
+      toast('Compte créé. Le message de confirmation n\'a pas pu partir : '
+            + 'votre compte reste utilisable.', 'erreur');
+      return true;      // inutile de demander un code qui n'est pas parti
     }
-    return true;
+    ouvrirEtapeConfirmation(email);
+    return 'confirmation';
   } catch (err) {
     toast(err.message || 'Inscription impossible.', 'erreur');
     afficherVue('vue-inscription'); return false;
@@ -1768,8 +1777,15 @@ function panneauCompte() {
       <div class="champ"><label>Nom</label><input id="pc-nom" value="${echapper(u.nom)}" /></div>
     </div>
     <div class="champ"><label>E-mail</label><input id="pc-email" type="email" value="${echapper(u.email || (u.prenom.toLowerCase() + '.' + u.nom.toLowerCase() + '@email.com'))}" /></div>
-    <div class="champ"><label>Pays</label>
-      <select id="pc-pays"><option value="">Sélectionnez votre pays</option>${optsPays}</select>
+    <div class="champs-cote">
+      <div class="champ"><label for="pc-pays">Pays</label>
+        <select id="pc-pays"><option value="">Sélectionnez votre pays</option>${optsPays}</select>
+      </div>
+      <div class="champ"><label for="pc-tel">Téléphone <span class="facultatif">visible de vous seul</span></label>
+        <input id="pc-tel" type="tel" inputmode="tel" autocomplete="tel"
+               value="${echapper(u.telephone || '')}"
+               placeholder="+229 01 55 04 04 32" />
+      </div>
     </div>
     <div class="champ"><label for="pc-situation">Où en êtes-vous ?</label>
       <select id="pc-situation">
@@ -1891,6 +1907,7 @@ async function sauverCompte() {
     .map(e => e.value);
   const langues = (document.getElementById('pc-langues')?.value || '').trim();
   const profilPro = (document.getElementById('pc-profilpro')?.value || '').trim();
+  const telephone = (document.getElementById('pc-tel')?.value || '').trim();
   const niveauEtudes = document.getElementById('pc-niveau')?.value || '';
   const domaine = document.getElementById('pc-domaine')?.value || '';
   const etablissement = (document.getElementById('pc-etablissement')?.value || '').trim();
@@ -1910,6 +1927,7 @@ async function sauverCompte() {
   etat.utilisateur.objectif = objectifs.join(', ');
   etat.utilisateur.langues = langues;
   etat.utilisateur.profil_pro = profilPro;
+  etat.utilisateur.telephone = telephone;
   etat.utilisateur.niveau_etudes = niveauEtudes;
   etat.utilisateur.domaine = domaine;
   etat.utilisateur.etablissement = etablissement;
@@ -1929,6 +1947,7 @@ async function sauverCompte() {
       // efface un champ. undefined le laisserait inchangé.
       situation, objectifs, langues,
       profil_pro: profilPro,
+      telephone,
       niveau_etudes: niveauEtudes,
       domaine,
       etablissement,
@@ -4541,4 +4560,132 @@ async function chargerCompteurMessages() {
     const liste = await API.get('/messagerie/conversations');
     majCompteurMessages(liste.reduce((n, c) => n + (c.non_lus || 0), 0));
   } catch (_) { /* le compteur n'est pas essentiel */ }
+}
+
+/* ============================================================
+   CONFIRMATION D'ADRESSE PAR CODE
+   ============================================================
+   L'inscription se terminait sur un message et un lien dans une boîte
+   aux lettres. Entre les deux, tout pouvait échouer : l'adresse du
+   site, la messagerie qui coupe le lien, le navigateur qui l'ouvre sans
+   la session. La confirmation se fait maintenant sur place, avec des
+   chiffres recopiés à la main. */
+
+let _adresseAConfirmer = '';
+
+function ouvrirEtapeConfirmation(email) {
+  _adresseAConfirmer = email || '';
+  const cible = document.getElementById('conf-adresse');
+  if (cible) cible.textContent = _adresseAConfirmer;
+  const champ = document.getElementById('conf-code');
+  if (champ) { champ.value = ''; }
+  const retour = document.getElementById('conf-retour');
+  if (retour) retour.textContent = '';
+  afficherVue('vue-confirmation');
+  setTimeout(() => champ?.focus(), 120);
+}
+
+/* Un espace après trois chiffres. Six caractères d'affilée se relisent
+   mal, et l'on ne sait plus où l'on en est en recopiant. */
+function formaterCode(champ) {
+  const chiffres = (champ.value || '').replace(/\D/g, '').slice(0, 6);
+  champ.value = chiffres.length > 3
+    ? chiffres.slice(0, 3) + ' ' + chiffres.slice(3)
+    : chiffres;
+  // Six chiffres saisis : on valide sans attendre un clic. Personne ne
+  // tape un code pour s'arrêter là.
+  if (chiffres.length === 6) {
+    const bouton = document.querySelector('#vue-confirmation .btn-primaire');
+    if (bouton && !bouton.disabled) validerCodeInscription(bouton);
+  }
+}
+
+async function validerCodeInscription(bouton) {
+  const champ = document.getElementById('conf-code');
+  const retour = document.getElementById('conf-retour');
+  const code = (champ?.value || '').replace(/\D/g, '');
+  if (code.length !== 6) {
+    if (retour) { retour.style.color = 'var(--rouge-fonce)';
+                  retour.textContent = 'Il faut les six chiffres du code.'; }
+    champ?.focus();
+    return;
+  }
+  const libelle = bouton.textContent;
+  bouton.disabled = true;
+  bouton.textContent = 'Vérification…';
+  try {
+    await API.post('/auth/verifier-code',
+                   { email: _adresseAConfirmer, code });
+    if (etat.utilisateur) etat.utilisateur.email_verifie = true;
+    majRappelConfirmation();
+    toast('Adresse confirmée. Bienvenue sur LaSourcee.');
+    afficherVue('vue-app');
+    initApp();
+  } catch (err) {
+    if (retour) { retour.style.color = 'var(--rouge-fonce)';
+                  retour.textContent = err.message || 'Code refusé.'; }
+    champ?.select();
+  } finally {
+    bouton.disabled = false;
+    bouton.textContent = libelle;
+  }
+}
+
+/* Nouveau code. Le bouton se referme quelques secondes : sans cela on
+   le presse trois fois de suite, trois codes partent, et seul le
+   dernier vaut quelque chose. Les précédents ayant été effacés, la
+   personne saisit celui du premier message et se voit refusée. */
+let _attenteNouveauCode = 0;
+
+async function demanderNouveauCode(bouton) {
+  const retour = document.getElementById('conf-retour');
+  const reste = Math.ceil((_attenteNouveauCode - Date.now()) / 1000);
+  if (reste > 0) {
+    if (retour) { retour.style.color = 'var(--texte-doux)';
+                  retour.textContent = `Patientez ${reste} seconde(s) avant `
+                    + 'de redemander un code.'; }
+    return;
+  }
+  bouton.disabled = true;
+  const libelle = bouton.textContent;
+  bouton.textContent = 'Envoi…';
+  try {
+    await API.post('/auth/renvoyer-confirmation',
+                   { email: _adresseAConfirmer });
+    _attenteNouveauCode = Date.now() + 60000;
+    if (retour) {
+      retour.style.color = 'var(--vert)';
+      retour.textContent = 'Un nouveau code vient de partir. Le précédent '
+        + "n'est plus valable.";
+    }
+    _compteARebours(bouton, libelle);
+  } catch (err) {
+    if (retour) { retour.style.color = 'var(--rouge-fonce)';
+                  retour.textContent = err.message || 'Envoi impossible.'; }
+    bouton.disabled = false;
+    bouton.textContent = libelle;
+  }
+}
+
+function _compteARebours(bouton, libelle) {
+  const tic = () => {
+    const reste = Math.ceil((_attenteNouveauCode - Date.now()) / 1000);
+    if (reste <= 0) {
+      bouton.disabled = false;
+      bouton.textContent = libelle;
+      return;
+    }
+    bouton.textContent = `Nouveau code dans ${reste} s`;
+    setTimeout(tic, 1000);
+  };
+  tic();
+}
+
+/* Le compte reste utilisable sans confirmation : bloquer quelqu'un qui
+   vient de s'inscrire parce qu'un e-mail n'est pas arrivé le ferait
+   partir pour de bon. Le rappel subsiste dans l'application. */
+function continuerSansConfirmer() {
+  afficherVue('vue-app');
+  initApp();
+  majRappelConfirmation();
 }

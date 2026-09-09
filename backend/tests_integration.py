@@ -1785,6 +1785,103 @@ def executer_tests():
     verifier("Elle est refusée sans session",
              app.test_client().get("/api/recherche?q=test").status_code == 401)
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  28. INSCRIPTION : CODE SANS LIEN, ET TÉLÉPHONE")
+    print("═" * 70)
+
+    import io as _io
+    import logging as _log
+    from routes.profil import normaliser_telephone
+
+    # Le message ne doit plus contenir la moindre adresse. C'est la
+    # seule garantie qui tienne : tant qu'un lien y figure, il peut
+    # pointer vers un deploiement, etre coupe par la messagerie, ou
+    # s'ouvrir sans la session.
+    tampon = _io.StringIO()
+    poignee = _log.StreamHandler(tampon)
+    journal = _log.getLogger("lasource.email")
+    niveau = journal.level
+    journal.setLevel(_log.INFO)
+    journal.addHandler(poignee)
+    try:
+        app.test_client().post("/api/auth/inscription", json={
+            "prenom": "Nadege", "nom": "AKPOVI", "email": "nadege@test.io",
+            "mot_de_passe": "Nadege2026!", "role": "etudiant"})
+    finally:
+        journal.removeHandler(poignee)
+        journal.setLevel(niveau)
+    message = tampon.getvalue()
+
+    verifier("Le message de confirmation part", "nadege@test.io" in message)
+    verifier("Il ne contient aucune adresse web",
+             "http://" not in message and "https://" not in message,
+             [l for l in message.split("\n") if "http" in l][:2])
+    verifier("Il ne contient aucun jeton",
+             "jeton=" not in message and "verifier-email" not in message)
+    verifier("Le code figure dans l'objet",
+             "Votre code LaSourcee" in message)
+
+    code_n = jeton_sql("SELECT v.code FROM verification_email v "
+                       "JOIN utilisateur u ON u.id_utilisateur = v.id_utilisateur "
+                       "WHERE u.email = ?", ("nadege@test.io",))
+    verifier("Le code se lit dans le message",
+             bool(code_n) and f"{str(code_n)[:3]} {str(code_n)[3:]}" in message)
+
+    # Demander un nouveau code : l'ancien doit cesser de valoir, sinon
+    # deux codes circulent et l'on ne sait plus lequel saisir.
+    r = anon.post("/api/auth/renvoyer-confirmation",
+                  json={"email": "nadege@test.io"})
+    verifier("Un nouveau code se demande", r.status_code == 200)
+    code_n2 = jeton_sql("SELECT v.code FROM verification_email v "
+                        "JOIN utilisateur u ON u.id_utilisateur = v.id_utilisateur "
+                        "WHERE u.email = ? AND v.verifie_le IS NULL "
+                        "ORDER BY v.cree_le DESC", ("nadege@test.io",))
+    verifier("Le nouveau code diffère du précédent", code_n2 != code_n)
+    verifier("L'ancien code ne vaut plus",
+             anon.post("/api/auth/verifier-code",
+                       json={"email": "nadege@test.io",
+                             "code": str(code_n)}).status_code in (400, 410))
+    verifier("Le nouveau code confirme l'adresse",
+             anon.post("/api/auth/verifier-code",
+                       json={"email": "nadege@test.io",
+                             "code": str(code_n2)}).status_code == 200)
+
+    # --- Telephone : la colonne existait depuis l'origine, inutilisee ---
+    verifier("Un numéro local est accepté",
+             normaliser_telephone("01 55 04 04 32") == "0155040432")
+    verifier("Un numéro international garde son indicatif",
+             normaliser_telephone("+229 01 55 04 04 32") == "+22901550404 32"
+             .replace(" ", ""))
+    verifier("Les séparateurs sont retirés",
+             normaliser_telephone("01-55.04 04 32") == "0155040432")
+    verifier("Un numéro trop court est refusé",
+             normaliser_telephone("12") is None)
+    verifier("Un texte n'est pas un numéro",
+             normaliser_telephone("appelez-moi") is None)
+    verifier("Un champ vide reste vide", normaliser_telephone("") == "")
+
+    r = etu.put("/api/profil/moi", json={"telephone": "+229 01 55 04 04 32"})
+    verifier("Le numéro s'enregistre", r.status_code == 200)
+    verifier("Il est relu normalisé",
+             (r.get_json() or {}).get("telephone") == "+22901550404" + "32")
+    verifier("Un numéro invalide est refusé",
+             etu.put("/api/profil/moi",
+                     json={"telephone": "abc"}).status_code == 400)
+
+    # Le numero sert a joindre, pas a etre collecte.
+    id_etu = jeton_sql("SELECT id_utilisateur FROM utilisateur WHERE email = ?",
+                       ("aminata@test.io",))
+    autre = app.test_client()
+    autre.post("/api/auth/inscription", json={
+        "prenom": "Curieux", "nom": "TEST", "email": "curieux@test.io",
+        "mot_de_passe": "Curieux2026!", "role": "etudiant"})
+    pub = autre.get(f"/api/profil/{id_etu}").get_json() or {}
+    verifier("Le numéro ne figure pas sur le profil public",
+             "telephone" not in pub)
+    verifier("Il figure sur son propre profil",
+             "telephone" in (etu.get("/api/profil/moi").get_json() or {}))
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)
