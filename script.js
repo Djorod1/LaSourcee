@@ -83,7 +83,11 @@ const ICONES = {
   trophee:    '<path d="M7 4.5h10V8a5 5 0 0 1-10 0z"/><path d="M7 5.8H4.2v1.6a3 3 0 0 0 3 3"/><path d="M17 5.8h2.8v1.6a3 3 0 0 1-3 3"/><path d="M9.5 14.2h5"/><path d="M10 14.2v3h4v-3"/><path d="M8 20h8"/>',
   etincelle:  '<path d="M12 3.2 13.8 9 19.5 10.8 13.8 12.6 12 18.4 10.2 12.6 4.5 10.8 10.2 9z"/>',
   cadenas:    '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
-  tendance:   '<path d="M3.5 16.5 9 11l3.5 3.5L20 7"/><path d="M16 7h4v4"/>',
+  // Un histogramme plutot qu'une fleche ascendante : la fleche est
+  // devenue un marqueur de generation automatique, on la voit
+  // partout. Les barres disent la meme chose sans cet air de
+  // deja-vu.
+  tendance:   '<path d="M4 20V13"/><path d="M9.5 20V8"/><path d="M15 20V15"/><path d="M20.5 20V4"/>',
   check:      '<path d="M4.5 12.5 9.5 17.5 19.5 6.5"/>',
   croix:      '<path d="M6 6 18 18M18 6 6 18"/>',
   loupe:      '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/>',
@@ -178,7 +182,8 @@ async function connecterGoogle() {
         await API.post('/auth/google', { credential: reponse.credential });
         SESSION.utilisateur = await API.get('/profil/moi');
         appliquerUtilisateur(SESSION.utilisateur);
-        toast('Connexion Google réussie.');
+        toast('Connexion réussie. Google a confirmé votre adresse, aucun '
+              + "e-mail de vérification n'est nécessaire.");
         afficherVue('vue-app'); initApp();
       } catch (err) {
         toast(err.message || 'Connexion Google impossible.', 'erreur');
@@ -311,7 +316,7 @@ async function finaliserInscription() {
 
   try {
     const photoOnboarding = etat.utilisateur && etat.utilisateur.photo;
-    await API.post('/auth/inscription', {
+    const creation = await API.post('/auth/inscription', {
       prenom, nom, email, mot_de_passe: mdp,
       role: etat.roleChoisi || 'etudiant',
     });
@@ -322,7 +327,16 @@ async function finaliserInscription() {
     }
     appliquerUtilisateur(MODE.utilisateur);
     if (photoOnboarding) etat.utilisateur.photo = photoOnboarding;
-    toast('Inscription terminée. Bienvenue sur LaSourcee !');
+    // Dire ce qui va se passer dans la boite aux lettres : sans cela,
+    // la personne ignore qu'un message l'attend, ou en guette un qui
+    // n'est jamais parti.
+    if (creation && creation.email_envoye === false) {
+      toast('Compte créé, mais le message de confirmation n\'a pas pu être '
+            + 'envoyé. Prévenez un administrateur.', 'erreur');
+    } else {
+      toast('Bienvenue sur LaSourcee. Un e-mail de confirmation vient de '
+            + `partir vers ${email} : ouvrez-le pour valider votre adresse.`);
+    }
     return true;
   } catch (err) {
     toast(err.message || 'Inscription impossible.', 'erreur');
@@ -736,7 +750,7 @@ function ouvrirQuestion(id) {
          <button class="btn btn-primaire btn-petit" onclick="ajouterReponse(${q.id})">Envoyer</button>
        </div>`
     : `<div class="carte" style="margin-top:12px; background:var(--fond); font-size:13px; color:var(--texte-doux); display:flex; gap:8px; align-items:center;">
-         ${ic('etincelle','ic ic-s')} Seuls les référents peuvent répondre aux questions. Devenez référent pour partager votre expertise.
+         ${ic('marque','ic ic-s')} Seuls les référents peuvent répondre aux questions. Devenez référent pour partager votre expertise.
        </div>`;
   document.getElementById('contenu-question').innerHTML = `
     <article class="carte-question">
@@ -1916,9 +1930,10 @@ function majRobustesseMdp(v) {
 }
 
 function panneauConfid() {
-  return `<div class="section-param"><h2>Confidentialité</h2>
+  return `<div class="section-param"><h2>Confidentialité et données</h2>
     <p class="desc" style="margin-bottom:16px;">
-      Ce que LaSourcee fait de vos données, en clair.</p>
+      Ce que LaSourcee conserve, qui le voit, et ce que vous pouvez en
+      faire.</p>
 
     <div class="ligne-session"><div>
       <strong>Votre profil</strong>
@@ -1928,20 +1943,115 @@ function panneauConfid() {
 
     <div class="ligne-session"><div>
       <strong>Cookies</strong>
-      <div class="desc">Un seul cookie est déposé, celui de votre session.
-        Aucun traceur publicitaire, aucun partage avec des tiers.</div></div></div>
+      <div class="desc">Un seul est déposé, celui de votre session. Aucun
+        traceur publicitaire, aucun partage avec des tiers.</div></div></div>
 
     <div class="ligne-session"><div>
       <strong>Vos publications</strong>
-      <div class="desc">Questions et réponses sont publiques : c'est ce qui
-        permet à d'autres d'en profiter. Vous pouvez supprimer les vôtres à
-        tout moment.</div></div></div>
+      <div class="desc">Questions et réponses sont visibles des membres :
+        c'est ce qui permet à d'autres d'en profiter. Vous pouvez
+        supprimer les vôtres à tout moment.</div></div></div>
 
-    <div class="ligne-session"><div>
-      <strong>Suppression du compte</strong>
-      <div class="desc">Écrivez à un administrateur : le compte et les
-        données associées sont effacés.</div></div></div>
+    <h3 class="titre-param" style="margin-top:24px;">Emporter vos données</h3>
+    <p class="desc">Un fichier contenant tout ce que la plateforme
+       conserve sur vous : profil, préférences, questions et réponses.</p>
+    <button class="btn btn-secondaire btn-petit" onclick="telechargerMesDonnees(this)">
+      Télécharger mes données</button>
+
+    <h3 class="titre-param" style="margin-top:26px;">Supprimer mon compte</h3>
+    <div class="zone-danger">
+      <p>La suppression est <strong>définitive</strong>. Votre profil, vos
+         questions et vos réponses disparaissent, et rien ne permet de les
+         rétablir.</p>
+      <p class="desc">Téléchargez vos données avant, si vous souhaitez en
+         garder une trace.</p>
+      <button class="btn btn-danger btn-petit" onclick="ouvrirSuppressionCompte()">
+        Supprimer définitivement mon compte</button>
+    </div>
   </div>`;
+}
+
+async function telechargerMesDonnees(bouton) {
+  const libelle = bouton.textContent;
+  bouton.disabled = true;
+  bouton.textContent = 'Préparation…';
+  try {
+    const donnees = await API.get('/profil/moi/donnees');
+    const contenu = JSON.stringify(donnees, null, 2);
+    const lien = document.createElement('a');
+    lien.href = URL.createObjectURL(
+      new Blob([contenu], { type: 'application/json' }));
+    lien.download = 'mes-donnees-lasourcee.json';
+    lien.click();
+    URL.revokeObjectURL(lien.href);
+    toast('Vos données ont été téléchargées.');
+  } catch (err) {
+    toast(err.message || 'Téléchargement impossible.', 'erreur');
+  } finally {
+    bouton.disabled = false;
+    bouton.textContent = libelle;
+  }
+}
+
+/* La suppression demande le mot de passe et la recopie d'un mot. Le
+   premier écarte celui qui passerait derrière une session laissée
+   ouverte, le second le clic accidentel sur un bouton rouge. */
+function ouvrirSuppressionCompte() {
+  fermerMentionsLegales();
+  const fond = document.createElement('div');
+  fond.className = 'modale-fond';
+  fond.id = 'modaleLegale';
+  fond.setAttribute('role', 'dialog');
+  fond.setAttribute('aria-modal', 'true');
+  fond.innerHTML = `
+    <div class="modale-boite">
+      <div class="modale-entete">
+        <h2>Supprimer votre compte</h2>
+        <button class="modale-fermer" onclick="fermerMentionsLegales()" aria-label="Fermer">&times;</button>
+      </div>
+      <div class="modale-corps">
+        <div class="bandeau-alerte" role="alert">
+          <strong>Cette action est définitive.</strong> Votre profil, vos
+          questions et vos réponses seront effacés. Aucune restauration
+          n'est possible.
+        </div>
+        ${champMotDePasse('supp-mdp', 'Votre mot de passe')}
+        <div class="champ">
+          <label for="supp-conf">Recopiez <strong>SUPPRIMER</strong> pour confirmer</label>
+          <input type="text" id="supp-conf" autocomplete="off" placeholder="SUPPRIMER" />
+        </div>
+        <button class="btn btn-danger" id="btn-supp-compte"
+                onclick="confirmerSuppressionCompte()">Supprimer définitivement</button>
+        <button class="btn btn-fantome" onclick="fermerMentionsLegales()">Annuler</button>
+      </div>
+    </div>`;
+  fond.addEventListener('click', (e) => {
+    if (e.target === fond) fermerMentionsLegales();
+  });
+  document.body.appendChild(fond);
+  document.body.style.overflow = 'hidden';
+}
+
+async function confirmerSuppressionCompte() {
+  const mdp = document.getElementById('supp-mdp')?.value || '';
+  const conf = document.getElementById('supp-conf')?.value || '';
+  const bouton = document.getElementById('btn-supp-compte');
+
+  if (!mdp) return toast('Saisissez votre mot de passe.', 'erreur');
+  if (conf.trim().toUpperCase() !== 'SUPPRIMER') {
+    return toast('Recopiez le mot SUPPRIMER pour confirmer.', 'erreur');
+  }
+
+  if (bouton) { bouton.disabled = true; bouton.textContent = 'Suppression…'; }
+  try {
+    await API.delete('/profil/moi', { mot_de_passe: mdp, confirmation: conf });
+    fermerMentionsLegales();
+    toast('Votre compte a été supprimé.');
+    setTimeout(() => { window.location.href = '/'; }, 1200);
+  } catch (err) {
+    toast(err.message || 'Suppression impossible.', 'erreur');
+    if (bouton) { bouton.disabled = false; bouton.textContent = 'Supprimer définitivement'; }
+  }
 }
 
 /* ============================================================
@@ -2354,7 +2464,16 @@ window.addEventListener('DOMContentLoaded', async () => {
   } else {
     afficherVue('vue-accueil');
   }
+
+  // Le voile ne se lève qu'ici : la bonne vue est en place, rien ne
+  // défilera devant les yeux du visiteur.
+  document.body.classList.remove('demarrage');
 });
+
+/* Sécurité : si l'initialisation échoue avant d'avoir levé le voile,
+   la page resterait blanche. Au bout de six secondes, on l'affiche
+   quoi qu'il arrive. */
+setTimeout(() => document.body.classList.remove('demarrage'), 6000);
 
 /* ----- Consentement cookies ----- */
 function initialiserCookies() {
@@ -2702,7 +2821,7 @@ const TEXTES_LEGAUX = {
 
       <p><strong>Vos droits.</strong> Vous pouvez consulter, corriger ou
       faire effacer vos données en écrivant à
-      <a href="mailto:contact@lasourcee.org">contact@lasourcee.org</a>.
+      <a href="mailto:djorod@lasourcee.org">djorod@lasourcee.org</a>.
       La suppression du compte efface le profil et les données
       associées.</p>
 
@@ -2742,7 +2861,7 @@ const TEXTES_LEGAUX = {
     contenu: `
       <p><strong>Éditeur.</strong> LaSourcee, plateforme de mentorat.
       Contact :
-      <a href="mailto:contact@lasourcee.org">contact@lasourcee.org</a></p>
+      <a href="mailto:djorod@lasourcee.org">djorod@lasourcee.org</a></p>
 
       <p><strong>Conception et développement.</strong> Coding_DJOROD,
       2026.</p>
@@ -2758,7 +2877,7 @@ const TEXTES_LEGAUX = {
 
       <p><strong>Signalement.</strong> Pour signaler un contenu ou une
       difficulté, écrivez à
-      <a href="mailto:contact@lasourcee.org">contact@lasourcee.org</a>.</p>`,
+      <a href="mailto:djorod@lasourcee.org">djorod@lasourcee.org</a>.</p>`,
   },
 };
 

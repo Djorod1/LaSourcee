@@ -2209,3 +2209,98 @@ img, svg, video { max-width: 100%; height: auto; }
     radial-gradient(at 10% 110%, rgba(249, 115, 22, .12), transparent 55%),
     linear-gradient(180deg, var(--surface) 0%, var(--fond) 100%);
 }
+
+/* Coordonnées du pied de page. */
+.pied-contact {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13.5px;
+}
+.pied-contact-titre {
+  font-weight: 600;
+  color: var(--texte);
+  margin-bottom: 2px;
+}
+.pied-contact a {
+  color: var(--texte-doux);
+  text-decoration: none;
+}
+.pied-contact a:hover { color: var(--primaire); text-decoration: underline; }
+
+/* ------------------------------------------------------------------
+   BOUTON DE THÈME : POSITION SUR TÉLÉPHONE
+   ------------------------------------------------------------------
+   Il se décalait parce qu'il partageait un conteneur en ligne avec deux
+   boutons masqués sur petit écran : la barre gardait leur gouttière.
+   Il est désormais aligné explicitement, à taille réduite, et la
+   gouttière disparaît avec eux.
+   ------------------------------------------------------------------ */
+@media (max-width: 640px) {
+  .hero-nav .actions {
+    gap: 0;
+    margin-left: auto;
+  }
+  .bouton-theme {
+    width: 40px; height: 40px;
+    margin: 0;
+  }
+  /* Dans la barre de l'application, le bouton doit rester au même
+     niveau que l'avatar, sans pousser les autres icônes. */
+  .navbar .bouton-theme {
+    width: 34px; height: 34px;
+    border: none;
+    background: transparent;
+  }
+  .navbar .bouton-theme svg { width: 19px; height: 19px; }
+}
+
+/* ------------------------------------------------------------------
+   LISIBILITÉ DES TEXTES
+   ------------------------------------------------------------------
+   Les paragraphes longs sont justifiés et coupés proprement : sans
+   césure, la justification creuse des rivières blanches entre les mots,
+   surtout sur les colonnes étroites d'un téléphone.
+   ------------------------------------------------------------------ */
+.modale-corps p,
+.pied-marque p,
+.hero-contenu .intro,
+.section-param > p,
+.completion-liste span,
+.desc {
+  text-align: justify;
+  text-justify: inter-word;
+  hyphens: auto;
+  -webkit-hyphens: auto;
+}
+/* Sur les très petites largeurs, la justification nuit plus qu'elle
+   n'aide : moins de six ou sept mots par ligne, les espaces deviennent
+   béants. On revient au fer à gauche. */
+@media (max-width: 420px) {
+  .modale-corps p,
+  .pied-marque p,
+  .hero-contenu .intro,
+  .section-param > p,
+  .completion-liste span,
+  .desc { text-align: left; }
+}
+
+/* Zone des actions irréversibles : encadrée et teintée, pour qu'on ne
+   s'y trouve pas par hasard en faisant défiler la page. */
+.zone-danger {
+  border: 1px solid var(--rouge);
+  border-left-width: 4px;
+  border-radius: var(--rayon-s);
+  background: var(--rouge-clair);
+  padding: 14px 16px;
+  margin-top: 10px;
+}
+.zone-danger p { font-size: 13.5px; line-height: 1.55; margin-bottom: 8px; }
+.zone-danger strong { color: var(--rouge-fonce); }
+.zone-danger .btn { margin-top: 6px; }
+
+:root[data-theme="dark"] .zone-danger {
+  background: #2A1416;
+  border-color: #F87171;
+}
+:root[data-theme="dark"] .zone-danger strong { color: #FCA5A5; }

@@ -786,7 +786,66 @@ def executer_tests():
              app.test_client().get("/api/profil/preferences").status_code == 401)
 
     print("\n" + "═" * 70)
-    print("  16. AUTHENTIFICATION EXTERNE (OAuth)")
+    print("  16. EXPORT ET SUPPRESSION DU COMPTE")
+    print("═" * 70)
+    partant = app.test_client()
+    partant.post("/api/auth/inscription", json={
+        "prenom": "Yao", "nom": "PARTANT", "email": "yao.partant@test.io",
+        "mot_de_passe": "YaoPartant2026!", "role": "etudiant"})
+
+    r = partant.get("/api/profil/moi/donnees")
+    verifier("Export des données accessible", r.status_code == 200)
+    donnees = r.get_json() or {}
+    verifier("L'export contient le profil",
+             (donnees.get("profil") or {}).get("email") == "yao.partant@test.io",
+             str(donnees.get("profil"))[:100])
+    for cle in ("preferences", "questions", "reponses", "secteurs"):
+        verifier(f"L'export contient « {cle} »", cle in donnees)
+    verifier("Aucun mot de passe dans l'export",
+             "mot_de_passe" not in r.get_data(as_text=True))
+
+    # Les trois garde-fous, un par un.
+    r = partant.delete("/api/profil/moi",
+                       json={"mot_de_passe": "YaoPartant2026!",
+                             "confirmation": "oui"})
+    verifier("Sans le mot recopié, refus (400)", r.status_code == 400)
+    r = partant.delete("/api/profil/moi",
+                       json={"mot_de_passe": "faux",
+                             "confirmation": "SUPPRIMER"})
+    verifier("Mot de passe erroné, refus (401)", r.status_code == 401)
+    verifier("Le compte est toujours là après ces refus",
+             jeton_sql("SELECT COUNT(*) FROM utilisateur WHERE email = ?",
+                       ("yao.partant@test.io",)) == 1)
+
+    r = partant.delete("/api/profil/moi",
+                       json={"mot_de_passe": "YaoPartant2026!",
+                             "confirmation": "supprimer"})
+    verifier("La confirmation est insensible à la casse", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+    verifier("Le compte a disparu de la base",
+             jeton_sql("SELECT COUNT(*) FROM utilisateur WHERE email = ?",
+                       ("yao.partant@test.io",)) == 0)
+    verifier("La session est close après suppression",
+             partant.get("/api/profil/moi").status_code == 401)
+    verifier("Suppression refusée sans session (401)",
+             app.test_client().delete("/api/profil/moi").status_code == 401)
+
+    # Le dernier administrateur ne doit pas pouvoir se supprimer, sinon
+    # la plateforme devient ingérable sans intervention en base.
+    nb_admins = jeton_sql(
+        "SELECT COUNT(*) FROM utilisateur WHERE est_admin = 1 AND est_actif = 1")
+    if nb_admins == 1:
+        r = adm.delete("/api/profil/moi",
+                       json={"mot_de_passe": "Definitif2026!",
+                             "confirmation": "SUPPRIMER"})
+        verifier("Le dernier administrateur ne peut pas se supprimer (409)",
+                 r.status_code == 409, r.get_data(as_text=True)[:110])
+    else:
+        verifier("Plusieurs administrateurs présents, garde-fou non éprouvé",
+                 True, f"{nb_admins} administrateurs")
+
+    print("\n" + "═" * 70)
+    print("  17. AUTHENTIFICATION EXTERNE (OAuth)")
     print("═" * 70)
     cfg = anon.get("/api/auth/config")
     verifier("Configuration OAuth exposée", cfg.status_code == 200)

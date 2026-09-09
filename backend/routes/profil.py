@@ -242,3 +242,95 @@ def enregistrer_preferences():
         commit=True,
     )
     return jsonify(prefs)
+
+
+# ============================================================
+# SUPPRESSION DU COMPTE
+# ============================================================
+
+@bp_profil.delete("/moi")
+@connexion_requise
+def supprimer_mon_compte():
+    """Supprime définitivement le compte de la personne connectée.
+
+    Trois garde-fous, parce que l'opération est irréversible :
+
+    1. le mot de passe est redemandé, ce qui empêche un tiers d'effacer
+       un compte depuis une session laissée ouverte ;
+    2. la personne recopie un mot exact, ce qui écarte le clic
+       accidentel sur un bouton rouge ;
+    3. le dernier administrateur ne peut pas se supprimer, sans quoi la
+       plateforme deviendrait ingérable sans intervention en base.
+
+    Les questions et réponses partent avec le compte, par cascade
+    déclarée dans le schéma. C'est ce que dit la page de
+    confidentialité, et c'est ce qui se passe.
+    """
+    from utils.auth_helpers import verifier_mot_de_passe, supprimer_cookie_session
+
+    d = request.get_json(silent=True) or {}
+    motdepasse = d.get("mot_de_passe") or ""
+    confirmation = (d.get("confirmation") or "").strip().upper()
+
+    if confirmation != "SUPPRIMER":
+        return jsonify({
+            "erreur": "Recopiez le mot SUPPRIMER pour confirmer."}), 400
+
+    id_user = g.utilisateur["id_utilisateur"]
+    ligne = recuperer_un(
+        "SELECT mot_de_passe, est_admin FROM utilisateur "
+        "WHERE id_utilisateur = %s", (id_user,))
+    if not ligne:
+        return jsonify({"erreur": "Compte introuvable."}), 404
+
+    if not verifier_mot_de_passe(motdepasse, ligne["mot_de_passe"]):
+        return jsonify({"erreur": "Mot de passe incorrect."}), 401
+
+    if ligne.get("est_admin"):
+        restants = (recuperer_un(
+            "SELECT COUNT(*) AS n FROM utilisateur "
+            "WHERE est_admin = 1 AND est_actif = 1 "
+            "AND id_utilisateur <> %s", (id_user,)) or {}).get("n", 0)
+        if not restants:
+            return jsonify({
+                "erreur": "Vous êtes le dernier administrateur. Nommez "
+                          "quelqu'un d'autre avant de supprimer ce compte."
+            }), 409
+
+    executer("DELETE FROM utilisateur WHERE id_utilisateur = %s",
+             (id_user,), commit=True)
+
+    reponse = jsonify({"ok": True})
+    return supprimer_cookie_session(reponse)
+
+
+@bp_profil.get("/moi/donnees")
+@connexion_requise
+def exporter_mes_donnees():
+    """Renvoie tout ce que la plateforme conserve sur cette personne.
+
+    Pouvoir emporter ses données est le pendant du droit de les faire
+    effacer : sans cela, supprimer son compte revient à tout perdre sans
+    savoir ce qu'on perd.
+    """
+    id_user = g.utilisateur["id_utilisateur"]
+
+    profil = recuperer_un(
+        """SELECT prenom, nom, email, role, bio, etudes, ville,
+                  photo_url, cree_le, derniere_co, email_verifie
+             FROM utilisateur WHERE id_utilisateur = %s""", (id_user,))
+
+    return jsonify({
+        "profil": profil or {},
+        "preferences": _lire_preferences(id_user),
+        "questions": recuperer_tous(
+            "SELECT titre, corps, publiee_le FROM question "
+            "WHERE id_auteur = %s ORDER BY publiee_le", (id_user,)),
+        "reponses": recuperer_tous(
+            "SELECT contenu, cree_le FROM reponse "
+            "WHERE id_auteur = %s ORDER BY cree_le", (id_user,)),
+        "secteurs": recuperer_tous(
+            "SELECT s.libelle FROM secteur s "
+            "JOIN utilisateur_secteur us ON us.id_secteur = s.id_secteur "
+            "WHERE us.id_utilisateur = %s", (id_user,)),
+    })

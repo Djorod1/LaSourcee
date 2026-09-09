@@ -20,7 +20,8 @@ from werkzeug.exceptions import HTTPException, NotFound
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from config import Config, anomalies_configuration
-from models.db import fermer_connexion, initialiser_si_necessaire
+from models.db import (fermer_connexion, initialiser_si_necessaire,
+                       completer_colonnes)
 from utils.securite import appliquer_entetes_securite
 
 from routes.auth          import bp_auth
@@ -152,6 +153,9 @@ def creer_application():
     if app.config.get("INIT_DB_AUTO", True):
         try:
             initialiser_si_necessaire(app)
+            # Une base deja en service ne rejoue pas le fichier de schema :
+            # les colonnes ajoutees depuis doivent etre posees ici.
+            completer_colonnes(app)
         except Exception as exc:
             logger.error("Initialisation de la base impossible : %s", exc)
 

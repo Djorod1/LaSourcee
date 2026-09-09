@@ -308,3 +308,65 @@ def initialiser_si_necessaire(app):
             except Exception as exc:
                 app.logger.warning(
                     "Initialisation PostgreSQL ignorée : %s", exc)
+
+
+# ----- Colonnes ajoutées après la première mise en service ----------------
+
+# Colonnes apparues au fil des versions. Le fichier de schéma ne sert
+# qu'à la création initiale : une base déjà en service ne le rejoue
+# jamais, et une colonne ajoutée depuis y manque définitivement. C'est
+# ainsi que les préférences de notification ont provoqué une erreur 500
+# en production alors que tout passait en local sur une base neuve.
+#
+# Chaque entrée doit rester valable pour les trois moteurs. Les types
+# choisis le sont : TEXT et INTEGER existent partout, et une valeur par
+# défaut évite d'avoir à remplir les lignes existantes.
+COLONNES_ATTENDUES = [
+    ("utilisateur", "preferences_notif", "TEXT"),
+    ("utilisateur", "doit_changer_mdp", "INTEGER NOT NULL DEFAULT 0"),
+    ("utilisateur", "email_verifie", "INTEGER NOT NULL DEFAULT 0"),
+]
+
+
+def _colonnes_existantes(cur, moteur, table):
+    """Noms des colonnes d'une table, quel que soit le moteur."""
+    if moteur == "sqlite":
+        cur.execute(f"PRAGMA table_info({table})")
+        return {l["name"] for l in cur.fetchall()}
+    cur.execute(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = %s", (table,))
+    return {l["column_name"] for l in cur.fetchall()}
+
+
+def completer_colonnes(app):
+    """Ajoute les colonnes manquantes à une base déjà en service.
+
+    Ne lève jamais : une base momentanément injoignable ou un droit
+    insuffisant ne doivent pas empêcher le site de répondre. L'anomalie
+    est journalisée, et la route concernée signalera l'absence.
+    """
+    import logging
+    logger = logging.getLogger("lasource")
+
+    try:
+        with app.app_context():
+            moteur = app.config.get("DB_TYPE", _type_db())
+            if moteur == "mysql":
+                return          # migrations appliquées à la main
+            with curseur(commit=True) as cur:
+                for table, colonne, definition in COLONNES_ATTENDUES:
+                    try:
+                        if colonne in _colonnes_existantes(cur, moteur, table):
+                            continue
+                        cur.execute(
+                            f"ALTER TABLE {table} ADD COLUMN {colonne} {definition}")
+                        logger.info(
+                            "Colonne %s.%s ajoutée à une base existante.",
+                            table, colonne)
+                    except Exception as exc:
+                        logger.warning(
+                            "Ajout de %s.%s impossible : %s",
+                            table, colonne, exc)
+    except Exception as exc:
+        logger.warning("Contrôle des colonnes ignoré : %s", exc)

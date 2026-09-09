@@ -60,7 +60,9 @@ const API = {
   get(chemin)          { return this._appel('GET',    chemin); },
   post(chemin, corps)  { return this._appel('POST',   chemin, corps); },
   put(chemin, corps)   { return this._appel('PUT',    chemin, corps); },
-  delete(chemin)       { return this._appel('DELETE', chemin); },
+  // Un corps est accepté sur DELETE : la suppression d'un compte
+  // exige le mot de passe, qui n'a rien à faire dans l'adresse.
+  delete(chemin, corps) { return this._appel('DELETE', chemin, corps); },
 };
 
 /* Messages lisibles pour les codes HTTP courants. */
