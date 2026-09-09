@@ -350,6 +350,7 @@ COLONNES_ATTENDUES = [
     # ou incomplète la manquerait sans que rien ne le signale, et la
     # mise à jour du profil échouerait en erreur serveur.
     ("utilisateur", "telephone", "TEXT"),
+    ("utilisateur", "derniere_activite", "TEXT"),
     # Consentement daté et versionné. Un accord dont on ne sait ni
     # quand il a été donné ni à quel texte il se rapportait ne
     # prouve rien.

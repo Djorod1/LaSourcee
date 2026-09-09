@@ -14,10 +14,12 @@ bp_messagerie = Blueprint("messagerie", __name__, url_prefix="/api/messagerie")
 @connexion_requise
 def lister_conversations():
     id_user = g.utilisateur["id_utilisateur"]
-    return jsonify(recuperer_tous(
+    from routes.profil import _est_en_ligne
+    lignes = recuperer_tous(
         """SELECT c.id_conversation, c.dernier_msg_le,
                   autre.id_utilisateur AS id_autre,
                   autre.prenom, autre.nom, autre.photo_url, autre.role,
+                  autre.derniere_activite,
                   (SELECT contenu FROM message
                      WHERE id_conversation = c.id_conversation
                      ORDER BY envoye_le DESC LIMIT 1) AS dernier_contenu,
@@ -37,7 +39,13 @@ def lister_conversations():
                ON autre.id_utilisateur = cp_autre.id_utilisateur
          ORDER BY COALESCE(c.dernier_msg_le, c.cree_le) DESC""",
         (id_user, id_user, id_user),
-    ))
+    )
+    # La presence est calculee cote serveur : le navigateur ne connait
+    # ni son heure ni le seuil retenu.
+    for ligne in lignes:
+        ligne["en_ligne"] = _est_en_ligne(ligne.get("derniere_activite"))
+        ligne.pop("derniere_activite", None)
+    return jsonify(lignes)
 
 
 @bp_messagerie.post("/conversations")

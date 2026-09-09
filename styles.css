@@ -1540,13 +1540,17 @@ img, svg, video { max-width: 100%; height: auto; }
   color: inherit; font-size: 16px; line-height: 1;
   padding: 0 4px; border-radius: 4px;
 }
-.chip-perso .chip-sup:hover { background: rgba(0,0,0,.08); }
+.chip-perso .chip-sup:hover { background: var(--fond); }
 
 /* Burgers (cachés en desktop) */
 .burger {
   display: none;
   width: 40px; height: 40px; border: 1px solid var(--bordure);
-  background: #fff; border-radius: 8px; cursor: pointer;
+  /* var(--surface) et non #fff : un blanc ecrit en dur ignore le theme
+     sombre, et ces trois elements restaient eclatants au milieu d'une
+     page sombre. C'est ce qui se voyait sur telephone, ou eux seuls
+     s'affichent. */
+  background: var(--surface); border-radius: 8px; cursor: pointer;
   flex-direction: column; align-items: center; justify-content: center; gap: 4px;
   padding: 0;
 }
@@ -1559,8 +1563,8 @@ img, svg, video { max-width: 100%; height: auto; }
 .menu-burger-app {
   display: none;
   position: fixed; top: 60px; right: 12px; left: 12px;
-  background: #fff; border: 1px solid var(--bordure);
-  border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,.14);
+  background: var(--surface); border: 1px solid var(--bordure);
+  border-radius: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, .28);
   z-index: 90; padding: 8px; flex-direction: column;
 }
 .menu-burger-app.ouvert { display: flex; }
@@ -1586,9 +1590,9 @@ img, svg, video { max-width: 100%; height: auto; }
   .hero-nav .actions {
     display: none;
     position: absolute; top: 68px; right: 6%; left: 6%;
-    background: #fff; border: 1px solid var(--bordure);
+    background: var(--surface); border: 1px solid var(--bordure);
     border-radius: 12px; padding: 12px; z-index: 40;
-    box-shadow: 0 12px 32px rgba(0,0,0,.12);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, .28);
     flex-direction: column;
   }
   .hero-nav .actions.ouvert { display: flex; }
@@ -2981,3 +2985,48 @@ img, svg, video { max-width: 100%; height: auto; }
   line-height: 1.6;
 }
 .liste-donnees li { margin-bottom: 4px; }
+
+/* ==================================================================
+   PRÉSENCE
+   ------------------------------------------------------------------
+   Un point vert sur l'avatar, une mention en toutes lettres là où la
+   place le permet. Deux états seulement sont montrés : en ligne, ou vu
+   à telle date. Un point gris permanent pour quelqu'un qui n'est jamais
+   venu n'apprend rien et encombre.
+   ================================================================== */
+.avatar-presence { position: relative; display: inline-flex; }
+.presence {
+  position: absolute;
+  right: -1px; bottom: -1px;
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  /* La bordure reprend le fond : sans elle, la pastille se confond avec
+     l'avatar dès que celui-ci porte une photo sombre. */
+  border: 2px solid var(--surface);
+}
+.presence.en-ligne { background: #16A34A; }
+.presence.hors-ligne { background: var(--texte-doux); }
+
+.etat-presence {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px;
+}
+.etat-presence::before {
+  content: ''; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--texte-doux);
+}
+.etat-presence.en-ligne { color: #15803D; }
+.etat-presence.en-ligne::before { background: #16A34A; }
+:root[data-theme="dark"] .etat-presence.en-ligne { color: #4ADE80; }
+
+/* Adresses à recopier telles quelles dans une console externe : la
+   police à chasse fixe évite de confondre l et 1, O et 0. */
+.liste-origines { margin: 8px 0; padding-left: 20px; }
+.liste-origines code {
+  font-family: ui-monospace, monospace;
+  font-size: 12.5px;
+  background: var(--fond);
+  padding: 2px 6px;
+  border-radius: 4px;
+  user-select: all;
+}

@@ -138,7 +138,13 @@ def _construire_message(destinataire, sujet, corps_texte, corps_html, expediteur
     msg["From"] = expediteur
     msg["To"] = destinataire
     msg["Date"] = formatdate(localtime=True)
-    msg["Message-ID"] = make_msgid(domain="lasource.app")
+    # Le domaine du Message-ID doit être celui qui expédie. « lasource.app »
+    # n'appartient à personne ici : plusieurs filtres anti-spam comparent
+    # ce domaine à celui de l'expéditeur, et l'écart pénalise la
+    # distribution. Il est donc tiré de l'adresse d'expédition.
+    domaine = (expediteur.split("@")[-1].strip(" >") if "@" in expediteur
+               else "lasourcee.org")
+    msg["Message-ID"] = make_msgid(domain=domaine or "lasourcee.org")
     msg.set_content(corps_texte)
     if corps_html:
         msg.add_alternative(corps_html, subtype="html")

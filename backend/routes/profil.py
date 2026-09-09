@@ -352,12 +352,27 @@ def modifier_profil():
     return jsonify(_charger_profil(id_user))
 
 
+def _est_en_ligne(derniere_activite):
+    """Vrai si ce compte a agi dans les dernieres minutes."""
+    if not derniere_activite:
+        return False
+    from datetime import datetime, timedelta
+    from utils.auth_helpers import DELAI_EN_LIGNE
+    texte = str(derniere_activite).replace("T", " ")[:19]
+    try:
+        vue = datetime.strptime(texte, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return False
+    return datetime.utcnow() - vue < timedelta(seconds=DELAI_EN_LIGNE)
+
+
 def _charger_profil(id_user, public=False):
     base = recuperer_un(
         """SELECT u.id_utilisateur, u.prenom, u.nom, u.email,
                   u.role, u.photo_url, u.bio, u.etudes, u.ville,
                   u.id_pays, p.libelle AS pays,
                   u.est_admin, u.doit_changer_mdp, u.cree_le,
+                  u.derniere_activite,
                   u.situation, u.objectif, u.langues, u.profil_pro,
                   u.niveau_etudes, u.domaine, u.etablissement,
                   u.telephone,
@@ -388,6 +403,17 @@ def _charger_profil(id_user, public=False):
     # liste deja decoupee : lui faire refaire ce decoupage exposerait a
     # ce que les deux cotes s'accordent mal sur le separateur.
     base["objectifs"] = _eclater_objectifs(base.get("objectif"))
+
+    # Presence. Calculee ici plutot que dans le navigateur : celui-ci ne
+    # connait ni l'heure du serveur ni le seuil retenu, et deux
+    # navigateurs mal regles afficheraient deux etats differents pour la
+    # meme personne.
+    base["en_ligne"] = _est_en_ligne(base.get("derniere_activite"))
+    # L'heure exacte de la derniere venue ne regarde que la personne
+    # elle-meme : suivre les allees et venues de quelqu'un a la minute
+    # pres n'a pas a etre offert a tous.
+    if public:
+        base.pop("derniere_activite", None)
 
     base["secteurs"] = recuperer_tous(
         """SELECT s.id_secteur, s.libelle, s.couleur

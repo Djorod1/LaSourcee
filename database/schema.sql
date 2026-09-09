@@ -74,6 +74,8 @@ CREATE TABLE utilisateur (
     maj_le           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
                                   ON UPDATE CURRENT_TIMESTAMP,
     derniere_co      DATETIME     NULL,
+    -- Dernière action, distincte de la dernière connexion.
+    derniere_activite DATETIME    NULL,
     PRIMARY KEY (id_utilisateur),
     UNIQUE KEY uq_utilisateur_email (email),
     KEY idx_utilisateur_role (role),

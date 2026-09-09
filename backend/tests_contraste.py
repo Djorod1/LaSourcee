@@ -121,6 +121,30 @@ if __name__ == "__main__":
         if fond and texte:
             verifier(nom, texte.group(1), fond.group(1))
 
+    # Un fond clair ecrit en dur ignore le theme sombre. Les deux menus
+    # deroulants de telephone et le bouton burger etaient blancs :
+    # eclatants au milieu d'une page sombre, et invisibles a tout le
+    # reste du controle, qui ne porte que sur les jetons.
+    #
+    # Le curseur d'un interrupteur fait exception : blanc sur une piste
+    # coloree, il l'est dans les deux themes.
+    lignes_en_dur = []
+    for numero, ligne in enumerate(css.split("\n"), 1):
+        nu = ligne.strip()
+        if nu.startswith(("/*", "*", "--")):
+            continue
+        if re.search(r"background:\s*(#fff\b|#ffffff\b|white\b)", nu, re.I):
+            if "border-radius: 50%" in nu:      # curseur d'interrupteur
+                continue
+            lignes_en_dur.append(f"styles.css:{numero}")
+    if lignes_en_dur:
+        _echecs.append(("Fond clair ecrit en dur", "?", "?", 0.0))
+        print("  [ECHEC] %-45s %s" % ("Aucun fond clair ecrit en dur",
+                                      ", ".join(lignes_en_dur[:4])))
+    else:
+        _reussites += 1
+        print("  [OK  ] %-46s" % "Aucun fond clair ecrit en dur")
+
     print("\n" + "=" * 70)
     total = _reussites + len(_echecs)
     print("  BILAN : %d/%d couples au niveau AA (seuil %.1f:1)"

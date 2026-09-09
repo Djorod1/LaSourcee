@@ -1987,6 +1987,78 @@ def executer_tests():
     finally:
         app.config["VERIFICATION_EMAIL_OBLIGATOIRE"] = avant
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  30. PRÉSENCE, DATES ET IDENTITÉ DE MARQUE")
+    print("═" * 70)
+
+    from utils.auth_helpers import DELAI_EN_LIGNE, INTERVALLE_ACTIVITE
+    from routes.profil import _est_en_ligne
+    from datetime import datetime as _dt, timedelta as _td
+
+    verifier("La présence se rafraîchit moins souvent qu'elle ne s'affiche",
+             INTERVALLE_ACTIVITE < DELAI_EN_LIGNE,
+             "sinon quelqu'un d'actif passerait pour absent entre deux "
+             "écritures")
+
+    maintenant = _dt.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    vieux = (_dt.utcnow() - _td(seconds=DELAI_EN_LIGNE + 60)
+             ).strftime("%Y-%m-%d %H:%M:%S")
+    verifier("Une activité récente vaut « en ligne »",
+             _est_en_ligne(maintenant) is True)
+    verifier("Une activité ancienne ne vaut plus « en ligne »",
+             _est_en_ligne(vieux) is False)
+    verifier("Sans activité connue, personne n'est dit en ligne",
+             _est_en_ligne(None) is False)
+    verifier("Une date illisible ne fait pas tomber le calcul",
+             _est_en_ligne("pas une date") is False)
+
+    # Une requete authentifiee doit laisser une trace de passage.
+    presence = app.test_client()
+    presence.post("/api/auth/inscription", json={
+        "prenom": "Ulrich", "nom": "AKPOVI", "email": "ulrich.p@test.io",
+        "mot_de_passe": "Ulrich2026!", "role": "etudiant",
+        "consentement": CONSENT_TESTS})
+    presence.post("/api/auth/connexion", json={
+        "email": "ulrich.p@test.io", "mot_de_passe": "Ulrich2026!"})
+    presence.get("/api/profil/moi")
+    verifier("Une requête laisse une trace d'activité",
+             bool(jeton_sql("SELECT derniere_activite FROM utilisateur "
+                            "WHERE email = ?", ("ulrich.p@test.io",))))
+    p_moi = presence.get("/api/profil/moi").get_json() or {}
+    verifier("Le profil rapporte la présence", p_moi.get("en_ligne") is True)
+
+    # L'heure exacte des allees et venues ne regarde que la personne.
+    id_u = jeton_sql("SELECT id_utilisateur FROM utilisateur WHERE email = ?",
+                     ("ulrich.p@test.io",))
+    pub_p = etu.get(f"/api/profil/{id_u}").get_json() or {}
+    verifier("Le profil public dit si la personne est en ligne",
+             "en_ligne" in pub_p)
+    verifier("Mais pas l'heure de sa dernière venue",
+             "derniere_activite" not in pub_p,
+             "suivre les allées et venues à la minute près n'a pas à "
+             "être offert à tous")
+
+    # --- Identite de marque ---
+    import re as _re
+    for _f in ("../index.html", "../script.js", "../api.js",
+               "../verifier-email.html", "../reinitialiser.html"):
+        _chemin = os.path.join(os.path.dirname(os.path.abspath(__file__)), _f)
+        if not os.path.exists(_chemin):
+            continue
+        _texte = open(_chemin, encoding="utf-8").read()
+        _fautes = _re.findall(r"LaSource(?![e])", _texte)
+        verifier(f"« LaSourcee » écrit avec deux e ({os.path.basename(_f)})",
+                 not _fautes, f"{len(_fautes)} occurrence(s)")
+
+    # Le domaine du Message-ID doit suivre l'expediteur : un domaine
+    # etranger a l'adresse penalise la distribution.
+    from utils.email import _construire_message
+    msg = _construire_message("qui@test.io", "Essai", "Corps", None,
+                              "LaSourcee <djorod@lasourcee.org>")
+    verifier("Le Message-ID porte le domaine de l'expéditeur",
+             "@lasourcee.org>" in msg["Message-ID"], msg["Message-ID"])
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

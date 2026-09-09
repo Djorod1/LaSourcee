@@ -67,6 +67,8 @@ CREATE TABLE utilisateur (
     cree_le         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     maj_le          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     derniere_co     TIMESTAMP,
+    -- Derniere action, distincte de la derniere connexion.
+    derniere_activite TIMESTAMP,
     FOREIGN KEY (id_pays) REFERENCES pays(id_pays) ON DELETE SET NULL
 );
 

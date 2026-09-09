@@ -54,7 +54,7 @@ def utilisateur_depuis_jeton(token):
         return None
     return recuperer_un(
         """SELECT u.id_utilisateur, u.prenom, u.nom, u.email,
-                  u.role, u.est_admin, u.permissions
+                  u.role, u.est_admin, u.permissions, u.derniere_activite
              FROM session_web s
              JOIN utilisateur u ON u.id_utilisateur = s.id_utilisateur
             WHERE s.id_token = %s
@@ -138,9 +138,51 @@ def connexion_requise(fonction):
                            "site.")
             return jsonify({"erreur": message, "session_expiree": bool(token)}), 401
         g.utilisateur = utilisateur
+        _marquer_activite(utilisateur)
         return fonction(*args, **kwargs)
 
     return emballe
+
+
+# Une ecriture par requete saturerait la base pour une precision dont
+# personne n'a l'usage : savoir si quelqu'un etait la il y a dix
+# secondes ou soixante ne change rien. La trace n'est donc rafraichie
+# qu'au-dela de cet intervalle.
+INTERVALLE_ACTIVITE = 120          # secondes
+DELAI_EN_LIGNE = 300               # au-dela, la personne n'est plus « en ligne »
+
+
+def _marquer_activite(utilisateur):
+    """Note que ce compte vient d'agir. N'echoue jamais.
+
+    C'est la derniere ACTION, et non la derniere connexion : quelqu'un
+    peut s'etre connecte il y a trois jours et lire en ce moment meme.
+    Sans cette distinction, l'indicateur de presence dirait n'importe
+    quoi.
+    """
+    from datetime import datetime, timedelta
+    from models.db import executer
+    try:
+        precedente = utilisateur.get("derniere_activite")
+        if precedente:
+            texte = str(precedente).replace("T", " ")[:19]
+            try:
+                vue = datetime.strptime(texte, "%Y-%m-%d %H:%M:%S")
+                if datetime.utcnow() - vue < timedelta(
+                        seconds=INTERVALLE_ACTIVITE):
+                    return
+            except ValueError:
+                pass
+        executer(
+            "UPDATE utilisateur SET derniere_activite = %s "
+            "WHERE id_utilisateur = %s",
+            (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+             utilisateur["id_utilisateur"]),
+            commit=True)
+    except Exception:
+        # Une presence non notee est sans consequence ; une requete
+        # perdue parce que sa mise a jour a echoue ne l'est pas.
+        pass
 
 
 def admin_requis(fonction):

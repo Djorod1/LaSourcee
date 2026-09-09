@@ -41,6 +41,33 @@ const questions = [];
 const notifications = [];
 
 /* ---------- Helpers avatar (photo ou initiales) ---------- */
+/* Pastille de presence. « en_ligne » est calcule par le serveur : le
+   navigateur ne connait ni l'heure du serveur ni le seuil retenu, et
+   deux navigateurs mal regles afficheraient deux etats differents pour
+   la meme personne.
+
+   Trois etats et non deux : en ligne, vu recemment, et rien du tout.
+   Un point gris permanent pour quelqu'un qui n'est jamais venu ne dit
+   rien d'utile et encombre. */
+function pastillePresence(enLigne, derniereActivite) {
+  if (enLigne) {
+    return '<span class="presence en-ligne" title="En ligne"'
+      + ' aria-label="En ligne"></span>';
+  }
+  if (!derniereActivite) return '';
+  return `<span class="presence hors-ligne"
+    title="Vu ${echapper(_tempsRelatif(derniereActivite))}"
+    aria-label="Hors ligne, vu ${echapper(_tempsRelatif(derniereActivite))}"></span>`;
+}
+
+/* Phrase de presence, pour les endroits ou une pastille ne suffit pas. */
+function textePresence(u) {
+  if (!u) return '';
+  if (u.en_ligne) return 'En ligne';
+  if (u.derniere_activite) return 'Vu ' + _tempsRelatif(u.derniere_activite);
+  return '';
+}
+
 function avatarHTML(initiales, taille = '', photo = null, mentorVerifie = false) {
   const cls = 'avatar' + (taille ? ' avatar-' + taille : '') + (mentorVerifie ? ' mentor-verifie' : '');
   if (photo) return `<div class="${cls}"><img src="${photo}" class="photo-avatar" alt=""></div>`;
@@ -1350,6 +1377,7 @@ function rendreProfil() {
       <div class="ligne-meta">
         <span class="badge-role">${iconeRole(u.role)} ${
           echapper(nomRole(u.role, u.verifie))}</span>
+        <span class="etat-presence en-ligne">En ligne</span>
         ${u.pays ? `<span>${ic('position','ic ic-s')} ${echapper(u.pays)}</span>` : ''}
         ${u.domaine ? `<span>${ic('ecole','ic ic-s')} ${echapper(u.domaine)}</span>`
           : (u.etudes ? `<span>${ic('ecole','ic ic-s')} ${echapper(u.etudes)}</span>` : '')}
@@ -3192,6 +3220,22 @@ function fermerBurgerApp() {
    valeur secrète.
    ============================================================ */
 
+/* Variante « www » d'une adresse. Google compare les origines au
+   caractere pres : declarer lasourcee.org sans www.lasourcee.org fait
+   echouer la connexion depuis l'une des deux, sans message clair. */
+function _avecWww(adresse) {
+  if (!adresse) return '';
+  try {
+    const u = new URL(adresse);
+    if (u.hostname.startsWith('www.')) {
+      u.hostname = u.hostname.slice(4);
+    } else {
+      u.hostname = 'www.' + u.hostname;
+    }
+    return u.origin;
+  } catch (_) { return adresse; }
+}
+
 function _ligneDiag(libelle, ok, detail, conseil) {
   const etat = ok
     ? '<span class="tag tag-vert">OK</span>'
@@ -3290,9 +3334,18 @@ async function adminDiagnostic() {
           'Un identifiant client se termine par '
           + '« .apps.googleusercontent.com ». Une autre valeur, le secret '
           + 'client par exemple, provoque « invalid_client ».') : ''}
-      <p class="desc" style="margin-top:8px;">
-        Pensez aussi à déclarer ${echapper(d.adresse_publique)} dans les
-        origines JavaScript autorisées de la console Google.</p>
+      <div class="desc" style="margin-top:8px;">
+        <strong>Origines JavaScript à déclarer</strong> dans la console
+        Google Cloud, sous « Identifiants → votre ID client OAuth » :
+        <ul class="liste-origines">
+          <li><code>${echapper(d.adresse_publique)}</code></li>
+          <li><code>${echapper(_avecWww(d.adresse_publique))}</code></li>
+        </ul>
+        Les deux formes, avec et sans <code>www</code> : Google compare
+        l'origine au caractère près, et une seule des deux déclarée fait
+        échouer la connexion depuis l'autre. Sans port, sans barre
+        oblique finale, sans chemin.
+      </div>
     </div>
 
     <div class="carte">
@@ -4496,6 +4549,9 @@ function rendreProfilAutre(u) {
       <div class="ligne-meta">
         <span class="badge-role">${iconeRole(u.role)} ${
           echapper(nomRole(u.role, verifie))}</span>
+        ${u.en_ligne
+          ? '<span class="etat-presence en-ligne">En ligne</span>'
+          : ''}
         ${u.pays ? `<span>${ic('position','ic ic-s')} ${echapper(u.pays)}</span>` : ''}
         ${u.cree_le ? `<span>Membre depuis le ${
           echapper(formatDate(u.cree_le))}</span>` : ''}
@@ -4619,7 +4675,10 @@ async function rendreMessagerie() {
   zone.innerHTML = liste.map(c => `
     <button class="conversation ${c.id_conversation === _conversationOuverte ? 'active' : ''}"
             onclick="ouvrirConversation(${c.id_conversation}, '${echapper((c.prenom || '') + ' ' + (c.nom || ''))}')">
-      ${avatarHTML(((c.prenom||'?')[0] + (c.nom||'?')[0]).toUpperCase(), 's', c.photo_url)}
+      <span class="avatar-presence">
+        ${avatarHTML(((c.prenom||'?')[0] + (c.nom||'?')[0]).toUpperCase(), 's', c.photo_url)}
+        ${pastillePresence(c.en_ligne, c.derniere_activite)}
+      </span>
       <span class="conversation-texte">
         <strong>${echapper((c.prenom || '') + ' ' + (c.nom || ''))}</strong>
         <em>${echapper((c.dernier_contenu || 'Aucun message').slice(0, 60))}</em>
