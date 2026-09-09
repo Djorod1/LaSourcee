@@ -134,7 +134,7 @@ DATABASE_URL="postgresql://..." ./demarrer.sh tests   # ajoute PostgreSQL
 |---|---|
 | `tests_redaction.py` | aucun tiret cadratin dans les 18 fichiers dont le texte atteint un utilisateur |
 | `tests_contraste.py` | 15 couples de couleurs au niveau WCAG AA, en clair comme en sombre |
-| `tests_integration.py` | 325 tests fonctionnels, sur SQLite puis sur PostgreSQL |
+| `tests_integration.py` | 340 tests fonctionnels, sur SQLite puis sur PostgreSQL |
 | `tests_deploiement.py` | 80 vérifications de mise en ligne |
 
 Sans `DATABASE_URL`, les deux dernières lignes sont annoncées comme non
@@ -194,7 +194,7 @@ frontend et pourrait servir une autre interface sans modification.
 │   ├── app.py                Application Flask, erreurs, fichiers statiques
 │   ├── config.py             Configuration et diagnostic de démarrage
 │   ├── gerer_admins.py       Gestion des comptes administrateurs
-│   ├── tests_integration.py  325 tests fonctionnels
+│   ├── tests_integration.py  340 tests fonctionnels
 │   ├── tests_deploiement.py  80 vérifications de mise en ligne
 │   ├── tests_redaction.py    absence de tiret dans les textes visibles
 │   ├── tests_contraste.py    lisibilité des couleurs (WCAG AA)
@@ -226,9 +226,9 @@ frontend et pourrait servir une autre interface sans modification.
 │       └── amorcage.py         création du premier admin par variables
 │
 └── database/
-    ├── schema_sqlite.sql      23 tables — développement
-    ├── schema_postgres.sql    23 tables — production
-    ├── schema.sql             23 tables — MySQL
+    ├── schema_sqlite.sql      24 tables — développement
+    ├── schema_postgres.sql    24 tables — production
+    ├── schema.sql             24 tables — MySQL
     ├── migration_v2.sql
     └── migration_v3.sql       profils enrichis, préférences, vérification
 ```
@@ -342,10 +342,39 @@ onglet qui répondra 403 fait passer un refus de droits pour une panne.
 
 ### Export des données
 
-Sept jeux s'exportent en CSV ou en JSON depuis l'administration, plus le
+Huit jeux s'exportent en CSV ou en JSON depuis l'administration, plus le
 dossier complet d'une personne. Aucun mot de passe ni jeton de session
 n'y figure : un export circule et s'oublie. Le CSV porte un BOM et un
 point-virgule, pour s'ouvrir directement dans un tableur francophone.
+
+### Données d'analyse
+
+Les tables métier disent l'état présent de la plateforme. Elles ne
+disent pas ce qui s'y est passé, et c'est justement ce qu'il faut pour
+mesurer, comparer, ou entraîner un modèle : une série, pas une
+photographie.
+
+La table `evenement` enregistre une ligne par action notable, avec le
+rôle de la personne **au moment de l'action** : il change avec le temps,
+et une analyse postérieure attribuerait sinon toute l'activité passée
+d'un référent au rôle qu'il porte aujourd'hui. S'y ajoutent, sur chaque
+question, le nombre de consultations et la date de la première réponse,
+qui ne se reconstitue pas après coup.
+
+Trois limites sont posées, et elles sont volontaires :
+
+- **aucun contenu écrit par un membre.** On note qu'une question a été
+  publiée, pas ce qu'elle disait. Le texte vit dans sa table ; l'y
+  recopier le rendrait ineffaçable, et un export d'événements
+  deviendrait un export de contenus ;
+- **l'identifiant, jamais l'adresse ni le nom.** Un fichier d'événements
+  ne doit pas suffire à reconnaître quelqu'un ;
+- **suppression en cascade.** Effacer son compte efface son activité,
+  sans quoi le droit à l'effacement ne serait qu'un mot.
+
+Ce que la plateforme collecte doit rester annoncé aux membres dans la
+politique de confidentialité : une collecte silencieuse, même
+techniquement irréprochable, ne l'est pas juridiquement.
 
 ---
 

@@ -54,7 +54,7 @@ Conservez-la : c'est la valeur de `DATABASE_URL` à l'étape 3.
 > rubrique « Connection string ». Choisissez le format « psql » et
 > gardez le paramètre `?sslmode=require`.
 
-Le schéma des 23 tables se crée **tout seul au premier démarrage**. Si
+Le schéma des 24 tables se crée **tout seul au premier démarrage**. Si
 vous préférez le faire à la main, exécutez `database/schema_postgres.sql`
 dans la console SQL du fournisseur et mettez `INIT_DB_AUTO=0`.
 
@@ -324,7 +324,7 @@ python tests_integration.py                                    # SQLite
 DB_TYPE=postgres DATABASE_URL="postgresql://..." python tests_integration.py
 ```
 
-Elle doit afficher `325/325 tests réussis` dans les deux cas.
+Elle doit afficher `325/340 tests réussis` dans les deux cas.
 
 ---
 

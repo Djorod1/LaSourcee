@@ -3,6 +3,7 @@
 from flask import Blueprint, g, jsonify, request
 
 from models.db import recuperer_un, executer, curseur
+from services import evenements
 from utils.auth_helpers import connexion_requise
 from services.notifications import notifier_reponse
 
@@ -67,6 +68,19 @@ def publier():
                     WHERE id_utilisateur = %s""",
                 (g.utilisateur["id_utilisateur"],),
             )
+
+    # Date de la premiere reponse, posee une seule fois. Le delai entre
+    # une question et sa premiere reponse est la mesure la plus parlante
+    # de la vitalite de la plateforme, et elle ne se reconstitue pas
+    # apres coup si on ne l'inscrit pas.
+    executer(
+        """UPDATE question SET premiere_reponse_le = CURRENT_TIMESTAMP
+            WHERE id_question = %s AND premiere_reponse_le IS NULL""",
+        (int(id_q),), commit=True)
+    evenements.depuis_requete("reponse_publiee", type_cible="question",
+                              id_cible=int(id_q),
+                              contexte={"reponse": id_r,
+                                        "est_reponse_a_reponse": bool(id_parent)})
 
     # La notification vient apres l'enregistrement : elle ne doit ni le
     # retarder ni le compromettre si elle echoue.

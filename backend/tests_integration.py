@@ -1596,6 +1596,88 @@ def executer_tests():
                        json={"email": "ulrich@test.io",
                              "code": vrai}).status_code == 429)
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  26. MESURES D'USAGE ET PROFILS PUBLICS")
+    print("═" * 70)
+
+    mesur = app.test_client()
+    mesur.post("/api/auth/inscription", json={
+        "prenom": "Kounoumi", "nom": "MEDEKON", "email": "kounoumi@test.io",
+        "mot_de_passe": "Kounoumi2026!", "role": "etudiant"})
+    r = mesur.post("/api/questions", json={
+        "titre": "Question servant a eprouver les mesures d'usage",
+        "corps": "Un corps assez long pour passer la validation du serveur "
+                 "et permettre les verifications qui suivent.",
+        "id_secteur": 1})
+    id_mes = (r.get_json() or {}).get("id_question")
+    verifier("Question publiee pour les mesures", bool(id_mes))
+
+    verifier("La publication laisse un evenement",
+             jeton_sql("SELECT COUNT(*) FROM evenement "
+                       "WHERE type_evenement = 'question_publiee' "
+                       "AND id_cible = ?", (id_mes,)) == 1)
+    # Le role est fige au moment de l'action : il change avec le temps,
+    # et une analyse posterieure attribuerait sinon toute l'activite
+    # passee d'un referent a son role actuel.
+    verifier("L'evenement retient le role du moment",
+             jeton_sql("SELECT role_acteur FROM evenement "
+                       "WHERE type_evenement = 'question_publiee' "
+                       "AND id_cible = ?", (id_mes,)) == "etudiant")
+
+    mesur.get(f"/api/questions/{id_mes}")
+    mesur.get(f"/api/questions/{id_mes}")
+    verifier("Les consultations sont comptees",
+             jeton_sql("SELECT vues FROM question WHERE id_question = ?",
+                       (id_mes,)) == 2)
+
+    verifier("Aucune date de premiere reponse avant reponse",
+             jeton_sql("SELECT premiere_reponse_le FROM question "
+                       "WHERE id_question = ?", (id_mes,)) is None)
+    etu.post("/api/reponses", json={
+        "id_question": id_mes,
+        "contenu": "Une reponse suffisamment longue pour etre acceptee."})
+    premiere = jeton_sql("SELECT premiere_reponse_le FROM question "
+                         "WHERE id_question = ?", (id_mes,))
+    verifier("La premiere reponse date la question", bool(premiere))
+
+    etu.post("/api/reponses", json={
+        "id_question": id_mes,
+        "contenu": "Une seconde reponse, qui ne doit pas ecraser la date."})
+    verifier("La seconde reponse ne recrit pas cette date",
+             jeton_sql("SELECT premiere_reponse_le FROM question "
+                       "WHERE id_question = ?", (id_mes,)) == premiere,
+             "sinon le delai mesure serait toujours celui de la derniere")
+
+    # Aucun contenu ecrit par un membre dans le journal : le texte vit
+    # dans sa table, l'y recopier le rendrait ineffacable.
+    contextes = jeton_sql("SELECT COUNT(*) FROM evenement "
+                          "WHERE contexte LIKE ?",
+                          ("%eprouver les mesures%",))
+    verifier("Le journal ne recopie aucun contenu", contextes == 0)
+
+    r = adm.get("/api/admin/export/evenements")
+    verifier("Les evenements s'exportent", r.status_code == 200)
+
+    # --- Profil public ---
+    r = etu.get("/api/profil/%d" % jeton_sql(
+        "SELECT id_utilisateur FROM utilisateur WHERE email = ?",
+        ("kounoumi@test.io",)))
+    verifier("Le profil d'un autre membre est consultable",
+             r.status_code == 200)
+    pub = r.get_json() or {}
+    verifier("Il ne divulgue pas l'adresse e-mail", "email" not in pub)
+    verifier("Il ne divulgue pas le mot de passe temporaire",
+             "doit_changer_mdp" not in pub)
+    verifier("Il porte le parcours",
+             all(c in pub for c in ("situation", "objectif", "niveau_etudes",
+                                    "domaine", "etablissement", "langues")))
+    verifier("Il porte la photo et la date d'arrivee",
+             "photo_url" in pub and "cree_le" in pub)
+
+    verifier("Un profil inexistant repond 404",
+             etu.get("/api/profil/999999").status_code == 404)
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

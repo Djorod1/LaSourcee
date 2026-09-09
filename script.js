@@ -666,6 +666,8 @@ async function chargerFilDepuisApi() {
       secteur: q.secteur || 'Autre',
       auteur: `${q.prenom || ''} ${q.nom || ''}`.trim() || 'Anonyme',
       initiales: ((q.prenom || '?')[0] + (q.nom || '?')[0]).toUpperCase(),
+      idAuteur: q.id_utilisateur || q.id_auteur || null,
+      photoAuteur: q.photo_url || null,
       pays: q.pays || '',
       temps: _tempsRelatif(q.publiee_le),
       utile: q.nb_utiles || 0,
@@ -713,15 +715,49 @@ async function chargerMentorsDepuisApi() {
   }
 }
 
+/* Convertit un horodatage du serveur en objet Date.
+
+   La base stocke des instants UTC sous la forme « 2026-09-09 10:46:35 »,
+   sans fuseau ni « T ». Passée telle quelle à Date(), cette chaîne est
+   lue comme une heure locale par certains navigateurs et refusée par
+   d'autres, qui affichent alors « Invalid Date ». Deux défauts pour le
+   prix d'un : une heure fausse là où elle s'affiche, et rien du tout
+   ailleurs. Le « T » et le « Z » lèvent les deux. */
+function _dateServeur(valeur) {
+  if (!valeur) return null;
+  if (valeur instanceof Date) return valeur;
+  let t = String(valeur).trim().replace(' ', 'T');
+  if (!/[Zz]|[+-]\d{2}:?\d{2}$/.test(t)) t += 'Z';
+  const d = new Date(t);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/* Date et heure, dans le fuseau de la personne qui regarde. Une action
+   d'administration sans heure ne se recoupe avec rien. */
+function formatHorodatage(valeur, avecSecondes = false) {
+  const d = _dateServeur(valeur);
+  if (!d) return '';
+  return d.toLocaleString('fr-FR', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+    ...(avecSecondes ? { second: '2-digit' } : {}),
+  });
+}
+
+function formatDate(valeur) {
+  const d = _dateServeur(valeur);
+  return d ? d.toLocaleDateString('fr-FR') : '';
+}
+
 function _tempsRelatif(dateIso) {
-  if (!dateIso) return '';
-  const d = new Date(dateIso);
+  const d = _dateServeur(dateIso);
+  if (!d) return '';
   const sec = Math.floor((Date.now() - d.getTime()) / 1000);
   if (sec < 60) return "à l'instant";
   if (sec < 3600) return `il y a ${Math.floor(sec/60)} min`;
   if (sec < 86400) return `il y a ${Math.floor(sec/3600)} h`;
   if (sec < 86400 * 7) return `il y a ${Math.floor(sec/86400)} j`;
-  return d.toLocaleDateString('fr-FR');
+  return formatDate(d);
 }
 
 function rendreFil() {
@@ -754,8 +790,10 @@ function carteQuestionHTML(q) {
   return `
     <article class="carte-question" data-id="${q.id}">
       <div class="q-entete">
-        ${avatarHTML(q.initiales, 's')}
-        <div class="info"><strong>${echapper(q.auteur)}</strong> · <span>${echapper(q.pays)}</span><time>${echapper(q.temps)}</time></div>
+        ${avatarLien(q.idAuteur, q.initiales, 's', q.photoAuteur, false, q.auteur)}
+        <div class="info"><strong class="nom-cliquable" ${q.idAuteur
+          ? `onclick="ouvrirProfilUtilisateur(${q.idAuteur})"` : ''
+          }>${echapper(q.auteur)}</strong> · <span>${echapper(q.pays)}</span><time>${echapper(q.temps)}</time></div>
         <button class="btn-fantome btn-petit" title="Signaler" aria-label="Signaler" onclick="signaler(${q.id})">${ic('drapeau','ic ic-s')}</button>
       </div>
       <h3 class="q-titre" style="cursor:pointer;" onclick="ouvrirQuestion(${q.id})">${echapper(q.titre)}</h3>
@@ -854,8 +892,10 @@ function ouvrirQuestion(id) {
   document.getElementById('contenu-question').innerHTML = `
     <article class="carte-question">
       <div class="q-entete">
-        ${avatarHTML(q.initiales, 's')}
-        <div class="info"><strong>${echapper(q.auteur)}</strong> · <span>${echapper(q.pays)}</span><time>${echapper(q.temps)}</time></div>
+        ${avatarLien(q.idAuteur, q.initiales, 's', q.photoAuteur, false, q.auteur)}
+        <div class="info"><strong class="nom-cliquable" ${q.idAuteur
+          ? `onclick="ouvrirProfilUtilisateur(${q.idAuteur})"` : ''
+          }>${echapper(q.auteur)}</strong> · <span>${echapper(q.pays)}</span><time>${echapper(q.temps)}</time></div>
       </div>
       <h2 class="q-titre">${echapper(q.titre)}</h2>
       <p class="q-corps">${echapper(q.corps)}</p>
@@ -1127,27 +1167,35 @@ function ouvrirProfilMentor(id) {
   naviguerApp('profil');
 }
 function rendreProfil() {
+  if (profilPublic) return rendreProfilAutre(profilPublic);
   if (profilCible) return rendreProfilMentor(profilCible);
   const u = etat.utilisateur;
   const estMentorVerifie = estMentor() && u.verifie;
   const entete = document.getElementById('entete-profil');
   entete.innerHTML = `
     <div class="col-avatar">
-      ${avatarHTML(u.initiales, 'xl', u.photo, estMentorVerifie)}
+      <span class="${u.photo ? 'avatar-agrandissable' : ''}"
+            ${u.photo ? `onclick="ouvrirPhoto('${echapper(u.photo)}', '${echapper(u.prenom + ' ' + u.nom)}')"
+            title="Voir la photo en grand" role="button" tabindex="0"` : ''}>
+        ${avatarHTML(u.initiales, 'xl', u.photo, estMentorVerifie)}
+      </span>
     </div>
     <div class="col-infos">
       <h2>${echapper(u.prenom + ' ' + u.nom)}
         ${estMentorVerifie ? badgeMentorVerifie() : ''}
       </h2>
       <div class="ligne-meta">
-        <span class="badge-role">${estMentor() ? ic('trophee','ic ic-s') + ' Mentor' : ic('diplome','ic ic-s') + ' Étudiant'}</span>
+        <span class="badge-role">${iconeRole(u.role)} ${
+          echapper(nomRole(u.role, u.verifie))}</span>
         ${u.pays ? `<span>${ic('position','ic ic-s')} ${echapper(u.pays)}</span>` : ''}
-        ${u.etudes ? `<span>${ic('ecole','ic ic-s')} ${echapper(u.etudes)}</span>` : ''}
+        ${u.domaine ? `<span>${ic('ecole','ic ic-s')} ${echapper(u.domaine)}</span>`
+          : (u.etudes ? `<span>${ic('ecole','ic ic-s')} ${echapper(u.etudes)}</span>` : '')}
       </div>
       <div class="tags-profil">
         ${u.secteurs.map(s => `<span class="tag">${echapper(s)}</span>`).join('')}
       </div>
       ${u.bio ? `<p class="bio-profil">${echapper(u.bio)}</p>` : ''}
+      ${blocParcoursProfil(u)}
     </div>
     <div class="col-actions">
       <button class="btn btn-secondaire" onclick="televerserPhotoCompte()">${ic('appareil')} Photo</button>
@@ -2462,7 +2510,7 @@ async function adminMentors() {
           ${parcours ? `<dt>Parcours</dt><dd>${parcours}</dd>` : ''}
           ${m.lien_pro ? `<dt>Profil professionnel</dt><dd>
              <a href="${echapper(m.lien_pro)}" target="_blank" rel="noopener noreferrer nofollow">Ouvrir le lien</a></dd>` : ''}
-          ${m.depose_le ? `<dt>Déposée le</dt><dd>${echapper(String(m.depose_le).slice(0,16))}</dd>` : ''}
+          ${m.depose_le ? `<dt>Déposée le</dt><dd>${echapper(formatHorodatage(m.depose_le))}</dd>` : ''}
         </dl>
         ${m.motivation ? `<div class="bloc-motivation">
             <strong>Motivation</strong>
@@ -2553,7 +2601,7 @@ function carteSignalement(s) {
   const c = s.contenu || {};
   const traite = s.statut !== 'ouvert';
   const date = s.cree_le
-    ? new Date(String(s.cree_le).replace(' ', 'T')).toLocaleDateString('fr-FR')
+    ? formatHorodatage(s.cree_le)
     : '';
 
   // Le contenu incriminé, cité. Sans lui, décider revient à croire le
@@ -2600,7 +2648,7 @@ function carteSignalement(s) {
       ? `<div class="signalement-decision">Décision : <strong>${
            echapper(libelleAction(s.action) || s.statut)}</strong>${
            s.admin_prenom ? ` par ${echapper(s.admin_prenom + ' ' + s.admin_nom)}` : ''}${
-           s.traite_le ? ` le ${echapper(String(s.traite_le).slice(0, 10))}` : ''}</div>`
+           s.traite_le ? ` le ${echapper(formatHorodatage(s.traite_le))}` : ''}</div>`
       : `<div class="signalement-actions">
           ${DECISIONS_SIGNALEMENT.map(d => `<button
              class="btn ${d.classe} btn-petit" title="${echapper(d.aide)}"
@@ -2684,7 +2732,7 @@ async function adminAudit() {
     <table class="tableau">
       <thead><tr><th>Date</th><th>Acteur</th><th>Action</th><th>Cible</th><th>Détails</th></tr></thead>
       <tbody>${liste.map(a => `<tr>
-        <td>${new Date(a.cree_le).toLocaleString('fr-FR')}</td>
+        <td class="horodatage">${formatHorodatage(a.cree_le, true)}</td>
         <td>${echapper(a.prenom + ' ' + a.nom)}</td>
         <td><span class="tag">${echapper(a.action)}</span></td>
         <td>${a.type_cible ? echapper(a.type_cible) + ' #' + a.id_cible : '·'}</td>
@@ -3788,15 +3836,42 @@ async function adminAdministrateurs() {
     API.get('/admin/administrateurs'),
     API.get('/admin/permissions'),
   ]);
-  const catalogue = cat.catalogue || {};
+  const catalogue = cat.catalogue || [];
   const suis_super = !!cat.super_admin;
 
-  const cases = (prefixe, coches) => Object.entries(catalogue).map(([cle, txt]) =>
-    `<label class="case-droit">
-       <input type="checkbox" id="${prefixe}-${cle}" value="${cle}"
-              ${coches.includes(cle) ? 'checked' : ''} />
-       <span><strong>${echapper(cle)}</strong><em>${echapper(txt)}</em></span>
-     </label>`).join('');
+  const GROUPES = [
+    ['animation', 'Animation de la plateforme',
+     "Le travail courant. Ces droits n'exposent ni les adresses des membres ni la configuration."],
+    ['sensible', 'Données et configuration',
+     'Ces droits donnent accès aux adresses e-mail, au journal des actions ou aux réglages du serveur.'],
+    ['critique', 'Contrôle des accès',
+     "Ce droit permet d'en accorder d'autres, y compris à soi-même par personne interposée."],
+  ];
+
+  /* Une case par droit, avec son nom lisible et ce qu'il ouvre. La
+     grille alignait mal parce que les cartes n'avaient pas la même
+     hauteur : les descriptions font une, deux ou trois lignes. Elles
+     s'étirent maintenant sur toute la rangée. */
+  const cases = (prefixe, coches, desactive) => GROUPES.map(([portee, titre, aide]) => {
+    const droits = catalogue.filter(d => d.portee === portee);
+    if (!droits.length) return '';
+    return `<fieldset class="groupe-droits portee-${portee}">
+      <legend>${echapper(titre)}</legend>
+      <p class="aide-champ" style="margin:0 0 10px;">${echapper(aide)}</p>
+      <div class="grille-droits">
+        ${droits.map(d => `
+          <label class="case-droit ${desactive ? 'fige' : ''}">
+            <input type="checkbox" id="${prefixe}-${d.cle}" value="${d.cle}"
+                   ${coches.includes(d.cle) ? 'checked' : ''}
+                   ${desactive ? 'disabled' : ''} />
+            <span>
+              <strong>${echapper(d.nom)}</strong>
+              <em>${echapper(d.description)}</em>
+            </span>
+          </label>`).join('')}
+      </div>
+    </fieldset>`;
+  }).join('');
 
   const formulaire = suis_super ? `
     <div class="carte" style="margin-bottom:18px;">
@@ -3805,28 +3880,29 @@ async function adminAdministrateurs() {
          compte est promu et son mot de passe reste le sien. Sinon un
          compte est créé, et ses accès lui sont envoyés par e-mail.</p>
       <div class="champs-cote">
-        <div class="champ"><label>Prénom</label><input id="na-prenom" placeholder="Chabi" /></div>
-        <div class="champ"><label>Nom</label><input id="na-nom" placeholder="Gbaguidi" /></div>
+        <div class="champ"><label for="na-prenom">Prénom</label><input id="na-prenom" placeholder="Chabi" /></div>
+        <div class="champ"><label for="na-nom">Nom</label><input id="na-nom" placeholder="Gbaguidi" /></div>
       </div>
-      <div class="champ"><label>Adresse e-mail</label>
+      <div class="champ"><label for="na-email">Adresse e-mail</label>
         <input id="na-email" type="email" placeholder="prenom@lasourcee.org" /></div>
-      <div class="champ"><label>Droits accordés</label>
-        <div class="grille-droits">${cases('na', cat.par_defaut || [])}</div>
-      </div>
-      <label class="case-droit" style="margin-top:8px;">
+      ${cases('na', cat.par_defaut || [], false)}
+      <label class="case-droit case-super">
         <input type="checkbox" id="na-super" />
-        <span><strong>super administrateur</strong><em>Tous les droits, y
-          compris nommer d'autres administrateurs. À n'accorder qu'à
-          quelqu'un dont vous répondez.</em></span>
+        <span>
+          <strong>Super administrateur</strong>
+          <em>Tous les droits d'un coup, présents et à venir, sans qu'on
+            puisse les lui retirer un par un. À réserver à quelqu'un dont
+            vous répondez.</em>
+        </span>
       </label>
-      <button class="btn btn-primaire" style="margin-top:12px;"
+      <button class="btn btn-primaire" style="margin-top:14px;"
               onclick="creerAdministrateur(this)">Créer le compte</button>
       <p class="note-param" id="na-retour"></p>
     </div>` : `
     <div class="carte" style="margin-bottom:18px;">
       <p class="desc">Seul un super administrateur peut nommer des
-         administrateurs ou modifier leurs droits. Vous pouvez consulter
-         la liste ci-dessous.</p>
+         administrateurs ou modifier leurs droits. La liste ci-dessous
+         reste consultable.</p>
     </div>`;
 
   return `<h2 style="margin-bottom:6px;">Administrateurs</h2>
@@ -3838,26 +3914,26 @@ async function adminAdministrateurs() {
     ${liste.map(a => {
       const est_super = a.role === 'super_admin';
       const droits = a.droits || [];
+      const fige = !suis_super || est_super;
       return `<div class="carte carte-admin">
-        <div class="signalement-entete">
+        <div class="entete-admin">
           <div>
             <strong>${echapper(a.prenom + ' ' + a.nom)}</strong>
-            <span class="tag ${est_super ? 'tag-terre' : 'tag-ardoise'}">
-              ${est_super ? 'super administrateur' : 'administrateur'}</span>
-            ${a.est_actif ? '' : '<span class="tag tag-suspendu">suspendu</span>'}
+            <div class="desc">${echapper(a.email)}</div>
           </div>
-          <span class="desc">${echapper(a.email)}</span>
+          <div class="etiquettes-admin">
+            <span class="tag ${est_super ? 'tag-terre' : 'tag-ardoise'}">${
+              est_super ? 'super administrateur' : 'administrateur'}</span>
+            ${a.est_actif ? '' : '<span class="tag tag-suspendu">suspendu</span>'}
+            ${a.derniere_co ? `<span class="desc">vu le ${
+              echapper(formatHorodatage(a.derniere_co))}</span>` : ''}
+          </div>
         </div>
-        <div class="grille-droits">
-          ${Object.entries(catalogue).map(([cle, txt]) => `
-            <label class="case-droit ${est_super ? 'fige' : ''}">
-              <input type="checkbox" id="dr-${a.id_utilisateur}-${cle}"
-                     value="${cle}" ${droits.includes(cle) ? 'checked' : ''}
-                     ${(!suis_super || est_super) ? 'disabled' : ''} />
-              <span><strong>${echapper(cle)}</strong><em>${echapper(txt)}</em></span>
-            </label>`).join('')}
-        </div>
-        ${suis_super && !est_super ? `<div style="display:flex; gap:8px; margin-top:12px;">
+        ${est_super
+          ? `<p class="aide-champ">Tous les droits, y compris ceux qui
+             seront ajoutés plus tard. Ils ne se restreignent pas.</p>`
+          : cases('dr-' + a.id_utilisateur, droits, fige)}
+        ${suis_super && !est_super ? `<div class="actions-admin">
           <button class="btn btn-secondaire btn-petit"
                   onclick="enregistrerDroits(${a.id_utilisateur}, this)">Enregistrer les droits</button>
           <button class="btn btn-danger btn-petit"
@@ -4001,4 +4077,205 @@ function telechargerDossier() {
   if (!id) return toast('Indiquez un identifiant de compte.', 'erreur');
   _telecharger(`/admin/export/compte/${encodeURIComponent(id)}`,
                `lasourcee-compte-${id}.json`);
+}
+
+/* ============================================================
+   PHOTOS ET PROFILS DES AUTRES MEMBRES
+   ============================================================ */
+
+/* Agrandissement d'une photo de profil.
+
+   Une vignette de quarante pixels ne montre pas un visage. Cliquer
+   dessus affiche l'image entière, ce que tout le monde essaie de faire
+   avant même d'y penser. Fermeture au clic à côté ou par Échap. */
+function ouvrirPhoto(source, legende) {
+  if (!source) return;
+  fermerPhoto();
+  const fond = document.createElement('div');
+  fond.className = 'visionneuse';
+  fond.id = 'visionneuse';
+  fond.setAttribute('role', 'dialog');
+  fond.setAttribute('aria-modal', 'true');
+  fond.setAttribute('aria-label', legende || 'Photo de profil');
+  fond.innerHTML = `
+    <button class="visionneuse-fermer" onclick="fermerPhoto()"
+            aria-label="Fermer">&times;</button>
+    <figure>
+      <img src="${echapper(source)}" alt="${echapper(legende || '')}" />
+      ${legende ? `<figcaption>${echapper(legende)}</figcaption>` : ''}
+    </figure>`;
+  fond.addEventListener('click', (e) => {
+    if (e.target === fond) fermerPhoto();
+  });
+  document.body.appendChild(fond);
+  document.body.style.overflow = 'hidden';
+  fond.querySelector('.visionneuse-fermer')?.focus();
+}
+
+function fermerPhoto() {
+  document.getElementById('visionneuse')?.remove();
+  if (!document.querySelector('.modale-fond')) document.body.style.overflow = '';
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') fermerPhoto();
+});
+
+/* Avatar cliquable : il ouvre le profil de la personne, et la photo en
+   grand si l'on clique dessus alors que le profil est déjà ouvert. */
+function avatarLien(id, initiales, taille, photo, verifie, nom) {
+  const contenu = avatarHTML(initiales, taille, photo, verifie);
+  if (!id) return contenu;
+  return `<span class="avatar-lien" role="button" tabindex="0"
+      title="Voir le profil de ${echapper(nom || '')}"
+      onclick="event.stopPropagation(); ouvrirProfilUtilisateur(${id})"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault(); ouvrirProfilUtilisateur(${id});}"
+    >${contenu}</span>`;
+}
+
+/* Profil public d'un autre membre, chargé depuis le serveur. */
+let profilPublic = null;
+
+async function ouvrirProfilUtilisateur(id) {
+  if (!id) return;
+  if (etat.utilisateur && id === etat.utilisateur.id) {
+    profilCible = null; profilPublic = null;
+    return naviguerApp('profil');
+  }
+  try {
+    profilPublic = await API.get('/profil/' + id);
+    profilCible = null;
+    naviguerApp('profil');
+  } catch (err) {
+    toast(err.message || 'Profil indisponible.', 'erreur');
+  }
+}
+
+/* Lignes de parcours communes à tous les profils. Le même bloc sert au
+   bénéficiaire, au référent et à l'administrateur : ce qui distingue
+   les trois est ce qu'ils ont rempli, pas la forme de leur fiche. */
+function blocParcoursProfil(u) {
+  const lignes = [
+    ['Situation', u.situation],
+    ['Recherche', u.objectif],
+    ["Niveau d'études", u.niveau_etudes],
+    ['Domaine', u.domaine],
+    ['Formation', u.etablissement],
+    ['Langues', u.langues],
+  ].filter(([, v]) => v);
+
+  if (u.profil_pro) {
+    lignes.push(['Profil professionnel',
+      `<a href="${echapper(u.profil_pro)}" target="_blank"
+          rel="noopener noreferrer nofollow">Consulter</a>`]);
+  }
+  if (!lignes.length) return '';
+  return `<dl class="parcours-profil">
+    ${lignes.map(([cle, val]) => `<dt>${echapper(cle)}</dt>
+      <dd>${cle === 'Profil professionnel' ? val : echapper(val)}</dd>`).join('')}
+  </dl>`;
+}
+
+/* Nom du rôle tel qu'il s'affiche. En base, « mentor » et « etudiant »
+   sont restés : les renommer aurait imposé de migrer toutes les lignes
+   pour un gain nul, personne ne voyant ces chaînes. */
+function nomRole(role, verifie) {
+  if (role === 'super_admin') return 'Administrateur principal';
+  if (role === 'admin') return 'Administrateur';
+  if (role === 'mentor') return verifie ? 'Référent vérifié' : 'Référent';
+  if (role === 'visiteur') return 'Visiteur';
+  return 'Bénéficiaire';
+}
+
+function iconeRole(role) {
+  if (role === 'admin' || role === 'super_admin') return ic('bouclier', 'ic ic-s');
+  if (role === 'mentor') return ic('trophee', 'ic ic-s');
+  return ic('diplome', 'ic ic-s');
+}
+
+/* Profil d'un autre membre. Même présentation que le sien, sans les
+   boutons de modification et sans les informations qui ne regardent que
+   la personne : l'adresse e-mail n'est pas renvoyée par le serveur pour
+   un profil consulté par quelqu'un d'autre. */
+function rendreProfilAutre(u) {
+  const nomComplet = `${u.prenom || ''} ${u.nom || ''}`.trim();
+  const initiales = ((u.prenom || '?')[0] + (u.nom || '?')[0]).toUpperCase();
+  const verifie = !!u.est_verifie;
+  const suivi = etat.suivis.has(u.id_utilisateur);
+
+  const entete = document.getElementById('entete-profil');
+  entete.innerHTML = `
+    <div class="col-avatar">
+      <span class="${u.photo_url ? 'avatar-agrandissable' : ''}"
+            ${u.photo_url ? `onclick="ouvrirPhoto('${echapper(u.photo_url)}', '${echapper(nomComplet)}')"
+            title="Voir la photo en grand" role="button" tabindex="0"` : ''}>
+        ${avatarHTML(initiales, 'xl', u.photo_url, verifie)}
+      </span>
+    </div>
+    <div class="col-infos">
+      <h2>${echapper(nomComplet)} ${verifie ? badgeMentorVerifie() : ''}</h2>
+      <div class="ligne-meta">
+        <span class="badge-role">${iconeRole(u.role)} ${
+          echapper(nomRole(u.role, verifie))}</span>
+        ${u.pays ? `<span>${ic('position','ic ic-s')} ${echapper(u.pays)}</span>` : ''}
+        ${u.cree_le ? `<span>Membre depuis le ${
+          echapper(formatDate(u.cree_le))}</span>` : ''}
+      </div>
+      <div class="tags-profil">
+        ${(u.secteurs || []).map(s =>
+          `<span class="tag">${echapper(s.libelle || s)}</span>`).join('')}
+      </div>
+      ${u.bio ? `<p class="bio-profil">${echapper(u.bio)}</p>` : ''}
+      ${blocParcoursProfil(u)}
+    </div>
+    <div class="col-actions">
+      ${u.role === 'mentor' ? `<button class="btn ${suivi ? 'btn-secondaire' : 'btn-primaire'}"
+        onclick="basculerSuiviProfil(${u.id_utilisateur}, this)">${
+        suivi ? 'Suivi' : 'Suivre'}</button>` : ''}
+      <button class="btn btn-secondaire" onclick="retourFil()">Retour au fil</button>
+    </div>`;
+
+  const stats = document.getElementById('stats-profil');
+  if (stats) {
+    stats.style.display = '';
+    stats.innerHTML = `
+      <div class="stat-item">
+        <span class="stat-valeur">${u.nb_reponses ?? 0}</span>
+        <span class="stat-label">Réponses</span>
+      </div>
+      ${u.note_moyenne ? `<div class="stat-item">
+        <span class="stat-valeur">${u.note_moyenne}</span>
+        <span class="stat-label">Note moyenne</span>
+      </div>` : ''}
+      ${u.anciennete ? `<div class="stat-item">
+        <span class="stat-valeur">${echapper(u.anciennete)}</span>
+        <span class="stat-label">Expérience</span>
+      </div>` : ''}`;
+  }
+  const onglets = document.getElementById('onglets-profil');
+  if (onglets) onglets.style.display = 'none';
+  const contenu = document.getElementById('contenu-profil');
+  if (contenu) contenu.innerHTML = '';
+}
+
+function retourFil() {
+  profilPublic = null;
+  profilCible = null;
+  naviguerApp('fil');
+}
+
+async function basculerSuiviProfil(id, bouton) {
+  // Une seule route, qui bascule : c'est elle qui dit l'état obtenu.
+  // Le déduire ici ferait diverger le bouton de la réalité dès qu'un
+  // autre onglet aurait agi entre-temps.
+  bouton.disabled = true;
+  try {
+    const r = await API.post(`/mentors/${id}/suivre`, {});
+    if (r.suivi) { etat.suivis.add(id); bouton.textContent = 'Suivi';
+                   bouton.className = 'btn btn-secondaire'; }
+    else { etat.suivis.delete(id); bouton.textContent = 'Suivre';
+           bouton.className = 'btn btn-primaire'; }
+  } catch (err) {
+    toast(err.message || 'Action impossible.', 'erreur');
+  } finally { bouton.disabled = false; }
 }

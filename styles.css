@@ -2068,28 +2068,152 @@ img, svg, video { max-width: 100%; height: auto; }
    nus se coche au hasard : personne ne sait ce que « audit » recouvre
    avant de l'avoir accordé.
    ------------------------------------------------------------------ */
+/* Les droits sont groupés par ce qu'ils engagent : le travail courant
+   d'abord, puis ce qui touche aux données des membres, enfin ce qui
+   permet d'accorder des droits. En vrac, tout se cochait du même geste,
+   et l'accès aux adresses e-mail passait pour un détail. */
+.groupe-droits {
+  border: none;
+  border-left: 3px solid var(--bordure);
+  margin: 0 0 14px;
+  padding: 0 0 0 14px;
+}
+.groupe-droits legend {
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.portee-sensible { border-left-color: var(--accent); }
+.portee-critique { border-left-color: var(--rouge); }
+
 .grille-droits {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
   gap: 8px;
 }
+/* align-items par défaut, donc « stretch » : les cartes d'une même
+   rangée prennent la hauteur de la plus haute. Avec « flex-start », une
+   description de trois lignes laissait ses voisines flotter au-dessus
+   du vide, et la grille semblait décalée. */
 .case-droit {
-  display: flex; align-items: flex-start; gap: 8px;
-  padding: 8px 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
   border: 1px solid var(--bordure);
   border-radius: var(--rayon-s);
+  background: var(--surface);
   cursor: pointer;
   font-size: 13px;
 }
 .case-droit:hover { border-color: var(--primaire); }
-.case-droit.fige { opacity: .6; cursor: default; }
-.case-droit input { margin-top: 2px; flex-shrink: 0; }
-.case-droit span { display: flex; flex-direction: column; gap: 2px; }
+.case-droit:has(input:checked) {
+  border-color: var(--primaire);
+  background: var(--primaire-clair);
+}
+.case-droit.fige { opacity: .65; cursor: default; }
+.case-droit input {
+  margin: 2px 0 0;
+  flex-shrink: 0;
+  width: 16px; height: 16px;
+  accent-color: var(--primaire);
+}
+.case-droit > span {
+  display: flex; flex-direction: column; gap: 3px; min-width: 0;
+}
+.case-droit strong { font-size: 13px; line-height: 1.3; }
 .case-droit em {
   font-style: normal; font-size: 12px; color: var(--texte-doux);
-  line-height: 1.4;
+  line-height: 1.45;
 }
+.case-super { margin-top: 4px; border-color: var(--accent); }
+
 .carte-admin { margin-bottom: 14px; }
+.entete-admin {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  align-items: flex-start; justify-content: space-between;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--bordure);
+}
+.etiquettes-admin {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+}
+.actions-admin {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin-top: 12px; padding-top: 12px;
+  border-top: 1px solid var(--bordure);
+}
+/* Une heure sans espace insécable se coupe en fin de ligne. */
+.horodatage { white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* ------------------------------------------------------------------
+   PROFILS DES AUTRES MEMBRES
+   ------------------------------------------------------------------
+   Un avatar et un nom se cliquent : c'est le premier geste de qui veut
+   savoir à qui il parle, et il ne menait nulle part. Le curseur le dit,
+   et le contour au clavier permet d'y arriver sans souris.
+   ------------------------------------------------------------------ */
+.avatar-lien, .avatar-agrandissable {
+  display: inline-flex;
+  cursor: pointer;
+  border-radius: 50%;
+}
+.avatar-lien:focus-visible,
+.avatar-agrandissable:focus-visible,
+.nom-cliquable:focus-visible {
+  outline: 2px solid var(--primaire);
+  outline-offset: 2px;
+}
+.avatar-lien:hover .avatar, .avatar-agrandissable:hover .avatar {
+  filter: brightness(1.08);
+}
+.nom-cliquable[onclick] { cursor: pointer; }
+.nom-cliquable[onclick]:hover { text-decoration: underline; }
+
+/* Parcours affiché sur un profil : libellé et valeur alignés. */
+.parcours-profil {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 14px;
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+.parcours-profil dt { color: var(--texte-doux); }
+.parcours-profil dd { margin: 0; }
+@media (max-width: 520px) {
+  .parcours-profil { grid-template-columns: 1fr; gap: 0; }
+  .parcours-profil dt { margin-top: 8px; font-size: 12px; }
+}
+
+/* Visionneuse de photo. Fond opaque plutôt que translucide : une photo
+   se regarde, elle ne se compare pas à ce qu'il y a derrière. */
+.visionneuse {
+  position: fixed; inset: 0; z-index: 5000;
+  background: rgba(8, 12, 22, .94);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.visionneuse figure { margin: 0; text-align: center; }
+.visionneuse img {
+  max-width: min(92vw, 620px);
+  max-height: 78vh;
+  border-radius: var(--rayon-m);
+  display: block;
+}
+.visionneuse figcaption {
+  margin-top: 12px; color: #E8EEF8; font-size: 14px;
+}
+.visionneuse-fermer {
+  position: absolute; top: 16px; right: 20px;
+  width: 40px; height: 40px;
+  border: none; border-radius: 50%;
+  background: rgba(255, 255, 255, .12);
+  color: #fff; font-size: 26px; line-height: 1;
+  cursor: pointer;
+}
+.visionneuse-fermer:hover { background: rgba(255, 255, 255, .22); }
 
 .table-export { width: 100%; border-collapse: collapse; font-size: 14px; }
 .table-export th {

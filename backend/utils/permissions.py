@@ -31,18 +31,77 @@ from flask import g, jsonify
 
 from utils.auth_helpers import connexion_requise
 
-# Un droit par ecran d'administration, plus l'export, qui merite le sien :
-# telecharger la base entiere n'est pas la meme chose que la consulter.
-PERMISSIONS = {
-    "utilisateurs": "Consulter et gerer les comptes",
-    "referents": "Examiner les candidatures de referent",
-    "signalements": "Moderer les contenus signales",
-    "categories": "Gerer les secteurs d'activite",
-    "audit": "Consulter le journal des actions d'administration",
-    "diagnostic": "Voir la configuration du serveur",
-    "export": "Telecharger les donnees de la plateforme",
-    "administrateurs": "Creer des administrateurs et fixer leurs droits",
+# Un droit par ecran d'administration, plus l'export, qui merite le
+# sien : telecharger la base entiere n'est pas la meme chose que la
+# consulter a l'ecran.
+#
+# Chaque droit porte un nom lisible et une phrase qui dit ce qu'il
+# ouvre, et surtout ce qu'il donne a voir. Une liste de mots-cles nus se
+# coche au hasard : personne ne sait ce que « audit » recouvre avant de
+# l'avoir accorde, et l'on decouvre trop tard qu'il donnait acces aux
+# adresses de tous les membres.
+#
+# « portee » classe le droit par ce qu'il engage, pour que l'ecran les
+# presente dans cet ordre plutot qu'en vrac.
+PERMISSIONS_DETAIL = {
+    "signalements": {
+        "nom": "Modération",
+        "description": "Examiner les contenus signalés, les retirer, "
+                       "avertir ou suspendre leur auteur.",
+        "portee": "animation",
+    },
+    "referents": {
+        "nom": "Validation des référents",
+        "description": "Lire les dossiers de candidature et accorder le "
+                       "badge de référent vérifié.",
+        "portee": "animation",
+    },
+    "categories": {
+        "nom": "Secteurs d'activité",
+        "description": "Ajouter, renommer ou retirer les secteurs "
+                       "proposés aux membres.",
+        "portee": "animation",
+    },
+    "utilisateurs": {
+        "nom": "Comptes des membres",
+        "description": "Consulter l'annuaire complet, les adresses "
+                       "e-mail, suspendre ou supprimer un compte.",
+        "portee": "sensible",
+    },
+    "audit": {
+        "nom": "Journal d'administration",
+        "description": "Lire qui a fait quoi, quand, et depuis quelle "
+                       "adresse IP.",
+        "portee": "sensible",
+    },
+    "export": {
+        "nom": "Export des données",
+        "description": "Télécharger la base : comptes, contenus, "
+                       "signalements, journal. Les fichiers sortent de "
+                       "la plateforme.",
+        "portee": "sensible",
+    },
+    "diagnostic": {
+        "nom": "Configuration du serveur",
+        "description": "Voir l'état du serveur, l'hébergement, l'envoi "
+                       "d'e-mails et les identifiants de connexion "
+                       "externes.",
+        "portee": "sensible",
+    },
+    "administrateurs": {
+        "nom": "Gestion des administrateurs",
+        "description": "Nommer d'autres administrateurs et fixer leurs "
+                       "droits. Ce droit permet de s'en donner d'autres.",
+        "portee": "critique",
+    },
 }
+
+# Ordre d'affichage : du plus courant au plus lourd de consequences.
+ORDRE_PORTEE = {"animation": 0, "sensible": 1, "critique": 2}
+
+# Compatibilite : la forme simple {cle: description} reste servie.
+PERMISSIONS = {cle: d["description"]
+               for cle, d in PERMISSIONS_DETAIL.items()}
 
 # Ce qu'on accorde par defaut a un nouvel administrateur : de quoi
 # animer la plateforme, sans le journal, la configuration ni l'export,

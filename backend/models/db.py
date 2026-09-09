@@ -347,12 +347,68 @@ COLONNES_ATTENDUES = [
     ("utilisateur", "permissions", "TEXT"),
     # Code court de confirmation, saisi a la main quand le lien
     # n'aboutit pas.
+    # Mesures d'usage, qui servent aussi de variables d'analyse.
+    ("question", "vues", "INTEGER NOT NULL DEFAULT 0"),
+    ("question", "premiere_reponse_le", "TEXT"),
+    ("question", "resolue_le", "TEXT"),
     ("verification_email", "code", "TEXT"),
     ("verification_email", "tentatives", "INTEGER NOT NULL DEFAULT 0"),
     ("signalement", "action", "TEXT"),
     ("signalement", "traite_par", "INTEGER"),
     ("signalement", "traite_le", "TEXT"),
 ]
+
+
+# Tables apparues apres la mise en service. Le fichier de schema ne
+# sert qu'a la creation initiale : une base deja en place ne le rejoue
+# jamais, et une table ajoutee depuis y manque definitivement. La
+# creation des colonnes ne suffisait donc pas.
+#
+# La syntaxe est celle de SQLite ; la variante PostgreSQL est donnee
+# quand elle differe. MySQL reste aux migrations manuelles.
+TABLES_ATTENDUES = [
+    ("evenement", {
+        "sqlite": """CREATE TABLE evenement (
+            id_evenement    INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_utilisateur  INTEGER,
+            type_evenement  TEXT    NOT NULL,
+            type_cible      TEXT,
+            id_cible        INTEGER,
+            contexte        TEXT,
+            role_acteur     TEXT,
+            cree_le         TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (id_utilisateur)
+                REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE)""",
+        "postgres": """CREATE TABLE evenement (
+            id_evenement    SERIAL PRIMARY KEY,
+            id_utilisateur  INTEGER,
+            type_evenement  TEXT    NOT NULL,
+            type_cible      TEXT,
+            id_cible        INTEGER,
+            contexte        TEXT,
+            role_acteur     TEXT,
+            cree_le         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (id_utilisateur)
+                REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE)""",
+        "index": [
+            "CREATE INDEX idx_evenement_date ON evenement(cree_le)",
+            "CREATE INDEX idx_evenement_type "
+            "ON evenement(type_evenement, cree_le)",
+            "CREATE INDEX idx_evenement_user "
+            "ON evenement(id_utilisateur, cree_le)",
+        ],
+    }),
+]
+
+
+def _table_existe(cur, moteur, table):
+    if moteur == "sqlite":
+        cur.execute("SELECT name FROM sqlite_master "
+                    "WHERE type = 'table' AND name = %s", (table,))
+    else:
+        cur.execute("SELECT table_name FROM information_schema.tables "
+                    "WHERE table_name = %s", (table,))
+    return cur.fetchone() is not None
 
 
 def _colonnes_existantes(cur, moteur, table):
@@ -382,6 +438,23 @@ def completer_colonnes(app):
             if moteur == "mysql":
                 return          # migrations appliquées à la main
             with curseur(commit=True) as cur:
+                # Les tables d'abord : une colonne ne s'ajoute pas à une
+                # table qui n'existe pas.
+                for table, formes in TABLES_ATTENDUES:
+                    try:
+                        if _table_existe(cur, moteur, table):
+                            continue
+                        cur.execute(formes.get(moteur) or formes["sqlite"])
+                        for index in formes.get("index", []):
+                            try:
+                                cur.execute(index)
+                            except Exception:
+                                pass    # index déjà là : sans conséquence
+                        logger.info("Table %s créée sur la base en service",
+                                    table)
+                    except Exception as exc:
+                        logger.warning("Table %s non créée : %s", table, exc)
+
                 for table, colonne, definition in COLONNES_ATTENDUES:
                     try:
                         if colonne in _colonnes_existantes(cur, moteur, table):

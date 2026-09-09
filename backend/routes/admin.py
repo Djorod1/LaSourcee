@@ -740,8 +740,14 @@ def catalogue_permissions():
     accessibles : proposer un onglet qui répondra 403 fait passer un
     refus pour une panne.
     """
+    from utils.permissions import PERMISSIONS_DETAIL, ORDRE_PORTEE
+    catalogue = sorted(
+        ({"cle": cle, **detail} for cle, detail in PERMISSIONS_DETAIL.items()),
+        key=lambda d: (ORDRE_PORTEE.get(d["portee"], 9), d["nom"]))
     return jsonify({
-        "catalogue": PERMISSIONS,
+        "catalogue": catalogue,
+        # Forme historique, conservée pour ne pas casser un appel ancien.
+        "libelles": PERMISSIONS,
         "par_defaut": PERMISSIONS_PAR_DEFAUT,
         "les_miennes": permissions_de(g.utilisateur),
         "super_admin": g.utilisateur.get("role") == "super_admin",
@@ -1022,6 +1028,7 @@ JEUX_EXPORT = {
     "questions": (
         "Questions",
         """SELECT q.id_question, q.titre, q.corps, q.statut, q.publiee_le,
+                  q.vues, q.premiere_reponse_le, q.resolue_le,
                   s.libelle AS secteur,
                   u.id_utilisateur AS id_auteur, u.prenom, u.nom,
                   (SELECT COUNT(*) FROM reponse r
@@ -1064,6 +1071,12 @@ JEUX_EXPORT = {
              FROM audit_admin j
         LEFT JOIN utilisateur u ON u.id_utilisateur = j.id_acteur
          ORDER BY j.cree_le"""),
+    "evenements": (
+        "Journal d'activité",
+        """SELECT e.id_evenement, e.type_evenement, e.type_cible, e.id_cible,
+                  e.role_acteur, e.contexte, e.cree_le, e.id_utilisateur
+             FROM evenement e
+         ORDER BY e.cree_le"""),
     "activite": (
         "Activité par jour",
         """SELECT jour, SUM(inscriptions) AS inscriptions,
@@ -1089,7 +1102,8 @@ def catalogue_export():
     """Jeux disponibles, avec le nombre de lignes de chacun."""
     tables = {"utilisateurs": "utilisateur", "questions": "question",
               "reponses": "reponse", "referents": "mentor_details",
-              "signalements": "signalement", "audit": "audit_admin"}
+              "signalements": "signalement", "audit": "audit_admin",
+              "evenements": "evenement"}
     jeux = []
     for cle, (libelle, _) in JEUX_EXPORT.items():
         n = None

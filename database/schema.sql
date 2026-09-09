@@ -140,6 +140,10 @@ CREATE TABLE question (
     publiee_le       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     maj_le           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
                                   ON UPDATE CURRENT_TIMESTAMP,
+    -- Mesures d'usage, servant aussi de variables d'analyse.
+    vues             INT UNSIGNED NOT NULL DEFAULT 0,
+    premiere_reponse_le DATETIME  NULL,
+    resolue_le       DATETIME     NULL,
     PRIMARY KEY (id_question),
     KEY idx_question_auteur  (id_auteur),
     KEY idx_question_secteur (id_secteur, publiee_le),
@@ -399,3 +403,25 @@ CREATE TABLE IF NOT EXISTS tentative_auth (
     PRIMARY KEY (id_tentative),
     KEY idx_tentative_cle (cle, horodatage)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----- Journal d'activité -----
+-- Une ligne par action notable : ce que les tables métier ne disent pas,
+-- puisqu'elles ne gardent que l'état présent. Aucun contenu écrit par un
+-- membre n'y figure, et la suppression d'un compte efface son activité.
+
+CREATE TABLE evenement (
+    id_evenement     INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    id_utilisateur   INT UNSIGNED NULL,
+    type_evenement   VARCHAR(40)  NOT NULL,
+    type_cible       VARCHAR(30)  NULL,
+    id_cible         INT UNSIGNED NULL,
+    contexte         TEXT         NULL,
+    role_acteur      VARCHAR(20)  NULL,
+    cree_le          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id_evenement),
+    KEY idx_evenement_date (cree_le),
+    KEY idx_evenement_type (type_evenement, cree_le),
+    KEY idx_evenement_user (id_utilisateur, cree_le),
+    CONSTRAINT fk_evt_user FOREIGN KEY (id_utilisateur)
+        REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE
+) ENGINE=InnoDB;

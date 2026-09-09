@@ -27,7 +27,7 @@
 |---|---|---|
 | Frontend SPA | `index.html` + `script.js` + `styles.css` à la racine | 52 / 176 / 94 Ko |
 | Backend Flask | 11 blueprints, 78 routes HTTP | 29 modules Python |
-| Base de données | 23 tables + 2 vues + données de référence | 3 schémas (SQLite, PostgreSQL, MySQL) |
+| Base de données | 24 tables + 2 vues + données de référence | 3 schémas (SQLite, PostgreSQL, MySQL) |
 | Identité | Palette bleu royal + orange du logo, icônes SVG, aucun emoji | OK |
 | Sécurité | bcrypt 12, anti-force-brute, CSP, échappement anti-XSS | OK |
 

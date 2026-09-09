@@ -120,6 +120,13 @@ CREATE TABLE question (
                  CHECK (statut IN ('ouverte','resolue','fermee')),
     publiee_le   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     maj_le       TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- Mesures d'usage. Le nombre de reponses et le delai avant la
+    -- premiere se recalculent par jointure, mais une jointure par
+    -- ligne coute cher des que le fil s'allonge, et ces valeurs
+    -- servent aussi de variables d'analyse.
+    vues         INTEGER NOT NULL DEFAULT 0,
+    premiere_reponse_le TEXT,
+    resolue_le   TEXT,
     FOREIGN KEY (id_auteur)  REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE,
     FOREIGN KEY (id_secteur) REFERENCES secteur(id_secteur)         ON DELETE SET NULL
 );
@@ -205,6 +212,45 @@ CREATE TABLE signalement (
     FOREIGN KEY (id_signaleur) REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE
 );
 CREATE INDEX idx_signalement_statut ON signalement(statut);
+
+-- ----- Journal d'activite -----
+--
+-- Une ligne par action notable. Les tables metier disent l'etat present
+-- de la plateforme ; celle-ci dit ce qui s'y est passe, et c'est ce qui
+-- manque des qu'on veut mesurer, comparer, ou entrainer un modele.
+--
+-- Trois precautions valent d'etre dites, parce qu'elles limitent
+-- volontairement ce qu'on enregistre :
+--
+--   - **Aucun contenu ecrit par un membre.** On note qu'une question a
+--     ete publiee, pas ce qu'elle disait : le texte vit deja dans sa
+--     table, et le dupliquer ici le rendrait ineffacable.
+--   - **L'identifiant, jamais l'adresse.** Un export d'evenements ne
+--     doit pas suffire a reconnaitre quelqu'un.
+--   - **Suppression en cascade.** Effacer son compte efface son
+--     activite, sans quoi le droit a l'effacement ne serait qu'un mot.
+--
+-- « contexte » accueille en JSON ce qui varie d'un type a l'autre :
+-- le secteur d'une question, le delai d'une reponse, la duree d'une
+-- session. Le lire n'a de sens qu'en connaissant le type.
+
+CREATE TABLE evenement (
+    id_evenement    INTEGER PRIMARY KEY AUTOINCREMENT,
+    id_utilisateur  INTEGER,
+    type_evenement  TEXT    NOT NULL,
+    type_cible      TEXT,
+    id_cible        INTEGER,
+    contexte        TEXT,
+    -- Role au moment de l'action : il change avec le temps, et une
+    -- analyse a posteriori attribuerait sinon toute l'activite passee
+    -- d'un referent a son role actuel.
+    role_acteur     TEXT,
+    cree_le         TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_utilisateur) REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE
+);
+CREATE INDEX idx_evenement_date ON evenement(cree_le);
+CREATE INDEX idx_evenement_type ON evenement(type_evenement, cree_le);
+CREATE INDEX idx_evenement_user ON evenement(id_utilisateur, cree_le);
 
 -- ----- Messagerie -----
 

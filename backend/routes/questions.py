@@ -3,6 +3,7 @@
 from flask import Blueprint, g, jsonify, request
 
 from models.db import recuperer_un, recuperer_tous, executer, curseur
+from services import evenements
 from utils.auth_helpers import connexion_requise
 from services.notifications import notifier_reaction
 
@@ -95,6 +96,9 @@ def publier():
         )
         id_q = cur.lastrowid
 
+    evenements.depuis_requete("question_publiee", type_cible="question",
+                              id_cible=id_q,
+                              contexte={"secteur": int(id_sec)})
     return jsonify({"id_question": id_q}), 201
 
 
@@ -118,6 +122,15 @@ def detail(id_q):
     )
     if not q:
         return jsonify({"erreur": "Question introuvable."}), 404
+
+    # Une vue par consultation, y compris repetee : distinguer les
+    # visiteurs uniques demanderait de garder qui a vu quoi, donc un
+    # suivi nominatif de lecture. Le compteur brut suffit a classer les
+    # questions par interet, sans cela.
+    executer("UPDATE question SET vues = vues + 1 WHERE id_question = %s",
+             (id_q,), commit=True)
+    evenements.depuis_requete("question_vue", type_cible="question",
+                              id_cible=id_q)
 
     q["reponses"] = recuperer_tous(
         """SELECT r.id_reponse, r.id_parent_reponse, r.contenu,
