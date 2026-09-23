@@ -69,8 +69,12 @@ function textePresence(u) {
 
 function avatarHTML(initiales, taille = '', photo = null, mentorVerifie = false) {
   const cls = 'avatar' + (taille ? ' avatar-' + taille : '') + (mentorVerifie ? ' mentor-verifie' : '');
-  if (photo) return `<div class="${cls}"><img src="${photo}" class="photo-avatar" alt=""></div>`;
-  return `<div class="${cls}">${initiales}</div>`;
+  // L'adresse de la photo vient du serveur, mais c'est le membre qui
+  // l'y a mise : insérée telle quelle dans un attribut, une valeur
+  // comme `https://x" onerror="…` en sortait et faisait exécuter ce
+  // qu'on voulait dans le navigateur de tous les autres.
+  if (photo) return `<div class="${cls}"><img src="${echapper(photo)}" class="photo-avatar" alt=""></div>`;
+  return `<div class="${cls}">${echapper(initiales)}</div>`;
 }
 /* Badge mentor vérifié (innovation : couleur vert du logo, lecture immédiate) */
 function badgeMentorVerifie() {
@@ -86,6 +90,21 @@ function echapper(valeur) {
   return String(valeur ?? '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/* Une chaîne à passer en argument d'un gestionnaire écrit dans le HTML.
+
+   Échapper pour le HTML n'échappe pas pour JavaScript : echapper()
+   transforme l'apostrophe en &#39;, que l'analyseur HTML redonne telle
+   quelle à JavaScript. Un nom comme N'Guessan ou M'Baye produisait donc
+   ecrireA(1, 'N'Guessan') — une erreur de syntaxe, et un bouton qui ne
+   faisait rien, sans le moindre message.
+
+   JSON.stringify écrit un littéral valide, guillemets compris ;
+   echapper() le rend ensuite sûr à l'intérieur de l'attribut. À
+   utiliser SANS guillemets autour : chaineJS() fournit les siens. */
+function chaineJS(valeur) {
+  return echapper(JSON.stringify(String(valeur ?? '')));
 }
 
 /* ---------- Jeu d'icônes (SVG en ligne, tracé fin, couleur héritée) ----------
@@ -1131,7 +1150,12 @@ function rendreFil() {
     liste = liste.filter(q => q.titre.toLowerCase().includes(t) || q.corps.toLowerCase().includes(t) || q.secteur.toLowerCase().includes(t));
   }
   if (etat.tri === 'populaire') liste.sort((a, b) => b.utile - a.utile);
-  if (etat.tri === 'sansrep') liste = liste.filter(q => q.reponses.length === 0);
+  // Le fil ne rapporte que le NOMBRE de reponses : la liste q.reponses
+  // y est toujours vide, et ce filtre laissait donc tout passer.
+  // L'onglet « Sans reponse » donnait exactement la meme liste que
+  // « Les plus recentes », ce qui envoyait les referents chercher ou
+  // ils ne servaient a rien.
+  if (etat.tri === 'sansrep') liste = liste.filter(q => !q.repCount);
 
   const conteneur = document.getElementById('fil-questions');
   const banniere = etat.rechercheTerme
@@ -1534,8 +1558,12 @@ async function utileR(btn, idReponse) {
 }
 
 async function signaler(id) {
-  const motif = window.prompt('Motif du signalement (optionnel) :', '') || '';
-  if (motif === null) return;  // annulé
+  // window.prompt rend null quand on annule. Le « || '' » transformait
+  // ce null en chaine vide avant le test : la condition ne pouvait donc
+  // jamais etre vraie, et « Annuler » signalait quand meme.
+  const saisie = window.prompt('Motif du signalement (optionnel) :', '');
+  if (saisie === null) return;
+  const motif = saisie.trim();
   if (MODE.api) {
     try {
       await API.post(`/questions/${id}/signaler`, { motif });
@@ -1697,7 +1725,7 @@ function rendreProfil() {
   entete.innerHTML = `
     <div class="col-avatar">
       <span class="${u.photo ? 'avatar-agrandissable' : ''}"
-            ${u.photo ? `onclick="ouvrirPhoto('${echapper(u.photo)}', '${echapper(u.prenom + ' ' + u.nom)}')"
+            ${u.photo ? `onclick="ouvrirPhoto(${chaineJS(u.photo)}, ${chaineJS(u.prenom + ' ' + u.nom)})"
             title="Voir la photo en grand" role="button" tabindex="0"` : ''}>
         ${avatarHTML(u.initiales, 'xl', u.photo, estMentorVerifie)}
       </span>
@@ -2271,7 +2299,7 @@ async function _rechercherVraiment(terme) {
   if ((r.secteurs || []).length) {
     html += '<h5>Secteurs</h5>';
     html += r.secteurs.map(s => `<div class="res-item"
-        onclick="filtrerParSecteur('${echapper(s.libelle)}'); fermerRecherche();">
+        onclick="filtrerParSecteur(${chaineJS(s.libelle)}); fermerRecherche();">
         <span class="tag">${echapper(s.libelle)}</span>
       </div>`).join('');
   }
@@ -2789,7 +2817,7 @@ async function chargerSessions() {
         </div>
         ${s.courante
           ? '<span class="tag tag-vert">Session courante</span>'
-          : `<button class="btn btn-fantome btn-petit" onclick="revoquerSession('${echapper(s.reference)}')">Déconnecter</button>`}
+          : `<button class="btn btn-fantome btn-petit" onclick="revoquerSession(${chaineJS(s.reference)})">Déconnecter</button>`}
       </div>`).join('');
   } catch (err) {
     zone.innerHTML = `<p class="desc">Sessions indisponibles : ${echapper(err.message || '')}</p>`;
@@ -3437,7 +3465,7 @@ async function adminCategories() {
         ${liste.map(s => `
           <span class="tag" style="display:inline-flex; align-items:center; gap:6px;">
             ${echapper(s.libelle)}
-            <span style="cursor:pointer; font-weight:700;" onclick="supprimerCat(${s.id_secteur},'${echapper(s.libelle)}')">×</span>
+            <span style="cursor:pointer; font-weight:700;" onclick="supprimerCat(${s.id_secteur},${chaineJS(s.libelle)})">×</span>
           </span>`).join('')}
       </div>
       <div style="display:flex; gap:8px;">
@@ -3931,6 +3959,7 @@ async function chargerStatistiques() {
     membres: document.getElementById('stat-membres'),
     questions: document.getElementById('stat-questions'),
     reponses: document.getElementById('stat-reponses'),
+    delai: document.getElementById('stat-delai'),
   };
   if (!cases.membres) return;
 
@@ -3948,6 +3977,22 @@ async function chargerStatistiques() {
   cases.membres.textContent = _formaterNombre(s.membres);
   cases.questions.textContent = _formaterNombre(s.questions);
   cases.reponses.textContent = _formaterNombre(s.reponses);
+
+  // Tant que trop peu de questions ont trouvé réponse, le délai dirait
+  // surtout le hasard des premières : on retire la vignette plutôt que
+  // d'annoncer un chiffre qui ne veut rien dire.
+  if (cases.delai) {
+    const h = s.delai_premiere_reponse_heures;
+    const vignette = cases.delai.closest('.hero-stat');
+    if (h === null || h === undefined) {
+      if (vignette) vignette.style.display = 'none';
+    } else {
+      if (vignette) vignette.style.display = '';
+      cases.delai.textContent = h < 1 ? "moins d'une heure"
+        : h < 24 ? `${Math.round(h)} h`
+        : `${Math.round(h / 24)} j`;
+    }
+  }
 
   // Une plateforme qui vient d'ouvrir affiche forcément de petits
   // nombres. Les présenter comme « une communauté grandissante »
@@ -4373,16 +4418,16 @@ function ouvrirConfirmationAdresse(email) {
           <label for="code-confirmation">Code reçu par e-mail</label>
           <input id="code-confirmation" class="saisie-code" inputmode="numeric"
                  autocomplete="one-time-code" maxlength="6" placeholder="000000"
-                 onkeydown="if(event.key==='Enter') validerCodeConfirmation('${echapper(email)}', this)" />
+                 onkeydown="if(event.key==='Enter') validerCodeConfirmation(${chaineJS(email)}, this)" />
           <p class="aide-champ">Le message contient aussi un lien, si vous
              préférez. Code et lien valables vingt-quatre heures.</p>
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
           <button class="btn btn-primaire" id="btn-code"
-                  onclick="validerCodeConfirmation('${echapper(email)}', this)">
+                  onclick="validerCodeConfirmation(${chaineJS(email)}, this)">
             Valider mon adresse</button>
           <button class="btn btn-secondaire" id="btn-renvoi"
-                  onclick="renvoyerConfirmation('${echapper(email)}')">
+                  onclick="renvoyerConfirmation(${chaineJS(email)})">
             Renvoyer le message</button>
         </div>
         <p class="desc" style="margin-top:10px;">Pensez à regarder dans les
@@ -4475,7 +4520,7 @@ function majRappelConfirmation() {
       '<span><strong>Adresse non confirmée.</strong> '
       + 'Saisissez le code reçu par e-mail pour sécuriser votre compte.</span>'
       + '<button class="btn btn-petit" onclick="ouvrirConfirmationAdresse('
-      + `'${echapper(u.email)}')">Saisir mon code</button>`;
+      + `${chaineJS(u.email)})">Saisir mon code</button>`;
   }
   if (!existant) document.body.prepend(bandeau);
 }
@@ -5043,7 +5088,7 @@ function rendreProfilAutre(u) {
   entete.innerHTML = `
     <div class="col-avatar">
       <span class="${u.photo_url ? 'avatar-agrandissable' : ''}"
-            ${u.photo_url ? `onclick="ouvrirPhoto('${echapper(u.photo_url)}', '${echapper(nomComplet)}')"
+            ${u.photo_url ? `onclick="ouvrirPhoto(${chaineJS(u.photo_url)}, ${chaineJS(nomComplet)})"
             title="Voir la photo en grand" role="button" tabindex="0"` : ''}>
         ${avatarHTML(initiales, 'xl', u.photo_url, verifie)}
       </span>
@@ -5520,7 +5565,7 @@ async function majBoutonEcrire(id, nom) {
     const r = await API.get('/messagerie/peut-ecrire/' + id);
     if (r.autorise) {
       zone.innerHTML = `<button class="btn btn-primaire"
-        onclick="ecrireA(${id}, '${echapper(nom)}')">Écrire</button>`;
+        onclick="ecrireA(${id}, ${chaineJS(nom)})">Écrire</button>`;
     } else if (r.motif) {
       zone.innerHTML = `<p class="aide-champ" style="max-width:280px;">${
         echapper(r.motif)}</p>`;
@@ -5604,7 +5649,7 @@ function rendreFiltresOpportunites() {
       onclick="filtrerOpportunites('')">Toutes</button>`
     + entrees.map(([cle, libelle]) => `<button class="onglet${
         _opportunites.filtre === cle ? ' actif' : ''}"
-        onclick="filtrerOpportunites('${echapper(cle)}')">${echapper(libelle)}</button>`).join('');
+        onclick="filtrerOpportunites(${chaineJS(cle)})">${echapper(libelle)}</button>`).join('');
 }
 
 function filtrerOpportunites(categorie) {

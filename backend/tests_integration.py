@@ -2661,21 +2661,45 @@ def executer_tests():
         verifier("Un jeton inventé est refusé",
                  not mod_resume.jeton_valide(id_ife, "0" * 32))
 
-        # Le delai : deux jours, et pas moins.
-        _executer("UPDATE utilisateur SET resume_envoye_le = %s "
-                  "WHERE id_utilisateur = %s",
-                  (_dt.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
-                   id_ife), commit=True)
-        cibles = [c["id_utilisateur"] for c in mod_resume._destinataires()]
-        verifier("Un compte qui vient d'être prévenu est écarté",
-                 id_ife not in cibles)
         # La confirmation d'adresse n'est pas exigee dans ces tests : on
         # la pose, puisque c'est justement ce que la requete demande.
-        _executer("UPDATE utilisateur SET resume_envoye_le = NULL, "
-                  "email_verifie = 1 WHERE id_utilisateur = %s",
-                  (id_ife,), commit=True)
+        _executer("UPDATE utilisateur SET email_verifie = 1, "
+                  "resume_envoye_le = NULL, resume_examine_le = NULL "
+                  "WHERE id_utilisateur = %s", (id_ife,), commit=True)
         cibles = [c["id_utilisateur"] for c in mod_resume._destinataires()]
         verifier("Un compte jamais prévenu est candidat", id_ife in cibles)
+
+        # Le delai : deux jours, et pas moins. C'est la date d'EXAMEN
+        # qui commande la file, pas celle d'envoi.
+        maintenant = _dt.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        _executer("UPDATE utilisateur SET resume_examine_le = %s "
+                  "WHERE id_utilisateur = %s", (maintenant, id_ife),
+                  commit=True)
+        cibles = [c["id_utilisateur"] for c in mod_resume._destinataires()]
+        verifier("Un compte qui vient d'être examiné est écarté",
+                 id_ife not in cibles)
+
+        # Le defaut a ne pas laisser revenir : un compte sans nouveaute
+        # n'etait jamais marque, restait en tete de file, et comme le
+        # passage s'arrete au quarantieme examine, les memes quarante
+        # comptes l'occupaient indefiniment. Passe quelques semaines,
+        # plus personne ne recevait rien.
+        _executer("UPDATE utilisateur SET resume_examine_le = NULL "
+                  "WHERE id_utilisateur = %s", (id_ife,), commit=True)
+        mod_resume._examine(id_ife)
+        verifier("Un passage silencieux fait quand même avancer la file",
+                 id_ife not in [c["id_utilisateur"]
+                                for c in mod_resume._destinataires()])
+        verifier("Mais il ne referme pas la fenêtre des nouveautés",
+                 jeton_sql("SELECT resume_envoye_le FROM utilisateur "
+                           "WHERE id_utilisateur = ?", (id_ife,)) is None)
+        mod_resume._marquer(id_ife)
+        verifier("Un message réellement parti ouvre une nouvelle fenêtre",
+                 jeton_sql("SELECT resume_envoye_le FROM utilisateur "
+                           "WHERE id_utilisateur = ?", (id_ife,)) is not None)
+        _executer("UPDATE utilisateur SET resume_examine_le = NULL, "
+                  "resume_envoye_le = NULL WHERE id_utilisateur = %s",
+                  (id_ife,), commit=True)
         verifier("Un compte suspendu ne reçoit rien",
                  _suspendu_ecarte(mod_resume, _executer, id_ife))
 
@@ -3012,6 +3036,147 @@ def executer_tests():
     verifier("Les instants sont marqués comme UTC",
              str(mien.get("cree_le")).endswith("Z")
              or _MOTEUR == "sqlite", repr(mien.get("cree_le")))
+
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  43. UN ADMINISTRATEUR NE PEUT PAS DÉSARMER L'ADMINISTRATION")
+    print("═" * 70)
+
+    # Rien n'empechait un administrateur ordinaire d'agir sur le compte
+    # d'un super administrateur : le retrograder, changer son adresse
+    # pour en demander ensuite le mot de passe, ou le suspendre.
+    #
+    # Les deux comptes sont crees ici et promus en base : dependre des
+    # clients ouverts plus haut ferait echouer cette section pour une
+    # raison sans rapport, des qu'une section anterieure change un mot
+    # de passe ou revoque une session.
+    from models.db import executer as _maj
+
+    def _compte_admin(prenom, email, mdp, role, droits):
+        """Compte cree directement en base, puis connecte.
+
+        Passer par l'inscription echouerait ici : la suite a deja cree
+        assez de comptes depuis la meme adresse IP pour atteindre la
+        limite anti-robot, et le test echouerait pour une raison sans
+        rapport avec ce qu'il verifie.
+        """
+        from utils.auth_helpers import hacher_mot_de_passe
+        with app.app_context():
+            _maj("""INSERT INTO utilisateur
+                      (prenom, nom, email, mot_de_passe, role, est_admin,
+                       est_actif, email_verifie, permissions)
+                    VALUES (%s, 'Essai', %s, %s, %s, 1, 1, 1, %s)""",
+                 (prenom, email, hacher_mot_de_passe(mdp), role, droits),
+                 commit=True)
+        identifiant = _id(email)
+        client = app.test_client()
+        r = client.post("/api/auth/connexion",
+                        json={"email": email, "mot_de_passe": mdp})
+        assert r.status_code == 200, r.get_data(as_text=True)[:120]
+        return client, identifiant
+
+    ordinaire, id_ordinaire = _compte_admin(
+        "Modeste", "modeste@test.io", "ModesteTest2026!",
+        "admin", '["utilisateurs"]')
+    patron, id_patron = _compte_admin(
+        "Patronne", "patronne@test.io", "PatronneTest2026!",
+        "super_admin", '[]')
+
+    verifier("L'administrateur ordinaire est bien connecté",
+             ordinaire.get("/api/admin/utilisateurs?limite=1").status_code == 200)
+    verifier("Le super administrateur est bien connecté",
+             patron.get("/api/admin/utilisateurs?limite=1").status_code == 200)
+
+    r = ordinaire.post(f"/api/admin/utilisateurs/{id_patron}/role",
+                       json={"role": "etudiant"})
+    verifier("Un administrateur ne rétrograde pas un super administrateur",
+             r.status_code == 403, r.get_data(as_text=True)[:110])
+    verifier("Le super administrateur garde son rôle",
+             jeton_sql("SELECT role FROM utilisateur WHERE id_utilisateur = ?",
+                       (id_patron,)) == "super_admin")
+
+    r = ordinaire.put(f"/api/admin/utilisateurs/{id_patron}",
+                      json={"email": "pirate@ailleurs.test"})
+    verifier("Un administrateur ne change pas l'adresse d'un autre",
+             r.status_code == 403, r.get_data(as_text=True)[:110])
+    r = ordinaire.post(f"/api/admin/utilisateurs/{id_patron}/suspendre")
+    verifier("Un administrateur ne suspend pas un super administrateur",
+             r.status_code == 403)
+    r = ordinaire.post(f"/api/admin/utilisateurs/{id_ordinaire}/suspendre")
+    verifier("Personne ne suspend son propre compte", r.status_code == 400)
+    r = ordinaire.delete(f"/api/admin/utilisateurs/{id_patron}")
+    verifier("Un administrateur ne supprime pas un super administrateur",
+             r.status_code == 403)
+
+    # Le super administrateur, lui, agit. Le changement d'adresse est
+    # trace avec l'ancienne et la personne en est avertie : c'est ce qui
+    # permet de prendre un compte en main sans que personne s'en
+    # apercoive.
+    r = patron.put(f"/api/admin/utilisateurs/{id_ordinaire}",
+                   json={"email": "modeste.nouvelle@test.io"})
+    verifier("Un super administrateur change une adresse",
+             r.status_code == 200, r.get_data(as_text=True)[:110])
+    verifier("Le changement d'adresse est tracé avec l'ancienne",
+             jeton_sql("SELECT COUNT(*) FROM audit_admin "
+                       "WHERE action = 'modifier_utilisateur' "
+                       "  AND details LIKE ?",
+                       ("%modeste@test.io vers%",)) >= 1)
+    verifier("La personne est avertie du changement d'adresse",
+             jeton_sql("SELECT COUNT(*) FROM notification "
+                       "WHERE id_destinataire = ? AND texte LIKE ?",
+                       (id_ordinaire, "%adresse e-mail de votre compte a "
+                        "été changée%")) >= 1)
+    r = patron.put(f"/api/admin/utilisateurs/{id_ordinaire}",
+                   json={"email": "pas-une-adresse"})
+    verifier("Une adresse invalide est refusée", r.status_code == 400)
+
+    # Supprimer un administrateur effacait tout son journal d'audit, en
+    # cascade, au moment precis ou on aurait besoin de le relire.
+    ordinaire.post(f"/api/admin/utilisateurs/{_id('propre@test.io')}/suspendre")
+    decisions = jeton_sql("SELECT COUNT(*) FROM audit_admin "
+                          "WHERE id_acteur = ?", (id_ordinaire,))
+    verifier("L'administrateur ordinaire a laissé une trace au journal",
+             decisions >= 1, str(decisions))
+
+    r = patron.delete(f"/api/admin/utilisateurs/{id_ordinaire}")
+    verifier("La suppression d'un administrateur aboutit",
+             r.status_code == 200, r.get_data(as_text=True)[:110])
+    verifier("Elle anonymise au lieu d'effacer",
+             (r.get_json() or {}).get("anonymise") is True)
+    verifier("Le journal garde ses décisions",
+             jeton_sql("SELECT COUNT(*) FROM audit_admin "
+                       "WHERE id_acteur = ?", (id_ordinaire,)) == decisions)
+    verifier("Les données personnelles sont effacées",
+             jeton_sql("SELECT prenom || nom FROM utilisateur "
+                       "WHERE id_utilisateur = ?", (id_ordinaire,))
+             == "Comptesupprimé")
+    verifier("Le compte est fermé et sans droits",
+             jeton_sql("SELECT est_actif + est_admin FROM utilisateur "
+                       "WHERE id_utilisateur = ?", (id_ordinaire,)) == 0)
+
+    # Un compte sans decision est supprime pour de bon.
+    _, id_jetable = _compte_admin(
+        "Jetable", "jetable@test.io", "JetableTest2026!", "etudiant", '[]')
+    with app.app_context():
+        _maj("UPDATE utilisateur SET est_admin = 0 WHERE id_utilisateur = %s",
+             (id_jetable,), commit=True)
+    r = patron.delete(f"/api/admin/utilisateurs/{id_jetable}")
+    verifier("Un compte sans décision est réellement supprimé",
+             r.status_code == 200
+             and (r.get_json() or {}).get("anonymise") is not True)
+    verifier("Il ne reste rien de lui",
+             jeton_sql("SELECT COUNT(*) FROM utilisateur "
+                       "WHERE id_utilisateur = ?", (id_jetable,)) == 0)
+
+    # Le dernier super administrateur ne doit pas pouvoir se retirer.
+    with app.app_context():
+        _maj("UPDATE utilisateur SET role = 'admin' "
+             "WHERE role = 'super_admin' AND id_utilisateur <> %s",
+             (id_patron,), commit=True)
+    r = patron.post(f"/api/admin/utilisateurs/{id_patron}/role",
+                    json={"role": "admin"})
+    verifier("Le dernier super administrateur ne se retire pas lui-même",
+             r.status_code == 400, r.get_data(as_text=True)[:110])
 
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)

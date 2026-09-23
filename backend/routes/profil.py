@@ -835,7 +835,58 @@ def statistiques_publiques():
             "WHERE role = 'mentor' AND est_actif = 1"),
         "questions": compter("SELECT COUNT(*) AS n FROM question"),
         "reponses": compter("SELECT COUNT(*) AS n FROM reponse"),
+        # Le bandeau annoncait une note moyenne de 4,8/5, ecrite en dur.
+        # Le delai avant la premiere reponse, lui, se mesure, et il dit
+        # a qui hesite a poser sa question ce qu'il veut savoir : dans
+        # combien de temps on lui repondra.
+        "delai_premiere_reponse_heures": _delai_median_premiere_reponse(),
     })
+
+
+def _delai_median_premiere_reponse():
+    """Heures ecoulees, en median, entre une question et sa reponse.
+
+    La mediane plutot que la moyenne : une seule question restee sans
+    reponse pendant trois mois tirerait la moyenne au point de la rendre
+    fausse pour tout le monde. Renvoie None tant qu'il n'y a pas assez
+    de questions repondues pour que le chiffre veuille dire quelque
+    chose : mieux vaut ne rien annoncer qu'annoncer un delai tire d'un
+    seul cas.
+    """
+    from datetime import datetime
+
+    lignes = recuperer_tous(
+        "SELECT publiee_le, premiere_reponse_le FROM question "
+        "WHERE premiere_reponse_le IS NOT NULL")
+    if len(lignes) < MINIMUM_POUR_UN_DELAI:
+        return None
+
+    def _instant(valeur):
+        if isinstance(valeur, datetime):
+            return valeur
+        texte = str(valeur)[:19].replace("T", " ")
+        try:
+            return datetime.strptime(texte, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+
+    ecarts = []
+    for l in lignes:
+        debut, fin = _instant(l["publiee_le"]), _instant(l["premiere_reponse_le"])
+        if debut and fin and fin >= debut:
+            ecarts.append((fin - debut).total_seconds() / 3600)
+    if len(ecarts) < MINIMUM_POUR_UN_DELAI:
+        return None
+    ecarts.sort()
+    milieu = len(ecarts) // 2
+    mediane = (ecarts[milieu] if len(ecarts) % 2
+               else (ecarts[milieu - 1] + ecarts[milieu]) / 2)
+    return round(mediane, 1)
+
+
+# En dessous, le chiffre dirait surtout le hasard des premieres
+# questions.
+MINIMUM_POUR_UN_DELAI = 5
 
 
 # ============================================================

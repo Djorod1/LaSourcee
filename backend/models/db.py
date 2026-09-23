@@ -377,6 +377,10 @@ COLONNES_ATTENDUES = [
     # Date du dernier resume periodique, qui sert aussi de curseur :
     # sans elle, chaque passage reexaminerait les memes comptes.
     ("utilisateur", "resume_envoye_le", "TEXT"),
+    # Deux dates : « examine » avance a chaque passage et sert de
+    # curseur de file, « envoye » ne bouge que quand un message
+    # part et ouvre la fenetre des nouveautes.
+    ("utilisateur", "resume_examine_le", "TEXT"),
     # Consentement daté et versionné. Un accord dont on ne sait ni
     # quand il a été donné ni à quel texte il se rapportait ne
     # prouve rien.

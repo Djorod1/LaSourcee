@@ -19,6 +19,45 @@ bp_admin = Blueprint("admin", __name__, url_prefix="/api/admin")
 
 ROLES_AUTORISES = {"visiteur", "etudiant", "mentor", "admin", "super_admin"}
 
+# Rien n'empechait un administrateur ordinaire d'agir sur un compte
+# d'administration, y compris celui d'un super administrateur : le
+# retrograder, changer son adresse e-mail pour ensuite en demander le
+# mot de passe, ou le suspendre. Ces trois gardes ferment la porte.
+
+
+def _compte(id_user):
+    return recuperer_un(
+        "SELECT id_utilisateur, prenom, nom, email, role, est_admin "
+        "FROM utilisateur WHERE id_utilisateur = %s", (id_user,))
+
+
+def _refus_sur_administrateur(cible, verbe):
+    """Refuse d'agir sur un compte d'administration, sauf super admin.
+
+    Renvoie un message, ou None si l'action est permise.
+    """
+    if not cible:
+        return None
+    vise_admin = cible.get("role") in ("admin", "super_admin") \
+        or cible.get("est_admin")
+    if not vise_admin:
+        return None
+    if g.utilisateur.get("role") == "super_admin":
+        return None
+    return (f"Seul un super administrateur peut {verbe} le compte d'un "
+            "autre administrateur.")
+
+
+def _dernier_super_admin(id_user):
+    """Vrai si retirer ce compte laisserait la plateforme sans pilote."""
+    if not (_compte(id_user) or {}).get("role") == "super_admin":
+        return False
+    restants = (recuperer_un(
+        "SELECT COUNT(*) AS n FROM utilisateur "
+        "WHERE role = 'super_admin' AND est_actif = 1 "
+        "  AND id_utilisateur <> %s", (id_user,)) or {}).get("n", 0)
+    return restants == 0
+
 
 # ============================================================
 # TABLEAU DE BORD
@@ -146,6 +185,33 @@ def modifier_utilisateur(id_user):
     if not champs:
         return jsonify({"erreur": "Aucun champ à modifier."}), 400
 
+    cible = _compte(id_user)
+    if not cible:
+        return jsonify({"erreur": "Utilisateur introuvable."}), 404
+    refus = _refus_sur_administrateur(cible, "modifier")
+    if refus:
+        return jsonify({"erreur": refus}), 403
+
+    # Changer l'adresse d'un compte suffit a en prendre le controle :
+    # il reste a demander une reinitialisation de mot de passe sur la
+    # nouvelle adresse. Elle est donc verifiee, tracee, et la personne
+    # en est avertie.
+    ancienne = cible.get("email")
+    if "email" in champs:
+        nouvelle = champs["email"]
+        if "@" not in nouvelle or "." not in nouvelle.split("@")[-1]:
+            return jsonify({"erreur": "Adresse e-mail invalide."}), 400
+        if nouvelle == ancienne:
+            champs.pop("email")
+
+    for cle in ("prenom", "nom"):
+        if cle in champs:
+            propre = normaliser_nom(champs[cle])
+            if not propre:
+                return jsonify({"erreur": "Le prénom et le nom doivent "
+                                          "contenir des lettres."}), 400
+            champs[cle] = propre
+
     fragments = ", ".join(f"{k} = %s" for k in champs)
     try:
         executer(
@@ -154,14 +220,36 @@ def modifier_utilisateur(id_user):
         )
     except Exception:
         return jsonify({"erreur": "Conflit (e-mail déjà utilisé ?)."}), 409
+    detail = ",".join(champs.keys())
+    if "email" in champs:
+        detail += f" | adresse : {ancienne} vers {champs['email']}"
+        notifier(id_user,
+                 "L'adresse e-mail de votre compte a été changée par "
+                 "l'administration. Si vous n'êtes pas à l'origine de ce "
+                 "changement, écrivez immédiatement à l'équipe.",
+                 type_notif="systeme")
     journaliser(g.utilisateur["id_utilisateur"], "modifier_utilisateur",
-                "utilisateur", id_user, ",".join(champs.keys()))
+                "utilisateur", id_user, detail)
     return jsonify({"ok": True})
 
 
 @bp_admin.post("/utilisateurs/<int:id_user>/suspendre")
 @permission_requise("utilisateurs")
 def suspendre(id_user):
+    if id_user == g.utilisateur["id_utilisateur"]:
+        return jsonify({"erreur": "Vous ne pouvez pas suspendre votre "
+                                  "propre compte : personne ne pourrait "
+                                  "vous rouvrir la porte."}), 400
+    cible = _compte(id_user)
+    if not cible:
+        return jsonify({"erreur": "Utilisateur introuvable."}), 404
+    refus = _refus_sur_administrateur(cible, "suspendre")
+    if refus:
+        return jsonify({"erreur": refus}), 403
+    if _dernier_super_admin(id_user):
+        return jsonify({"erreur": "C'est le dernier super administrateur "
+                                  "actif : le suspendre fermerait la "
+                                  "plateforme à tout le monde."}), 400
     n = executer(
         "UPDATE utilisateur SET est_actif = 0 WHERE id_utilisateur = %s",
         (id_user,), commit=True,
@@ -193,14 +281,65 @@ def reactiver(id_user):
 @bp_admin.delete("/utilisateurs/<int:id_user>")
 @permission_requise("utilisateurs")
 def supprimer_utilisateur(id_user):
+    """Supprime un compte, ou l'anonymise s'il porte des décisions.
+
+    Le journal d'administration référence son auteur, et cette
+    référence est posée en cascade : supprimer un administrateur
+    effaçait donc toutes ses décisions du journal, au moment précis où
+    l'on aurait besoin de les relire.
+
+    Un compte qui n'a jamais rien décidé est supprimé comme avant. Un
+    compte qui a décidé est vidé de ce qui identifie la personne et
+    fermé définitivement : les données personnelles disparaissent, la
+    trace de ce qui a été fait reste. C'est aussi ce qu'attend un
+    droit à l'effacement, qui porte sur la personne et non sur les
+    registres.
+    """
     if id_user == g.utilisateur["id_utilisateur"]:
         return jsonify({"erreur": "Auto-suppression interdite."}), 400
-    n = executer("DELETE FROM utilisateur WHERE id_utilisateur = %s",
-                 (id_user,), commit=True)
-    if not n:
+    cible = _compte(id_user)
+    if not cible:
         return jsonify({"erreur": "Utilisateur introuvable."}), 404
+    refus = _refus_sur_administrateur(cible, "supprimer")
+    if refus:
+        return jsonify({"erreur": refus}), 403
+    if _dernier_super_admin(id_user):
+        return jsonify({"erreur": "C'est le dernier super administrateur "
+                                  "actif : le supprimer fermerait "
+                                  "l'administration à tout le monde."}), 400
+
+    decisions = (recuperer_un(
+        "SELECT COUNT(*) AS n FROM audit_admin WHERE id_acteur = %s",
+        (id_user,)) or {}).get("n", 0)
+
+    if decisions:
+        executer(
+            """UPDATE utilisateur
+                  SET prenom = 'Compte', nom = 'supprimé',
+                      email = %s, bio = NULL, photo_url = NULL,
+                      telephone = NULL, etablissement = NULL,
+                      filiere = NULL, profil_pro = NULL,
+                      est_actif = 0, est_admin = 0, role = 'visiteur',
+                      permissions = '[]'
+                WHERE id_utilisateur = %s""",
+            (f"supprime-{id_user}@lasourcee.invalid", id_user), commit=True)
+        executer("DELETE FROM session_web WHERE id_utilisateur = %s",
+                 (id_user,), commit=True)
+        journaliser(g.utilisateur["id_utilisateur"], "anonymiser_utilisateur",
+                    "utilisateur", id_user,
+                    f"{decisions} décision(s) au journal : compte vidé et "
+                    "fermé plutôt qu'effacé, pour ne pas perdre la trace")
+        return jsonify({"ok": True, "anonymise": True,
+                        "message": "Ce compte portait des décisions "
+                                   "d'administration. Ses données "
+                                   "personnelles sont effacées et le compte "
+                                   "fermé ; le journal reste lisible."})
+
+    executer("DELETE FROM utilisateur WHERE id_utilisateur = %s",
+             (id_user,), commit=True)
     journaliser(g.utilisateur["id_utilisateur"], "supprimer_utilisateur",
-                "utilisateur", id_user)
+                "utilisateur", id_user,
+                f"{cible.get('email')}")
     return jsonify({"ok": True})
 
 
@@ -223,6 +362,21 @@ def changer_role(id_user):
 
     if id_user == moi["id_utilisateur"] and nouveau != moi.get("role"):
         return jsonify({"erreur": "Vous ne pouvez pas modifier votre propre rôle."}), 400
+
+    # Le controle ci-dessus n'interdisait que d'ACCORDER le role
+    # d'administrateur. Rien n'empechait un administrateur ordinaire de
+    # le RETIRER : il pouvait retrograder tous les super administrateurs
+    # et laisser la plateforme sans personne pour rouvrir la porte.
+    cible = _compte(id_user)
+    if not cible:
+        return jsonify({"erreur": "Utilisateur introuvable."}), 404
+    refus = _refus_sur_administrateur(cible, "changer le rôle d")
+    if refus:
+        return jsonify({"erreur": refus}), 403
+    if nouveau != "super_admin" and _dernier_super_admin(id_user):
+        return jsonify({"erreur": "C'est le dernier super administrateur "
+                                  "actif : le rétrograder fermerait "
+                                  "l'administration à tout le monde."}), 400
 
     # Si on passe de mentor à autre chose, conserver mentor_details mais ce sera ignoré
     n = executer(

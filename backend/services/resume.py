@@ -71,17 +71,26 @@ def jeton_valide(id_utilisateur, jeton):
 
 
 def _destinataires():
-    """Comptes actifs, confirmés, qui n'ont rien reçu depuis deux jours."""
+    """Comptes actifs, confirmés, pas examinés depuis deux jours.
+
+    Deux dates, et non une seule. « Examiné » avance à chaque passage,
+    même quand rien n'est parti : sans quoi les comptes sans nouveauté
+    restaient en tête de file, et comme le passage s'arrête au
+    quarantième, les mêmes quarante l'occupaient indéfiniment. « Envoyé »
+    ne bouge que quand un message part, et sert de début de fenêtre :
+    une réponse reçue lundi et une autre mercredi comptent ensemble,
+    au lieu d'être oubliées une par une faute d'atteindre le seuil.
+    """
     limite = _depuis(DELAI_HEURES)
     return recuperer_tous(
         """SELECT u.id_utilisateur, u.prenom, u.email, u.role,
-                  u.derniere_co, u.resume_envoye_le
+                  u.derniere_co, u.resume_envoye_le, u.resume_examine_le
              FROM utilisateur u
             WHERE u.est_actif = 1
               AND u.email_verifie = 1
-              AND (u.resume_envoye_le IS NULL OR u.resume_envoye_le < %s)
-         ORDER BY CASE WHEN u.resume_envoye_le IS NULL THEN 0 ELSE 1 END,
-                  u.resume_envoye_le
+              AND (u.resume_examine_le IS NULL OR u.resume_examine_le < %s)
+         ORDER BY CASE WHEN u.resume_examine_le IS NULL THEN 0 ELSE 1 END,
+                  u.resume_examine_le
             LIMIT %s""",
         (limite, MAX_PAR_PASSAGE))
 
@@ -190,15 +199,15 @@ def envoyer_resumes():
             continue
         if not _accepte(compte["id_utilisateur"]):
             bilan["refuses"] += 1
-            # Marque quand meme la date : sans cela, ce compte serait
-            # reexamine a chaque passage et occuperait la file.
-            _marquer(compte["id_utilisateur"])
+            _examine(compte["id_utilisateur"])
             continue
 
         lignes = _nouveautes(compte, compte.get("resume_envoye_le") or depuis)
-        total = len(lignes)
-        if total < SEUIL_NOUVEAUTES:
+        if len(lignes) < SEUIL_NOUVEAUTES:
             bilan["sans_nouveaute"] += 1
+            # Examine, mais rien d'envoye : la file avance, la fenetre
+            # des nouveautes reste ouverte.
+            _examine(compte["id_utilisateur"])
             continue
 
         sujet = "LaSourcee : " + lignes[0][1].lower()
@@ -214,8 +223,21 @@ def envoyer_resumes():
     return bilan
 
 
-def _marquer(id_utilisateur):
+def _maintenant():
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _examine(id_utilisateur):
+    """Le compte a été passé en revue : il sort de la tête de file."""
     executer(
-        "UPDATE utilisateur SET resume_envoye_le = %s WHERE id_utilisateur = %s",
-        (datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), id_utilisateur),
+        "UPDATE utilisateur SET resume_examine_le = %s "
+        "WHERE id_utilisateur = %s", (_maintenant(), id_utilisateur),
         commit=True)
+
+
+def _marquer(id_utilisateur):
+    """Un message est réellement parti : la fenêtre repart d'ici."""
+    executer(
+        "UPDATE utilisateur SET resume_envoye_le = %s, resume_examine_le = %s "
+        "WHERE id_utilisateur = %s",
+        (_maintenant(), _maintenant(), id_utilisateur), commit=True)

@@ -301,9 +301,15 @@
             <span class="hero-stat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg></span>
             <div><strong id="stat-reponses">…</strong><span>Réponses partagées</span></div>
           </div>
+          <!-- La note moyenne etait ecrite en dur : « 4,8/5 », au meme
+               rang que trois chiffres qui, eux, viennent du serveur. Un
+               chiffre invente sur une page publique engage la
+               credibilite du projet entier. Ce bandeau montre desormais
+               le delai reel avant la premiere reponse, qui dit quelque
+               chose de vrai et d'utile a qui hesite a poser sa question. -->
           <div class="hero-stat hero-stat-note">
-            <span class="hero-stat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></span>
-            <div><strong>4,8/5</strong><span>Note moyenne</span></div>
+            <span class="hero-stat-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+            <div><strong id="stat-delai">…</strong><span>Avant la première réponse</span></div>
           </div>
         </div>
       </div>
@@ -774,7 +780,6 @@
             <div class="onglet actif" data-tri="recent" onclick="changerTri(this, 'recent')">Les plus récentes</div>
             <div class="onglet" data-tri="populaire" onclick="changerTri(this, 'populaire')">Les plus populaires</div>
             <div class="onglet" data-tri="sansrep" onclick="changerTri(this, 'sansrep')">Sans réponse</div>
-            <div class="onglet" data-tri="suivis" onclick="changerTri(this, 'suivis')">Référents suivis</div>
           </div>
           <select id="filtre-secteur" onchange="rendreFil()">
             <option value="">Tous les secteurs</option>

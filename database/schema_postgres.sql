@@ -71,6 +71,7 @@ CREATE TABLE utilisateur (
     -- Derniere action, distincte de la derniere connexion.
     derniere_activite TIMESTAMP,
     resume_envoye_le TIMESTAMP,
+    resume_examine_le TIMESTAMP,
     FOREIGN KEY (id_pays) REFERENCES pays(id_pays) ON DELETE SET NULL
 );
 
