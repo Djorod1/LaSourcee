@@ -14,8 +14,11 @@ et ``vercel.json`` à la racine du dépôt.
 import logging
 import os
 import traceback
+from datetime import date, datetime
+from decimal import Decimal
 
 from flask import Flask, jsonify, send_from_directory
+from flask.json.provider import DefaultJSONProvider
 from werkzeug.exceptions import HTTPException, NotFound
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -127,12 +130,45 @@ def _ressource_publique(dossier_front, ressource):
     return parties[0] in DOSSIERS_PUBLICS
 
 
+class JSONIsoDates(DefaultJSONProvider):
+    """Sérialise les dates au format ISO 8601, et non au format HTTP.
+
+    SQLite rend les horodatages sous forme de chaînes (« 2026-09-23
+    22:20:01 ») ; PostgreSQL rend de vrais objets datetime, que Flask
+    convertit par défaut en « Wed, 23 Sep 2026 22:20:01 GMT ».
+
+    Le navigateur ne sait pas lire cette seconde forme : en production,
+    plus aucune date ne s'affichait nulle part, ni sur les profils, ni
+    sous les questions, ni dans le journal d'administration. Et rien ne
+    le signalait, puisque les tests passent par SQLite, où le défaut
+    n'existe pas.
+
+    Les instants sont stockés en UTC sans indicateur de fuseau : le
+    « Z » est donc ajouté, pour que le navigateur les convertisse dans
+    l'heure de la personne au lieu de les lire comme une heure locale.
+    """
+
+    @staticmethod
+    def default(objet):
+        if isinstance(objet, datetime):
+            texte = objet.isoformat()
+            if objet.tzinfo is None:
+                texte += "Z"
+            return texte
+        if isinstance(objet, date):
+            return objet.isoformat()
+        if isinstance(objet, Decimal):
+            return float(objet)
+        return DefaultJSONProvider.default(objet)
+
+
 def creer_application():
     _configurer_logs()
     dossier_front = Config.DOSSIER_FRONTEND
     # static_folder=None : le service des fichiers est assuré plus bas par
     # une route explicite, restreinte aux ressources du frontend.
     app = Flask(__name__, static_folder=None)
+    app.json = JSONIsoDates(app)
     app.config.from_object(Config)
 
     nb_proxys = _nombre_de_proxys()

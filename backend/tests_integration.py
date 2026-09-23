@@ -93,6 +93,15 @@ def _suspendu_ecarte(mod_resume, executer, id_user):
 def executer_tests():
     app = creer_application()
 
+    # Le schema est cree par l'application, mais les verifications qui
+    # interrogent la base en direct ouvrent leur propre connexion. Sans
+    # cette premiere requete, la suite echouait sur « no such table »
+    # au tout premier passage apres la suppression de la base, et
+    # passait au second : un piege qui fait croire a un defaut du code.
+    with app.app_context():
+        from models.db import recuperer_un
+        recuperer_un("SELECT COUNT(*) AS n FROM utilisateur")
+
     print("\n" + "═" * 70)
     print("  1. DÉMARRAGE ET RESSOURCES")
     print("═" * 70)
@@ -2948,6 +2957,61 @@ def executer_tests():
     verifier("L'activité est bornée",
              len(sien.get("dernieres_reponses") or []) <= 5
              and len(sien.get("dernieres_questions") or []) <= 5)
+
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  42. LES DATES ARRIVENT DANS UN FORMAT QUE LE NAVIGATEUR LIT")
+    print("═" * 70)
+
+    # SQLite rend des chaines, PostgreSQL de vrais objets datetime, que
+    # Flask convertissait par defaut en « Wed, 23 Sep 2026 22:20:01 GMT ».
+    # Le navigateur ne sait pas lire cette forme : en production, plus
+    # aucune date ne s'affichait nulle part. Et rien ne le signalait,
+    # puisque ces tests passaient par SQLite, ou le defaut n'existe pas.
+    import re as _re
+    ISO = _re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}")
+
+    def _lisible(valeur):
+        return bool(valeur) and bool(ISO.match(str(valeur)))
+
+    mien = lecteur.get("/api/profil/moi").get_json() or {}
+    verifier("La date d'inscription est lisible par le navigateur",
+             _lisible(mien.get("cree_le")), repr(mien.get("cree_le")))
+    verifier("Aucune date n'est rendue au format HTTP",
+             "GMT" not in str(mien.get("cree_le")), repr(mien.get("cree_le")))
+
+    detail = lecteur.get(f"/api/questions/{id_q}").get_json() or {}
+    verifier("La date de publication d'une question est lisible",
+             _lisible(detail.get("publiee_le")), repr(detail.get("publiee_le")))
+    verifier("La date d'une réponse est lisible",
+             _lisible((detail.get("reponses") or [{}])[0].get("cree_le")),
+             repr((detail.get("reponses") or [{}])[0].get("cree_le")))
+
+    fil = lecteur.get("/api/questions").get_json() or []
+    verifier("Les dates du fil sont lisibles",
+             all(_lisible(q.get("publiee_le")) for q in fil), str(fil[:1])[:110])
+
+    journal = (adm.get("/api/admin/audit?limite=3").get_json()
+               or {}).get("entrees") or []
+    verifier("Les dates du journal d'administration sont lisibles",
+             all(_lisible(e.get("cree_le")) for e in journal),
+             str(journal[:1])[:110])
+
+    comptes = (adm.get("/api/admin/utilisateurs?limite=3").get_json()
+               or {}).get("utilisateurs") or []
+    verifier("Les dates de la gestion des comptes sont lisibles",
+             all(_lisible(u.get("cree_le")) for u in comptes),
+             str(comptes[:1])[:110])
+
+    notifs = lecteur.get("/api/notifications").get_json() or []
+    verifier("Les dates des notifications sont lisibles",
+             all(_lisible(n.get("cree_le")) for n in notifs) if notifs else True)
+
+    # Un instant sans fuseau doit porter le « Z » : sans lui, le
+    # navigateur le lit comme une heure locale et decale tout.
+    verifier("Les instants sont marqués comme UTC",
+             str(mien.get("cree_le")).endswith("Z")
+             or _MOTEUR == "sqlite", repr(mien.get("cree_le")))
 
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)

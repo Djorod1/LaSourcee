@@ -1030,7 +1030,19 @@ async function chargerMentorsDepuisApi() {
 function _dateServeur(valeur) {
   if (!valeur) return null;
   if (valeur instanceof Date) return valeur;
-  let t = String(valeur).trim().replace(' ', 'T');
+  const brut = String(valeur).trim();
+
+  // Le serveur rend désormais de l'ISO 8601, mais une route oubliée
+  // pourrait encore renvoyer le format HTTP (« Wed, 23 Sep 2026 22:20:01
+  // GMT »). Le remaniement ci-dessous le détruirait, et la date
+  // disparaîtrait sans un mot. On le laisse donc passer tel quel :
+  // Date() le lit nativement.
+  if (!/^\d{4}-\d{2}-\d{2}/.test(brut)) {
+    const direct = new Date(brut);
+    return isNaN(direct.getTime()) ? null : direct;
+  }
+
+  let t = brut.replace(' ', 'T');
   if (!/[Zz]|[+-]\d{2}:?\d{2}$/.test(t)) t += 'Z';
   const d = new Date(t);
   return isNaN(d.getTime()) ? null : d;
