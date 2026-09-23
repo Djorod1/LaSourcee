@@ -2958,60 +2958,129 @@ function _rendreDashboardAdmin(d) {
       <p style="font-size:1.5rem; font-family:'DM Serif Display',serif;">${d.comptes_suspendus || 0}</p>
     </div>`;
 }
+/* Gestion des comptes. La liste vient du serveur page par page : la
+   charger entière puis filtrer dans le navigateur marchait tant qu'il y
+   avait deux cents comptes, et cessait de marcher au deux cent unième,
+   sans que rien ne le signale. */
+let _users = { page: 1, q: '', role: '', actif: '', total: 0, pages: 1 };
+
 async function adminUsers() {
-  const liste = await API.get('/admin/utilisateurs?limite=200');
-  etat.adminUtilisateurs = liste;
+  await chargerUtilisateursAdmin();
   return `<h2 style="margin-bottom:6px;">Gestion des comptes</h2>
-    <p class="desc" style="margin-bottom:14px;">${liste.length} compte(s) enregistré(s).</p>
+    <p class="desc" id="bilan-users" style="margin-bottom:14px;"></p>
     <div class="barre-filtre">
-      <input type="search" id="filtre-users" placeholder="Rechercher un nom, une adresse, un rôle…"
-             oninput="filtrerUtilisateurs(this.value)" aria-label="Rechercher un compte" />
+      <input type="search" id="filtre-users" placeholder="Nom, prénom ou adresse e-mail"
+             value="${echapper(_users.q)}"
+             oninput="chercherUtilisateurs(this.value)" aria-label="Rechercher un compte" />
       <select id="filtre-role" onchange="filtrerUtilisateurs()" aria-label="Filtrer par rôle">
         <option value="">Tous les rôles</option>
         ${Object.entries(LIBELLES_ROLES).map(([v, l]) =>
-          `<option value="${v}">${echapper(l)}</option>`).join('')}
+          `<option value="${v}"${v === _users.role ? ' selected' : ''}>${echapper(l)}</option>`).join('')}
+      </select>
+      <select id="filtre-actif" onchange="filtrerUtilisateurs()" aria-label="Filtrer par état">
+        <option value="">Actifs et suspendus</option>
+        <option value="1"${_users.actif === '1' ? ' selected' : ''}>Actifs seulement</option>
+        <option value="0"${_users.actif === '0' ? ' selected' : ''}>Suspendus seulement</option>
       </select>
     </div>
-    <div id="tableau-users">${tableauUtilisateurs(liste)}</div>`;
+    <div id="tableau-users">${tableauUtilisateurs(etat.adminUtilisateurs || [])}</div>`;
+}
+
+async function chargerUtilisateursAdmin() {
+  const p = new URLSearchParams({ page: _users.page, limite: 50 });
+  if (_users.q) p.set('q', _users.q);
+  if (_users.role) p.set('role', _users.role);
+  if (_users.actif) p.set('actif', _users.actif);
+  try {
+    const r = await API.get('/admin/utilisateurs?' + p.toString());
+    etat.adminUtilisateurs = r.utilisateurs || [];
+    _users.total = r.total || 0;
+    _users.pages = r.pages || 1;
+    _users.page = r.page || 1;
+  } catch (err) {
+    etat.adminUtilisateurs = [];
+    toast(err.message || 'Comptes indisponibles.', 'erreur');
+  }
+}
+
+async function rafraichirUtilisateurs() {
+  await chargerUtilisateursAdmin();
+  const zone = document.getElementById('tableau-users');
+  if (zone) zone.innerHTML = tableauUtilisateurs(etat.adminUtilisateurs || []);
+  const bilan = document.getElementById('bilan-users');
+  if (bilan) {
+    bilan.textContent = _users.total
+      ? `${_users.total} compte(s), page ${_users.page} sur ${_users.pages}.`
+      : 'Aucun compte ne correspond.';
+  }
+}
+
+/* La recherche part au serveur, mais pas à chaque frappe : une requête
+   par caractère saturerait la connexion pour un résultat que personne
+   n'a le temps de lire. */
+let _minuteurUsers = null;
+function chercherUtilisateurs(terme) {
+  clearTimeout(_minuteurUsers);
+  _minuteurUsers = setTimeout(() => {
+    _users.q = (terme || '').trim();
+    _users.page = 1;
+    rafraichirUtilisateurs();
+  }, 300);
+}
+
+function filtrerUtilisateurs() {
+  _users.role = document.getElementById('filtre-role')?.value || '';
+  _users.actif = document.getElementById('filtre-actif')?.value || '';
+  _users.page = 1;
+  rafraichirUtilisateurs();
+}
+
+function pageUtilisateurs(delta) {
+  const vise = _users.page + delta;
+  if (vise < 1 || vise > _users.pages) return;
+  _users.page = vise;
+  rafraichirUtilisateurs();
 }
 
 function tableauUtilisateurs(liste) {
   if (!liste.length) {
     return `<div class="carte"><p class="desc">Aucun compte ne correspond.</p></div>`;
   }
+  const pagination = _users.pages > 1 ? `<nav class="pagination-admin">
+      <button class="btn btn-secondaire btn-petit"${_users.page <= 1 ? ' disabled' : ''}
+              onclick="pageUtilisateurs(-1)">← Précédents</button>
+      <span>Page ${_users.page} sur ${_users.pages}</span>
+      <button class="btn btn-secondaire btn-petit"${_users.page >= _users.pages ? ' disabled' : ''}
+              onclick="pageUtilisateurs(1)">Suivants →</button>
+    </nav>` : '';
   return `<div class="cadre-tableau"><table class="tableau">
-      <thead><tr><th>Nom</th><th>E-mail</th><th>Rôle</th><th>Statut</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Nom</th><th>E-mail</th><th>Rôle</th><th>Inscription</th><th>Dernière visite</th><th>Statut</th><th>Actions</th></tr></thead>
       <tbody>${liste.map(u => `<tr>
-        <td><strong>${echapper(u.prenom)} ${echapper(u.nom)}</strong></td>
-        <td>${echapper(u.email)}</td>
+        <td><strong class="nom-cliquable" onclick="ouvrirProfilUtilisateur(${u.id_utilisateur})">${echapper(u.prenom)} ${echapper(u.nom)}</strong></td>
+        <td>${echapper(u.email)}${u.email_verifie ? '' : ' <span class="tag tag-rose">non confirmée</span>'}</td>
         <td><span class="badge-role ${u.role==='mentor'?'badge-mentor':''}">${echapper(libelleRole(u.role))}</span></td>
+        <td class="horodatage">${baliseTemps(u.cree_le, { relatif: false })}</td>
+        <td class="horodatage">${u.derniere_co ? baliseTemps(u.derniere_co) : '·'}</td>
         <td><span class="tag ${u.est_actif?'tag-vert':'tag-rose'}">${u.est_actif?'actif':'suspendu'}</span></td>
         <td>
           ${u.est_actif
             ? `<button class="btn btn-secondaire btn-petit" onclick="adminAction('suspendre',${u.id_utilisateur})">Suspendre</button>`
             : `<button class="btn btn-secondaire btn-petit" onclick="adminAction('reactiver',${u.id_utilisateur})">Réactiver</button>`}
           <button class="btn btn-fantome btn-petit" onclick="adminOuvrirRole(${u.id_utilisateur})">Rôle</button>
+          <button class="btn btn-fantome btn-petit" onclick="voirJournalCompte(${u.id_utilisateur})">Journal</button>
           <button class="btn btn-danger btn-petit" onclick="adminAction('supprimer',${u.id_utilisateur})">Supprimer</button>
         </td></tr>`).join('')}</tbody>
-    </table></div>`;
+    </table></div>${pagination}`;
 }
 
-/* Filtrage dans le navigateur : la liste tient en mémoire, et une
-   requête au serveur à chaque frappe n'apporterait rien. */
-function filtrerUtilisateurs(terme) {
-  const champ = document.getElementById('filtre-users');
-  const role = document.getElementById('filtre-role')?.value || '';
-  const q = (terme !== undefined ? terme : (champ?.value || '')).trim().toLowerCase();
-  const zone = document.getElementById('tableau-users');
-  if (!zone) return;
-
-  const filtree = (etat.adminUtilisateurs || []).filter(u => {
-    if (role && u.role !== role) return false;
-    if (!q) return true;
-    return [u.prenom, u.nom, u.email, libelleRole(u.role)]
-      .filter(Boolean).join(' ').toLowerCase().includes(q);
-  });
-  zone.innerHTML = tableauUtilisateurs(filtree);
+/* Ouvre le journal d'audit filtré sur un compte : « qui a fait quoi à
+   cette personne, et quand » est la seule question qu'on pose vraiment
+   à un journal, et elle demandait jusqu'ici de tout parcourir. */
+function voirJournalCompte(idUser) {
+  _audit = { ..._audit, page: 1, cible: idUser, action: '' };
+  const onglet = document.querySelector('.menu-admin button[data-adm=audit]');
+  if (onglet) changerPanAdmin(onglet, 'audit');
+  else toast("Vous n'avez pas accès au journal d'administration.", 'erreur');
 }
 
 /* Action générique sur un utilisateur (suspendre / réactiver / supprimer). */
@@ -3327,24 +3396,81 @@ async function ajouterCat() {
   } catch (err) { toast(err.message, 'erreur'); }
 }
 
+/* Journal d'administration, filtrable et paginé. Deux cents lignes sans
+   filtre ne répondaient plus à la seule question qu'on pose vraiment à
+   un journal : qui a fait quoi à ce compte, et quand. */
+let _audit = { page: 1, action: '', acteur: null, cible: null, actions: [] };
+
 async function adminAudit() {
-  if (!MODE.api) return `<div class="carte"><p style="color:var(--texte-doux);">Ce module est disponible lorsque le serveur LaSourcee est connecté.</p></div>`;
-  const liste = await API.get('/admin/audit?limite=50');
-  if (!liste.length) {
-    return `<h2 style="margin-bottom:18px;">Journal d'audit</h2>
-      <div class="carte"><p style="color:var(--texte-doux);">Aucune action enregistrée.</p></div>`;
+  if (!MODE.api) {
+    return `<div class="carte"><p class="desc">Ce module est disponible
+      lorsque le serveur LaSourcee est connecté.</p></div>`;
   }
-  return `<h2 style="margin-bottom:18px;">Journal d'audit (${liste.length} dernières actions)</h2>
+  const p = new URLSearchParams({ page: _audit.page, limite: 50 });
+  if (_audit.action) p.set('action', _audit.action);
+  if (_audit.cible) p.set('cible', _audit.cible);
+  if (_audit.acteur) p.set('acteur', _audit.acteur);
+  const r = await API.get('/admin/audit?' + p.toString());
+  const entrees = r.entrees || [];
+  _audit.actions = r.actions || [];
+  _audit.pages = r.pages || 1;
+
+  const filtres = `<div class="barre-filtre">
+      <select onchange="filtrerAudit('action', this.value)" aria-label="Filtrer par action">
+        <option value="">Toutes les actions</option>
+        ${_audit.actions.map(a =>
+          `<option value="${echapper(a)}"${a === _audit.action ? ' selected' : ''}>${echapper(a)}</option>`).join('')}
+      </select>
+      ${_audit.cible ? `<button class="btn btn-secondaire btn-petit"
+          onclick="filtrerAudit('cible', '')">Retirer le filtre sur le compte n° ${_audit.cible}</button>` : ''}
+    </div>`;
+
+  if (!entrees.length) {
+    return `<h2 style="margin-bottom:12px;">Journal d'administration</h2>
+      ${filtres}
+      <div class="carte"><p class="desc">Aucune action ne correspond.</p></div>`;
+  }
+
+  const pagination = _audit.pages > 1 ? `<nav class="pagination-admin">
+      <button class="btn btn-secondaire btn-petit"${_audit.page <= 1 ? ' disabled' : ''}
+              onclick="pageAudit(-1)">← Précédentes</button>
+      <span>Page ${_audit.page} sur ${_audit.pages}</span>
+      <button class="btn btn-secondaire btn-petit"${_audit.page >= _audit.pages ? ' disabled' : ''}
+              onclick="pageAudit(1)">Suivantes →</button>
+    </nav>` : '';
+
+  return `<h2 style="margin-bottom:6px;">Journal d'administration</h2>
+    <p class="desc" style="margin-bottom:14px;">${r.total} action(s)
+       enregistrée(s). Chaque ligne porte son auteur, son heure exacte et
+       l'adresse depuis laquelle elle a été faite.</p>
+    ${filtres}
     <div class="cadre-tableau"><table class="tableau">
-      <thead><tr><th>Date</th><th>Acteur</th><th>Action</th><th>Cible</th><th>Détails</th></tr></thead>
-      <tbody>${liste.map(a => `<tr>
+      <thead><tr><th>Date et heure</th><th>Acteur</th><th>Action</th><th>Cible</th><th>Détails</th><th>Adresse IP</th></tr></thead>
+      <tbody>${entrees.map(a => `<tr>
         <td class="horodatage">${baliseTemps(a.cree_le, { relatif: false })}</td>
-        <td>${echapper(a.prenom + ' ' + a.nom)}</td>
+        <td><span class="nom-cliquable" onclick="filtrerAudit('acteur', ${a.id_acteur})">${echapper((a.prenom || '') + ' ' + (a.nom || ''))}</span></td>
         <td><span class="tag">${echapper(a.action)}</span></td>
-        <td>${a.type_cible ? echapper(a.type_cible) + ' #' + a.id_cible : '·'}</td>
+        <td>${a.type_cible ? echapper(a.type_cible) + ' n° ' + a.id_cible : '·'}</td>
         <td style="font-size:12px; color:var(--texte-doux);">${echapper(a.details || '')}</td>
+        <td style="font-size:12px; color:var(--texte-doux);">${echapper(a.ip || '·')}</td>
       </tr>`).join('')}</tbody>
-    </table></div>`;
+    </table></div>${pagination}`;
+}
+
+function filtrerAudit(cle, valeur) {
+  _audit[cle] = valeur || null;
+  if (cle === 'action') _audit.action = valeur || '';
+  _audit.page = 1;
+  changerPanAdmin(document.querySelector('.menu-admin button[data-adm=audit]'),
+                  'audit');
+}
+
+function pageAudit(delta) {
+  const vise = _audit.page + delta;
+  if (vise < 1 || vise > (_audit.pages || 1)) return;
+  _audit.page = vise;
+  changerPanAdmin(document.querySelector('.menu-admin button[data-adm=audit]'),
+                  'audit');
 }
 
 /* ============================================================

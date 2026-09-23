@@ -34,6 +34,7 @@ from models.db import recuperer_un, recuperer_tous, executer, curseur
 from services import evenements
 from services.notifications import notifier
 from utils.auth_helpers import connexion_requise
+from utils.audit import journaliser
 from utils.permissions import a_le_droit, permission_requise
 
 logger = logging.getLogger("lasourcee.opportunites")
@@ -311,15 +312,25 @@ def decider(id_opp):
 
     evenements.depuis_requete("opportunite_decidee", type_cible="opportunite",
                               id_cible=id_opp, contexte={"statut": statut})
+    # Le journal d'administration doit porter qui a tranche, quand, et
+    # pourquoi : une annonce refusee sans trace devient un desaccord
+    # sans arbitre.
+    journaliser(g.utilisateur["id_utilisateur"],
+                "opportunite_" + ("publiee" if statut == "publiee" else "refusee"),
+                "opportunite", id_opp,
+                f"{ligne['titre'][:120]}" + (f" | {motif}" if motif else ""))
     return jsonify({"ok": True, "statut": statut})
 
 
 @bp_opportunites.delete("/<int:id_opp>")
 @permission_requise("opportunites")
 def supprimer(id_opp):
-    if not recuperer_un("SELECT 1 FROM opportunite WHERE id_opportunite = %s",
-                        (id_opp,)):
+    ligne = recuperer_un(
+        "SELECT titre FROM opportunite WHERE id_opportunite = %s", (id_opp,))
+    if not ligne:
         return _erreur("Annonce introuvable.", 404)
     executer("DELETE FROM opportunite WHERE id_opportunite = %s",
              (id_opp,), commit=True)
+    journaliser(g.utilisateur["id_utilisateur"], "opportunite_supprimee",
+                "opportunite", id_opp, ligne["titre"][:120])
     return jsonify({"ok": True})

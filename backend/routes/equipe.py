@@ -25,6 +25,7 @@ from models.db import recuperer_un, recuperer_tous, executer, curseur
 from services import evenements
 from services.notifications import notifier
 from utils.auth_helpers import jeton_session_courant, utilisateur_depuis_jeton
+from utils.audit import journaliser
 from utils.noms import normaliser_nom
 from utils.permissions import permission_requise
 from utils.securite import est_bloque, enregistrer_echec
@@ -213,6 +214,9 @@ def traiter(id_message):
         (statut, reponse or None, g.utilisateur["id_utilisateur"],
          datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), id_message),
         commit=True)
+
+    journaliser(g.utilisateur["id_utilisateur"], "message_equipe_" + statut,
+                "message", id_message, (reponse or "")[:200] or None)
 
     # La personne qui a écrit doit savoir que quelqu'un a lu. Sans
     # cela, on écrit une fois et on n'écrit plus jamais.

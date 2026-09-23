@@ -3228,3 +3228,11 @@ time[title] { cursor: help; }
 .btn-lien.actif { color: var(--vert-fonce); font-weight: 600; }
 .fil-reponse:empty { display: none; }
 .fil-reponse { margin-top: 10px; }
+
+/* Pagination des tableaux d'administration. Une liste tronquée en
+   silence fait croire qu'il n'y a rien de plus. */
+.pagination-admin {
+  display: flex; align-items: center; justify-content: center;
+  gap: 14px; margin-top: 14px; font-size: 13px; color: var(--texte-doux);
+}
+.pagination-admin button[disabled] { opacity: .45; cursor: not-allowed; }

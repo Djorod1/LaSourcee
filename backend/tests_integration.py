@@ -2835,6 +2835,84 @@ def executer_tests():
     verifier("Une réponse d'une autre question est refusée",
              r.status_code == 400)
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  40. GESTION DES COMPTES ET JOURNAL D'ADMINISTRATION")
+    print("═" * 70)
+
+    # La liste s'arretait a cinq cents comptes, sans page suivante ni
+    # total : passe ce seuil les plus anciens devenaient inatteignables.
+    page = adm.get("/api/admin/utilisateurs?limite=2&page=1").get_json() or {}
+    verifier("La liste des comptes est paginée",
+             isinstance(page.get("utilisateurs"), list)
+             and len(page["utilisateurs"]) <= 2, str(type(page)))
+    verifier("Elle annonce le total", isinstance(page.get("total"), int)
+             and page["total"] > 2, str(page.get("total")))
+    verifier("Elle annonce le nombre de pages", page.get("pages", 0) > 1)
+    page2 = adm.get("/api/admin/utilisateurs?limite=2&page=2").get_json() or {}
+    verifier("La page suivante donne d'autres comptes",
+             [u["id_utilisateur"] for u in page2.get("utilisateurs", [])]
+             != [u["id_utilisateur"] for u in page.get("utilisateurs", [])])
+
+    # LIKE distingue les majuscules sur PostgreSQL : chercher
+    # « djossou » ne trouvait pas « Djossou ».
+    minuscules = adm.get("/api/admin/utilisateurs?q=hounkpatin").get_json() or {}
+    verifier("La recherche ignore la casse",
+             any(u["nom"] == "Hounkpatin"
+                 for u in minuscules.get("utilisateurs", [])),
+             f"{minuscules.get('total')} résultat(s)")
+    majuscules = adm.get("/api/admin/utilisateurs?q=HOUNKPATIN").get_json() or {}
+    verifier("Elle donne le même résultat en majuscules",
+             majuscules.get("total") == minuscules.get("total"))
+    verifier("Elle cherche aussi dans l'adresse",
+             (adm.get("/api/admin/utilisateurs?q=odile@").get_json()
+              or {}).get("total", 0) >= 1)
+
+    filtre = adm.get("/api/admin/utilisateurs?role=mentor").get_json() or {}
+    verifier("Le filtre par rôle s'applique",
+             all(u["role"] == "mentor"
+                 for u in filtre.get("utilisateurs", [])))
+    verifier("La ligne porte la date d'inscription et la dernière visite",
+             all(c in (page.get("utilisateurs") or [{}])[0]
+                 for c in ("cree_le", "derniere_co", "email_verifie")))
+
+    # Le journal : filtres, pagination, et la trace de chaque decision.
+    journal = adm.get("/api/admin/audit?limite=5").get_json() or {}
+    verifier("Le journal est paginé",
+             isinstance(journal.get("entrees"), list)
+             and isinstance(journal.get("total"), int))
+    verifier("Il propose les actions réellement enregistrées",
+             isinstance(journal.get("actions"), list)
+             and len(journal["actions"]) > 3, str(journal.get("actions"))[:80])
+    verifier("Chaque ligne porte son auteur et son heure",
+             all(c in (journal.get("entrees") or [{}])[0]
+                 for c in ("prenom", "cree_le", "id_acteur", "ip")))
+
+    une_action = (journal.get("actions") or ["verifier_mentor"])[0]
+    cible = adm.get(f"/api/admin/audit?action={une_action}").get_json() or {}
+    verifier("Le filtre par action s'applique",
+             all(e["action"] == une_action for e in cible.get("entrees", [])),
+             une_action)
+    id_adm = jeton_sql("SELECT id_utilisateur FROM utilisateur "
+                       "WHERE est_admin = 1 LIMIT 1")
+    par_acteur = adm.get(f"/api/admin/audit?acteur={id_adm}").get_json() or {}
+    verifier("Le filtre par acteur s'applique",
+             all(e["id_acteur"] == id_adm
+                 for e in par_acteur.get("entrees", [])))
+
+    # Les decisions des deux modules recents laissent une trace.
+    verifier("Une décision sur une annonce est journalisée",
+             jeton_sql("SELECT COUNT(*) FROM audit_admin "
+                       "WHERE action LIKE ?", ("opportunite_%",)) >= 1)
+    verifier("Le traitement d'un message à l'équipe est journalisé",
+             jeton_sql("SELECT COUNT(*) FROM audit_admin "
+                       "WHERE action LIKE ?", ("message_equipe_%",)) >= 1)
+
+    verifier("Un membre n'accède pas au journal",
+             lecteur.get("/api/admin/audit").status_code == 403)
+    verifier("Un membre n'accède pas à la liste des comptes",
+             lecteur.get("/api/admin/utilisateurs").status_code == 403)
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

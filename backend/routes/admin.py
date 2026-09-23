@@ -59,35 +59,59 @@ def dashboard():
 @bp_admin.get("/utilisateurs")
 @permission_requise("utilisateurs")
 def lister_utilisateurs():
-    """Annuaire administratif avec filtres optionnels."""
+    """Annuaire administratif : filtres, recherche et pagination.
+
+    La liste s'arrêtait à cinq cents comptes, sans page suivante ni
+    total : passé ce seuil, les plus anciens devenaient inatteignables
+    et rien ne le disait. Et la recherche comparait avec LIKE, qui
+    distingue les majuscules sur PostgreSQL : chercher « djossou » ne
+    trouvait pas « Djossou ».
+    """
     role = request.args.get("role")
     actif = request.args.get("actif")
+    verifie = request.args.get("verifie")
     recherche = (request.args.get("q") or "").strip()
-    limite = min(request.args.get("limite", default=100, type=int), 500)
+    limite = min(max(request.args.get("limite", default=50, type=int), 1), 200)
+    page = max(request.args.get("page", default=1, type=int), 1)
 
     conditions, params = [], []
     if role in ROLES_AUTORISES:
         conditions.append("u.role = %s"); params.append(role)
     if actif in ("0", "1"):
         conditions.append("u.est_actif = %s"); params.append(int(actif))
+    if verifie in ("0", "1"):
+        conditions.append("u.email_verifie = %s"); params.append(int(verifie))
     if recherche:
-        conditions.append("(u.prenom LIKE %s OR u.nom LIKE %s OR u.email LIKE %s)")
-        m = f"%{recherche}%"; params.extend([m, m, m])
+        conditions.append(
+            "(LOWER(u.prenom) LIKE %s OR LOWER(u.nom) LIKE %s "
+            " OR LOWER(u.email) LIKE %s)")
+        m = f"%{recherche.lower()}%"
+        params.extend([m, m, m])
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    params.append(limite)
+    total = (recuperer_un(
+        f"SELECT COUNT(*) AS n FROM utilisateur u {where}",
+        tuple(params)) or {}).get("n", 0)
 
-    return jsonify(recuperer_tous(
+    lignes = recuperer_tous(
         f"""SELECT u.id_utilisateur, u.prenom, u.nom, u.email, u.role,
-                   u.est_actif, u.cree_le, u.derniere_co,
+                   u.est_actif, u.email_verifie, u.cree_le, u.derniere_co,
+                   u.derniere_activite, u.photo_url,
                    p.libelle AS pays
               FROM utilisateur u
          LEFT JOIN pays p ON p.id_pays = u.id_pays
             {where}
          ORDER BY u.cree_le DESC
-            LIMIT %s""",
-        params,
-    ))
+            LIMIT %s OFFSET %s""",
+        tuple(params) + (limite, (page - 1) * limite),
+    )
+    return jsonify({
+        "utilisateurs": lignes,
+        "total": total,
+        "page": page,
+        "par_page": limite,
+        "pages": max(1, (total + limite - 1) // limite),
+    })
 
 
 @bp_admin.get("/utilisateurs/<int:id_user>")
@@ -559,17 +583,57 @@ def traiter_signalement(id_sig):
 @bp_admin.get("/audit")
 @permission_requise("audit")
 def consulter_audit():
-    limite = min(request.args.get("limite", default=50, type=int), 200)
-    return jsonify(recuperer_tous(
-        """SELECT a.id_audit, a.action, a.type_cible, a.id_cible,
-                  a.details, a.cree_le, a.ip,
-                  u.prenom, u.nom, u.email
-             FROM audit_admin a
-             JOIN utilisateur u ON u.id_utilisateur = a.id_acteur
-         ORDER BY a.cree_le DESC
-            LIMIT %s""",
-        (limite,),
-    ))
+    """Journal d'administration, filtrable et paginé.
+
+    Deux cents lignes sans filtre ni page suivante : dès que le journal
+    s'allonge, il ne répond plus à la seule question qu'on lui pose,
+    « qui a fait quoi à ce compte, et quand ». Il se filtre donc par
+    acteur, par action et par date, et dit combien de lignes existent.
+    """
+    limite = min(max(request.args.get("limite", default=50, type=int), 1), 200)
+    page = max(request.args.get("page", default=1, type=int), 1)
+    action = (request.args.get("action") or "").strip()
+    acteur = request.args.get("acteur", type=int)
+    cible = request.args.get("cible", type=int)
+    depuis = (request.args.get("depuis") or "").strip()
+
+    conditions, params = [], []
+    if action:
+        conditions.append("a.action = %s"); params.append(action[:80])
+    if acteur:
+        conditions.append("a.id_acteur = %s"); params.append(acteur)
+    if cible:
+        conditions.append("a.id_cible = %s"); params.append(cible)
+    if depuis:
+        conditions.append("a.cree_le >= %s"); params.append(depuis[:19])
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    total = (recuperer_un(
+        f"SELECT COUNT(*) AS n FROM audit_admin a {where}",
+        tuple(params)) or {}).get("n", 0)
+
+    lignes = recuperer_tous(
+        f"""SELECT a.id_audit, a.action, a.type_cible, a.id_cible,
+                   a.details, a.cree_le, a.ip, a.id_acteur,
+                   u.prenom, u.nom, u.email
+              FROM audit_admin a
+              JOIN utilisateur u ON u.id_utilisateur = a.id_acteur
+             {where}
+          ORDER BY a.cree_le DESC
+             LIMIT %s OFFSET %s""",
+        tuple(params) + (limite, (page - 1) * limite),
+    )
+    return jsonify({
+        "entrees": lignes,
+        "total": total,
+        "page": page,
+        "par_page": limite,
+        "pages": max(1, (total + limite - 1) // limite),
+        # Les actions reellement presentes, pour que le filtre propose ce
+        # qui existe plutot qu'une liste ecrite en dur qui derive.
+        "actions": [l["action"] for l in recuperer_tous(
+            "SELECT DISTINCT action FROM audit_admin ORDER BY action")],
+    })
 
 
 # ============================================================
