@@ -557,8 +557,8 @@
       <!-- Étape 1 -->
       <div class="etape-contenu" id="etape-1">
         <h2 style="font-size:1.5rem; margin-bottom:14px;">Parlez-nous de vous</h2>
-        <div class="champ"><label>Pays</label>
-          <select id="select-pays"></select>
+        <div class="champ"><label for="select-pays">Pays</label>
+          <select id="select-pays" onchange="remplirListesParcours(this.value)"></select>
         </div>
         <div class="champs-cote">
           <div class="champ"><label for="ob-niveau">Diplôme le plus élevé obtenu</label>
@@ -583,11 +583,18 @@
           <div class="chips-objectifs" id="ob-objectifs"></div>
           <p class="aide-champ" id="ob-objectifs-aide"></p>
         </fieldset>
+        <div class="champ"><label for="ob-filiere">Filière ou spécialité</label>
+          <input type="text" id="ob-filiere" maxlength="120"
+                 placeholder="Génie logiciel, comptabilité, soudure à l'arc…" />
+          <p class="aide-champ">Facultatif, mais c'est ce qui vous rapproche
+            des référents qui font exactement cela.</p>
+        </div>
         <div class="champ"><label for="ob-etablissement">Établissement ou lieu de formation</label>
           <input type="text" id="ob-etablissement" list="liste-etablissements"
                  maxlength="120" placeholder="Université, école, centre de formation ou atelier" />
           <datalist id="liste-etablissements"></datalist>
-          <p class="aide-champ">Facultatif. Saisissez librement si votre établissement n'est pas proposé.</p>
+          <p class="aide-champ">Facultatif. Saisissez librement : aucune liste
+            ne contient tous les établissements du monde.</p>
         </div>
         <div class="champ"><label for="ob-bio">Courte présentation</label>
           <textarea id="ob-bio" maxlength="500" placeholder="Quelques mots sur vous (facultatif)"></textarea>

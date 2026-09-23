@@ -70,6 +70,7 @@ CREATE TABLE utilisateur (
     domaine          VARCHAR(60)  NULL,
     -- Libre : aucune liste ne contient l'atelier où s'apprend un métier.
     etablissement    VARCHAR(120) NULL,
+    filiere          VARCHAR(120) NULL,
     cree_le          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     maj_le           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
                                   ON UPDATE CURRENT_TIMESTAMP,

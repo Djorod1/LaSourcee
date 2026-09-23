@@ -83,20 +83,38 @@ def _eclater_objectifs(valeur):
         return [str(v).strip() for v in valeur if str(v).strip()]
     return [m.strip() for m in str(valeur).split(",") if m.strip()]
 
-# Diplome le plus eleve obtenu. La liste suit le systeme beninois et
-# place les titres professionnels au milieu du parcours, la ou ils sont
-# reellement : un CAP n'est pas une case « autre » en bas de liste.
+# Diplome le plus eleve obtenu.
+#
+# La liste nommait les diplomes beninois : CEP, BEPC, CQM. Quelqu'un au
+# Cameroun, au Canada ou en France ne s'y reconnaissait pas, et cochait
+# au hasard le libelle qui ressemblait le plus. Elle nomme desormais le
+# NIVEAU atteint, qui se compare d'un pays a l'autre, et cite les
+# diplomes locaux en exemple pour que chacun se retrouve.
+#
+# Les titres professionnels restent au milieu du parcours, la ou ils
+# sont reellement : un CAP n'est pas une case « autre » en bas de liste.
 NIVEAUX_ETUDES = [
     "Sans diplôme",
-    "CEP (primaire)",
-    "BEPC (collège)",
-    "CAP, CQP ou CQM (métier)",
-    "Baccalauréat",
-    "BTS, DUT ou DT (bac+2)",
+    "Fin de primaire (CEP, CEPE…)",
+    "Fin de collège (BEPC, brevet…)",
+    "Diplôme professionnel (CAP, CQP, CQM, BEP…)",
+    "Baccalauréat ou équivalent",
+    "Bac+2 (BTS, DUT, DEC, DT…)",
     "Licence (bac+3)",
     "Master (bac+5)",
     "Doctorat",
 ]
+
+# Ce que les comptes crees avant cette liste portent en base. Les
+# refuser empecherait ces personnes d'enregistrer leur profil, pour un
+# changement dont elles ne sont pas responsables.
+ANCIENS_NIVEAUX = {
+    "cep (primaire)": "Fin de primaire (CEP, CEPE…)",
+    "bepc (college)": "Fin de collège (BEPC, brevet…)",
+    "cap, cqp ou cqm (metier)": "Diplôme professionnel (CAP, CQP, CQM, BEP…)",
+    "baccalaureat": "Baccalauréat ou équivalent",
+    "bts, dut ou dt (bac+2)": "Bac+2 (BTS, DUT, DEC, DT…)",
+}
 
 # Domaine d'etudes ou de metier. Les filieres universitaires et les
 # metiers manuels figurent dans la meme liste, sans hierarchie : la
@@ -124,29 +142,112 @@ DOMAINES = [
 ]
 
 # Suggestions, et non liste fermee : aucune liste ne contiendra jamais
-# tous les etablissements du pays, encore moins les ateliers ou se fait
-# l'apprentissage. Le champ reste libre, ces valeurs ne font que rendre
-# la saisie plus rapide pour les cas frequents.
-ETABLISSEMENTS_SUGGERES = [
-    "Université d'Abomey-Calavi (UAC)",
-    "Université de Parakou (UP)",
-    "UNSTIM (Abomey)",
-    "Université Nationale d'Agriculture (UNA)",
-    "IFRI (Informatique, UAC)",
-    "EPAC (École Polytechnique d'Abomey-Calavi)",
-    "ENEAM (Économie Appliquée et Management)",
-    "ENSET (Lokossa)",
-    "INSTI (Lokossa)",
-    "ESGIS Bénin",
-    "Institut CERCO",
-    "HECM (Commerce et Management)",
-    "IRGIB Africa",
-    "Lycée technique Coulibaly (Cotonou)",
+# tous les etablissements d'un pays, encore moins les ateliers ou se
+# fait l'apprentissage. Le champ reste libre ; ces valeurs ne font que
+# rendre la saisie plus rapide pour les cas frequents.
+#
+# Elles sont classees par pays : proposer dix universites beninoises a
+# quelqu'un qui etudie a Dakar ou a Montreal ne l'aide pas, et laisse
+# croire que la plateforme n'est pas pour lui.
+ETABLISSEMENTS_PAR_PAYS = {
+    "Bénin": [
+        "Université d'Abomey-Calavi (UAC)",
+        "Université de Parakou (UP)",
+        "UNSTIM (Abomey)",
+        "Université Nationale d'Agriculture (UNA)",
+        "IFRI (Informatique, UAC)",
+        "EPAC (École Polytechnique d'Abomey-Calavi)",
+        "ENEAM (Économie Appliquée et Management)",
+        "ENSET (Lokossa)",
+        "INSTI (Lokossa)",
+        "ESGIS Bénin",
+        "Institut CERCO",
+        "HECM (Commerce et Management)",
+        "IRGIB Africa",
+        "Lycée technique Coulibaly (Cotonou)",
+    ],
+    "Togo": [
+        "Université de Lomé",
+        "Université de Kara",
+        "École Polytechnique de Lomé (EPL)",
+        "ESGIS Togo",
+    ],
+    "Côte d'Ivoire": [
+        "Université Félix Houphouët-Boigny",
+        "Institut National Polytechnique Houphouët-Boigny (INP-HB)",
+        "Université Nangui Abrogoua",
+        "ESATIC",
+    ],
+    "Sénégal": [
+        "Université Cheikh Anta Diop (UCAD)",
+        "Université Gaston Berger (UGB)",
+        "École Supérieure Polytechnique (ESP)",
+        "Université Amadou Mahtar Mbow",
+    ],
+    "Cameroun": [
+        "Université de Yaoundé I",
+        "Université de Douala",
+        "Université de Buea",
+        "École Nationale Supérieure Polytechnique (ENSP)",
+    ],
+    "Burkina Faso": [
+        "Université Joseph Ki-Zerbo",
+        "Université Nazi Boni",
+        "Institut 2iE",
+    ],
+    "Mali": ["Université des Sciences Sociales et de Gestion de Bamako",
+             "Université des Sciences, Techniques et Technologies de Bamako"],
+    "Niger": ["Université Abdou Moumouni", "Université de Zinder"],
+    "Maroc": ["Université Mohammed V de Rabat",
+              "Université Hassan II de Casablanca",
+              "Université Cadi Ayyad", "ENSA", "ENCG"],
+    "Tunisie": ["Université de Tunis El Manar", "Université de Carthage",
+                "INSAT"],
+    "Algérie": ["Université d'Alger", "USTHB", "Université de Constantine"],
+    "France": ["Sorbonne Université", "Université Paris-Saclay",
+               "Université de Lille", "Université de Bordeaux",
+               "INSA", "IUT", "BTS en lycée"],
+    "Canada": ["Université de Montréal", "Université Laval",
+               "Université du Québec (UQAM)", "Cégep", "McGill University"],
+    "Belgique": ["Université libre de Bruxelles (ULB)", "UCLouvain",
+                 "Université de Liège", "Haute École"],
+    "Suisse": ["Université de Genève", "Université de Lausanne", "EPFL"],
+}
+
+# Propositions valables partout, ajoutees a celles du pays : elles
+# decrivent un lieu de formation plutot qu'un etablissement precis, et
+# couvrent l'apprentissage, qui n'a d'annuaire nulle part.
+ETABLISSEMENTS_UNIVERSELS = [
+    "Lycée ou collège",
     "Centre de formation professionnelle",
     "Atelier ou maître artisan",
+    "Formation en ligne",
+    "En autodidacte",
 ]
 
+# Conserve pour les appels qui ne precisent aucun pays.
+ETABLISSEMENTS_SUGGERES = (ETABLISSEMENTS_PAR_PAYS["Bénin"]
+                           + ETABLISSEMENTS_UNIVERSELS)
+
+
+def etablissements_pour(pays):
+    """Suggestions adaptées au pays, puis celles valables partout."""
+    if not pays:
+        return ETABLISSEMENTS_UNIVERSELS
+    cible = _sans_accent(pays)
+    for nom, liste in ETABLISSEMENTS_PAR_PAYS.items():
+        if _sans_accent(nom) == cible:
+            return liste + ETABLISSEMENTS_UNIVERSELS
+    return ETABLISSEMENTS_UNIVERSELS
+
+
 LONGUEUR_ETABLISSEMENT = 120
+
+# La filiere precise ce que le domaine laisse large : « Informatique et
+# numerique » ne dit pas si l'on fait du reseau ou du developpement, et
+# c'est justement ce qui permet d'orienter quelqu'un. Champ libre :
+# aucune liste ne contiendra les filieres de cent dix-sept pays.
+LONGUEUR_FILIERE = 120
 
 # Une image de 320 pixels de côté encodée en JPEG tient largement
 # dessous ; au-delà, c'est qu'elle n'a pas été réduite.
@@ -158,6 +259,22 @@ def _sans_accent(texte):
     decompose = unicodedata.normalize("NFD", str(texte))
     return "".join(c for c in decompose
                    if unicodedata.category(c) != "Mn").strip().lower()
+
+
+def niveau_retenu(valeur):
+    """Niveau d'études officiel, ou None.
+
+    Accepte les libellés d'avant l'ouverture internationale : quelqu'un
+    dont le profil porte « BEPC (collège) » doit pouvoir l'enregistrer
+    à nouveau sans que ce changement, dont il n'est pas responsable, lui
+    ferme la porte.
+    """
+    if valeur is None:
+        return None
+    officiel = _canoniser(valeur, NIVEAUX_ETUDES)
+    if officiel is not None:
+        return officiel
+    return ANCIENS_NIVEAUX.get(_sans_accent(valeur))
 
 
 def _canoniser(valeur, liste):
@@ -252,8 +369,8 @@ def ids_secteurs_depuis(valeurs):
 # page, puis envoyes seulement apres la saisie du code de confirmation.
 # Toute personne qui fermait l'onglet pour aller lire son e-mail
 # perdait la totalite de sa saisie et trouvait un profil vide.
-CHAMPS_INSCRIPTION = ("bio", "niveau_etudes", "domaine", "etablissement",
-                      "situation", "telephone", "ville")
+CHAMPS_INSCRIPTION = ("bio", "niveau_etudes", "domaine", "filiere",
+                      "etablissement", "situation", "telephone", "ville")
 
 
 def profil_initial(bloc):
@@ -275,7 +392,7 @@ def profil_initial(bloc):
         colonnes[cle] = valeur
 
     if "niveau_etudes" in colonnes:
-        retenu = _canoniser(colonnes["niveau_etudes"], NIVEAUX_ETUDES)
+        retenu = niveau_retenu(colonnes["niveau_etudes"])
         if retenu:
             colonnes["niveau_etudes"] = retenu
         else:
@@ -305,6 +422,9 @@ def profil_initial(bloc):
     if "etablissement" in colonnes:
         colonnes["etablissement"] = \
             str(colonnes["etablissement"]).strip()[:LONGUEUR_ETABLISSEMENT]
+    if "filiere" in colonnes:
+        colonnes["filiere"] = \
+            " ".join(str(colonnes["filiere"]).split())[:LONGUEUR_FILIERE]
     if "bio" in colonnes:
         colonnes["bio"] = str(colonnes["bio"]).strip()[:2000]
     if "ville" in colonnes:
@@ -335,12 +455,18 @@ def referentiels_profil():
     Servies par le serveur plutot qu'ecrites dans la page : la liste
     validee et la liste affichee ne peuvent alors pas diverger.
     """
+    # Les suggestions d'établissement suivent le pays : proposer dix
+    # universités béninoises à quelqu'un qui étudie à Dakar ou à
+    # Montréal ne l'aide pas, et laisse croire que la plateforme n'est
+    # pas pour lui.
+    pays = request.args.get("pays")
     return jsonify({
         "situations": SITUATIONS,
         "objectifs": OBJECTIFS,
         "niveaux_etudes": NIVEAUX_ETUDES,
         "domaines": DOMAINES,
-        "etablissements": ETABLISSEMENTS_SUGGERES,
+        "etablissements": etablissements_pour(pays),
+        "pays_avec_suggestions": sorted(ETABLISSEMENTS_PAR_PAYS),
     })
 
 
@@ -391,6 +517,7 @@ def modifier_profil():
         "langues": d.get("langues"),
         "profil_pro": d.get("profil_pro"),
         "niveau_etudes": d.get("niveau_etudes"),
+        "filiere": d.get("filiere"),
         "domaine": d.get("domaine"),
         "etablissement": d.get("etablissement"),
         "telephone": d.get("telephone"),
@@ -402,17 +529,17 @@ def modifier_profil():
     # telle quelle sur les profils publics. La valeur retenue est celle
     # de la liste, pas celle recue : la base ne garde ainsi qu'une seule
     # orthographe par intitule.
-    A_CHOIX_FERME = (
-        ("situation", SITUATIONS, "Situation inconnue."),
-        ("niveau_etudes", NIVEAUX_ETUDES, "Niveau d'études inconnu."),
-    )
-    for cle, liste, message in A_CHOIX_FERME:
-        if cle not in champs:
-            continue
-        retenu = _canoniser(champs[cle], liste)
+    if "situation" in champs:
+        retenu = _canoniser(champs["situation"], SITUATIONS)
         if retenu is None:
-            return jsonify({"erreur": message}), 400
-        champs[cle] = retenu
+            return jsonify({"erreur": "Situation inconnue."}), 400
+        champs["situation"] = retenu
+
+    if "niveau_etudes" in champs:
+        retenu = niveau_retenu(champs["niveau_etudes"])
+        if retenu is None:
+            return jsonify({"erreur": "Niveau d'études inconnu."}), 400
+        champs["niveau_etudes"] = retenu
 
     # Le domaine, lui, reste ouvert : voir domaine_retenu.
     if "domaine" in champs:
@@ -483,6 +610,9 @@ def modifier_profil():
     if "etablissement" in champs:
         champs["etablissement"] = \
             str(champs["etablissement"]).strip()[:LONGUEUR_ETABLISSEMENT]
+    if "filiere" in champs:
+        champs["filiere"] = \
+            " ".join(str(champs["filiere"]).split())[:LONGUEUR_FILIERE]
     if champs.get("profil_pro"):
         lien = champs["profil_pro"].strip()
         if lien and not lien.startswith(("https://", "http://")):
@@ -559,7 +689,7 @@ def _charger_profil(id_user, public=False):
                   u.est_admin, u.doit_changer_mdp, u.cree_le,
                   u.derniere_activite,
                   u.situation, u.objectif, u.langues, u.profil_pro,
-                  u.niveau_etudes, u.domaine, u.etablissement,
+                  u.niveau_etudes, u.domaine, u.filiere, u.etablissement,
                   u.telephone,
                   u.email_verifie,
                   md.est_verifie, md.dispo, md.anciennete,
@@ -823,7 +953,7 @@ def exporter_mes_donnees():
         """SELECT prenom, nom, email, role, bio, etudes, ville,
                   photo_url, cree_le, derniere_co, email_verifie,
                   situation, objectif, langues, profil_pro,
-                  niveau_etudes, domaine, etablissement, telephone
+                  niveau_etudes, domaine, filiere, etablissement, telephone
              FROM utilisateur WHERE id_utilisateur = %s""", (id_user,))
 
     return jsonify({

@@ -407,6 +407,7 @@ function appliquerUtilisateur(u) {
     niveau_etudes: u.niveau_etudes || '',
     domaine: u.domaine || '',
     etablissement: u.etablissement || '',
+    filiere: u.filiere || '',
     telephone: u.telephone || '',
     objectifs: u.objectifs || [],
   };
@@ -482,6 +483,7 @@ function infosEtape1() {
     pays: val('select-pays'),
     niveau_etudes: val('ob-niveau'),
     domaine,
+    filiere: val('ob-filiere'),
     etablissement: val('ob-etablissement'),
     situation: val('ob-situation'),
     objectifs: [...document.querySelectorAll('#ob-objectifs input:checked')]
@@ -551,6 +553,7 @@ async function finaliserInscription() {
     pays: d.pays,
     niveau_etudes: d.niveau_etudes,
     domaine: d.domaine,
+    filiere: d.filiere,
     etablissement: d.etablissement,
     situation: d.situation,
     objectifs: d.objectifs,
@@ -713,10 +716,16 @@ async function remplirSelectPays() {
    Elles viennent du serveur et ne sont pas ecrites dans la page : la
    liste proposee et la liste acceptee a l'enregistrement ne peuvent
    alors pas diverger, ce qui donnerait un choix refuse apres coup. */
-async function remplirListesParcours() {
-  if (!etat.referentielsProfil) {
+async function remplirListesParcours(pays) {
+  // Les suggestions d'établissement suivent le pays : elles sont donc
+  // rechargées quand il change, et non mises en cache une fois pour
+  // toutes comme le reste des listes.
+  const cible = pays || document.getElementById('select-pays')?.value || '';
+  if (!etat.referentielsProfil || etat.paysReferentiels !== cible) {
     try {
-      etat.referentielsProfil = await API.get('/profil/referentiels-profil');
+      etat.referentielsProfil = await API.get(
+        '/profil/referentiels-profil?pays=' + encodeURIComponent(cible));
+      etat.paysReferentiels = cible;
     } catch (_) { return; }
   }
   const r = etat.referentielsProfil || {};
@@ -2190,6 +2199,14 @@ function panneauCompte() {
         </select>
       </div>
     </div>
+    <div class="champ"><label for="pc-filiere">Filière ou spécialité</label>
+      <input id="pc-filiere" maxlength="120"
+             value="${echapper(u.filiere || '')}"
+             placeholder="Génie logiciel, comptabilité, soudure à l'arc…" />
+      <p class="aide-champ">Le domaine dit le secteur, la filière dit ce que
+        vous faites exactement. C'est elle qui vous rapproche des référents
+        qui font la même chose.</p>
+    </div>
     <div class="champ"><label for="pc-etablissement">Établissement ou lieu de formation</label>
       <input id="pc-etablissement" list="liste-etablissements-pc" maxlength="120"
              value="${echapper(u.etablissement || '')}"
@@ -2198,7 +2215,8 @@ function panneauCompte() {
         ${(etat.referentielsProfil?.etablissements || []).map(e =>
           `<option value="${echapper(e)}"></option>`).join('')}
       </datalist>
-      <p class="aide-champ">Saisissez librement si votre établissement n'est pas proposé.</p>
+      <p class="aide-champ">Les propositions suivent le pays choisi. Saisissez
+        librement : aucune liste ne contient tous les établissements du monde.</p>
     </div>
     <div class="champs-cote">
       <div class="champ"><label for="pc-langues">Langues parlées</label>
@@ -2275,13 +2293,14 @@ async function sauverCompte() {
   const niveauEtudes = document.getElementById('pc-niveau')?.value || '';
   const domaine = document.getElementById('pc-domaine')?.value || '';
   const etablissement = (document.getElementById('pc-etablissement')?.value || '').trim();
+  const filiere = (document.getElementById('pc-filiere')?.value || '').trim();
   const secteurs = [...document.querySelectorAll('#pc-chips .chip-select.actif')]
     .map(c => c.textContent.trim().replace(/\s*×$/, '').replace(/^\+\s*Autre$/, ''))
     .filter(Boolean);
   if (!prenom || !nom) { toast('Prénom et nom obligatoires.', 'erreur'); return; }
   etat.utilisateur.prenom = prenom;
   etat.utilisateur.nom = nom;
-  etat.utilisateur.initiales = (prenom[0] + nom[0]).toUpperCase();
+  etat.utilisateur.initiales = initialesDe(prenom, nom);
   etat.utilisateur.email = email;
   etat.utilisateur.pays = pays;
   etat.utilisateur.bio = bio;
@@ -2295,6 +2314,7 @@ async function sauverCompte() {
   etat.utilisateur.niveau_etudes = niveauEtudes;
   etat.utilisateur.domaine = domaine;
   etat.utilisateur.etablissement = etablissement;
+  etat.utilisateur.filiere = filiere;
   // Rafraîchir la navigation immédiatement (retour visuel)
   const navAv = document.getElementById('avatar-nav');
   if (navAv && !etat.utilisateur.photo) navAv.textContent = etat.utilisateur.initiales;
@@ -2315,6 +2335,7 @@ async function sauverCompte() {
       niveau_etudes: niveauEtudes,
       domaine,
       etablissement,
+      filiere,
       // Les secteurs étaient relevés puis oubliés : la requête ne les
       // portait pas, et les cases cochées revenaient à leur état
       // précédent au rechargement de la page.
@@ -4659,7 +4680,8 @@ function blocParcoursProfil(u) {
     { titre: 'Parcours', lignes: [
         ["Niveau d'études", u.niveau_etudes],
         ['Domaine ou métier', u.domaine],
-        ['Formation', u.etablissement],
+        ['Filière ou spécialité', u.filiere],
+        ['Établissement', u.etablissement],
         // Ancien champ libre : affiché seulement si le parcours
         // structuré est vide, sinon la même chose s'écrirait deux fois.
         ...((!u.niveau_etudes && !u.domaine && u.etudes)

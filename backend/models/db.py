@@ -349,6 +349,10 @@ COLONNES_ATTENDUES = [
     ("utilisateur", "niveau_etudes", "TEXT"),
     ("utilisateur", "domaine", "TEXT"),
     ("utilisateur", "etablissement", "TEXT"),
+    # La filiere precise ce que le domaine laisse large :
+    # « Informatique et numerique » ne dit pas si l'on fait du reseau
+    # ou du developpement, et c'est justement ce qui permet d'orienter.
+    ("utilisateur", "filiere", "TEXT"),
     ("utilisateur", "doit_changer_mdp", "INTEGER NOT NULL DEFAULT 0"),
     ("utilisateur", "email_verifie", "INTEGER NOT NULL DEFAULT 0"),
     # Dossier de candidature d'un référent. Il ne partait que par

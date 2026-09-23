@@ -1045,8 +1045,10 @@ def executer_tests():
         "etablissement": "Atelier de maître soudeur, Porto-Novo"})
     verifier("Un parcours de métier s'enregistre", r.status_code == 200)
     p = r.get_json() or {}
-    verifier("Le niveau est relu tel quel",
-             p.get("niveau_etudes") == "CAP, CQP ou CQM (métier)")
+    verifier("Un ancien libellé de diplôme reste accepté",
+             p.get("niveau_etudes")
+             == "Diplôme professionnel (CAP, CQP, CQM, BEP…)",
+             str(p.get("niveau_etudes")))
     verifier("Le domaine est relu tel quel",
              p.get("domaine") == "Soudure et métallerie")
     verifier("L'établissement libre est conservé",
@@ -2251,7 +2253,7 @@ def executer_tests():
         "|| '|' || situation || '|' || objectif || '|' || telephone "
         "FROM utilisateur WHERE email = ?", ("sedo@test.io",)))
     verifier("Le niveau d'études est écrit dès la création",
-             ligne.startswith("Baccalauréat|"), ligne[:90])
+             ligne.startswith("Baccalauréat ou équivalent|"), ligne[:90])
     verifier("Le domaine libre est écrit dès la création",
              "|Sérigraphie sur textile|" in ligne)
     verifier("L'établissement libre est écrit dès la création",
@@ -2555,6 +2557,52 @@ def executer_tests():
     verifier("Un numéro étranger est accepté",
              jeton_sql("SELECT telephone FROM utilisateur WHERE email = ?",
                        ("ntsame@test.io",)) == "+241061234 56".replace(" ", ""))
+
+    # --- Parcours scolaire ---
+    # La liste des diplomes nommait le systeme beninois : CEP, BEPC,
+    # CQM. Quelqu'un au Cameroun ou au Canada ne s'y reconnaissait pas.
+    ref = etu.get("/api/profil/referentiels-profil").get_json() or {}
+    niveaux = ref.get("niveaux_etudes") or []
+    verifier("Les diplômes nomment un niveau, pas un sigle local",
+             not any(n.startswith(("CEP ", "BEPC ")) for n in niveaux),
+             " | ".join(niveaux[:4]))
+    verifier("Les diplômes locaux restent cités en exemple",
+             any("CEP" in n for n in niveaux) and any("BEPC" in n for n in niveaux))
+
+    # Les suggestions d'etablissement suivent le pays.
+    benin = (etu.get("/api/profil/referentiels-profil?pays=Bénin").get_json()
+             or {}).get("etablissements") or []
+    senegal = (etu.get("/api/profil/referentiels-profil?pays=Sénégal").get_json()
+               or {}).get("etablissements") or []
+    inconnu = (etu.get("/api/profil/referentiels-profil?pays=Mongolie").get_json()
+               or {}).get("etablissements") or []
+    verifier("Le Bénin propose ses établissements",
+             any("Abomey-Calavi" in e for e in benin))
+    verifier("Le Sénégal propose les siens, pas ceux du Bénin",
+             any("Cheikh Anta Diop" in e for e in senegal)
+             and not any("Abomey-Calavi" in e for e in senegal))
+    verifier("Un pays sans liste garde les propositions universelles",
+             "Atelier ou maître artisan" in inconnu
+             and not any("Abomey-Calavi" in e for e in inconnu))
+    verifier("L'apprentissage figure partout",
+             all("Atelier ou maître artisan" in liste
+                 for liste in (benin, senegal, inconnu)))
+
+    # La filiere precise ce que le domaine laisse large.
+    r = hors.put("/api/profil/moi", json={
+        "domaine": "Informatique et numérique",
+        "filiere": "  Génie   logiciel  "})
+    verifier("La filière s'enregistre", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+    verifier("La filière est nettoyée de ses espaces en trop",
+             jeton_sql("SELECT filiere FROM utilisateur WHERE email = ?",
+                       ("ntsame@test.io",)) == "Génie logiciel")
+    verifier("La filière est relue sur le profil",
+             (hors.get("/api/profil/moi").get_json() or {}).get("filiere")
+             == "Génie logiciel")
+    verifier("La filière voyage aussi sur un profil consulté",
+             "filiere" in (etu.get("/api/profil/%d" % _id("ntsame@test.io"))
+                           .get_json() or {}))
 
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)

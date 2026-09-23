@@ -64,6 +64,7 @@ CREATE TABLE utilisateur (
     domaine         TEXT,
     -- Libre : aucune liste ne contient l'atelier ou s'apprend un metier.
     etablissement   TEXT,
+    filiere         TEXT,
     cree_le         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     maj_le          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     derniere_co     TIMESTAMP,
