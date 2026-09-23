@@ -5,15 +5,42 @@
       "src": "api/index.py",
       "use": "@vercel/python"
     },
-    { "src": "index.html",           "use": "@vercel/static" },
-    { "src": "verifier-email.html",  "use": "@vercel/static" },
-    { "src": "reinitialiser.html",   "use": "@vercel/static" },
-    { "src": "api.js",               "use": "@vercel/static" },
-    { "src": "script.js",            "use": "@vercel/static" },
-    { "src": "styles.css",           "use": "@vercel/static" },
-    { "src": "robots.txt",           "use": "@vercel/static" },
-    { "src": "sitemap.xml",          "use": "@vercel/static" },
-    { "src": "assets/**",            "use": "@vercel/static" }
+    {
+      "src": "index.html",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "verifier-email.html",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "reinitialiser.html",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "api.js",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "script.js",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "styles.css",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "robots.txt",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "sitemap.xml",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "assets/**",
+      "use": "@vercel/static"
+    }
   ],
   "routes": [
     {
@@ -33,23 +60,37 @@
     },
     {
       "src": "/assets/(.*)",
-      "headers": { "Cache-Control": "public, max-age=604800" },
+      "headers": {
+        "Cache-Control": "public, max-age=604800"
+      },
       "continue": true
     },
     {
       "src": "/(script|api)\\.js",
-      "headers": { "Cache-Control": "public, max-age=0, must-revalidate" },
+      "headers": {
+        "Cache-Control": "public, max-age=0, must-revalidate"
+      },
       "continue": true
     },
     {
       "src": "/styles\\.css",
-      "headers": { "Cache-Control": "public, max-age=0, must-revalidate" },
+      "headers": {
+        "Cache-Control": "public, max-age=0, must-revalidate"
+      },
       "continue": true
     },
-    { "handle": "filesystem" },
+    {
+      "handle": "filesystem"
+    },
     {
       "src": "/((?!.*\\.[a-zA-Z0-9]+$).*)",
       "dest": "/index.html"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/taches/resume",
+      "schedule": "0 9 */2 * *"
     }
   ]
 }

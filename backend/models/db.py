@@ -374,6 +374,9 @@ COLONNES_ATTENDUES = [
     # mise à jour du profil échouerait en erreur serveur.
     ("utilisateur", "telephone", "TEXT"),
     ("utilisateur", "derniere_activite", "TEXT"),
+    # Date du dernier resume periodique, qui sert aussi de curseur :
+    # sans elle, chaque passage reexaminerait les memes comptes.
+    ("utilisateur", "resume_envoye_le", "TEXT"),
     # Consentement daté et versionné. Un accord dont on ne sait ni
     # quand il a été donné ni à quel texte il se rapportait ne
     # prouve rien.

@@ -77,6 +77,7 @@ CREATE TABLE utilisateur (
     derniere_co      DATETIME     NULL,
     -- Dernière action, distincte de la dernière connexion.
     derniere_activite DATETIME    NULL,
+    resume_envoye_le DATETIME NULL,
     PRIMARY KEY (id_utilisateur),
     UNIQUE KEY uq_utilisateur_email (email),
     KEY idx_utilisateur_role (role),

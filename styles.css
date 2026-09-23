@@ -3150,3 +3150,9 @@ img, svg, video { max-width: 100%; height: auto; }
   font-weight: 600;
 }
 .chip-objectif input { margin: 0; }
+
+/* Un horodatage porte toujours l'instant exact en infobulle : le
+   curseur d'aide le signale, plutôt que de laisser croire à du texte
+   inerte. */
+time[title] { cursor: help; }
+.horodatage time { white-space: nowrap; }

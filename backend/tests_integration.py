@@ -79,6 +79,17 @@ def jeton_sql(requete, params=()):
         cx.close()
 
 
+def _suspendu_ecarte(mod_resume, executer, id_user):
+    """Un compte desactive doit disparaitre de la file des resumes."""
+    executer("UPDATE utilisateur SET est_actif = 0 WHERE id_utilisateur = %s",
+             (id_user,), commit=True)
+    absent = id_user not in [c["id_utilisateur"]
+                             for c in mod_resume._destinataires()]
+    executer("UPDATE utilisateur SET est_actif = 1 WHERE id_utilisateur = %s",
+             (id_user,), commit=True)
+    return absent
+
+
 def executer_tests():
     app = creer_application()
 
@@ -2603,6 +2614,88 @@ def executer_tests():
     verifier("La filière voyage aussi sur un profil consulté",
              "filiere" in (etu.get("/api/profil/%d" % _id("ntsame@test.io"))
                            .get_json() or {}))
+
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  37. RÉSUMÉ PÉRIODIQUE DE L'ACTIVITÉ")
+    print("═" * 70)
+
+    import os as _os
+    from datetime import datetime as _dt
+    from models.db import executer as _executer
+    from services import resume as mod_resume
+
+    # La route est une arme : elle envoie des e-mails en masse.
+    verifier("Sans secret, la tâche est refusée",
+             app.test_client().post("/api/taches/resume").status_code == 403)
+    _os.environ["CRON_SECRET"] = "secret-de-test-pour-la-tache"
+    verifier("Avec un mauvais secret, la tâche est refusée",
+             app.test_client().post(
+                 "/api/taches/resume",
+                 headers={"Authorization": "Bearer faux"}).status_code == 403)
+    r = app.test_client().post(
+        "/api/taches/resume",
+        headers={"Authorization": "Bearer secret-de-test-pour-la-tache"})
+    verifier("Avec le bon secret, la tâche répond", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+    verifier("En mode console, rien ne part et rien n'est marqué",
+             "ignore" in (r.get_json() or {}))
+    _os.environ.pop("CRON_SECRET", None)
+
+    with app.app_context():
+        id_ife = _id("ife@test.io")
+        jeton = mod_resume.jeton_desinscription(id_ife)
+        verifier("Le jeton de désinscription est signé",
+                 mod_resume.jeton_valide(id_ife, jeton))
+        verifier("Le jeton d'un compte ne vaut pas pour un autre",
+                 not mod_resume.jeton_valide(id_ife + 1, jeton))
+        verifier("Un jeton inventé est refusé",
+                 not mod_resume.jeton_valide(id_ife, "0" * 32))
+
+        # Le delai : deux jours, et pas moins.
+        _executer("UPDATE utilisateur SET resume_envoye_le = %s "
+                  "WHERE id_utilisateur = %s",
+                  (_dt.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                   id_ife), commit=True)
+        cibles = [c["id_utilisateur"] for c in mod_resume._destinataires()]
+        verifier("Un compte qui vient d'être prévenu est écarté",
+                 id_ife not in cibles)
+        # La confirmation d'adresse n'est pas exigee dans ces tests : on
+        # la pose, puisque c'est justement ce que la requete demande.
+        _executer("UPDATE utilisateur SET resume_envoye_le = NULL, "
+                  "email_verifie = 1 WHERE id_utilisateur = %s",
+                  (id_ife,), commit=True)
+        cibles = [c["id_utilisateur"] for c in mod_resume._destinataires()]
+        verifier("Un compte jamais prévenu est candidat", id_ife in cibles)
+        verifier("Un compte suspendu ne reçoit rien",
+                 _suspendu_ecarte(mod_resume, _executer, id_ife))
+
+        # Un compte non confirme ou desactive ne recoit rien.
+        _executer("UPDATE utilisateur SET email_verifie = 0 "
+                  "WHERE id_utilisateur = %s", (id_ife,), commit=True)
+        verifier("Un compte non confirmé ne reçoit pas de résumé",
+                 id_ife not in [c["id_utilisateur"]
+                                for c in mod_resume._destinataires()])
+        _executer("UPDATE utilisateur SET email_verifie = 1 "
+                  "WHERE id_utilisateur = %s", (id_ife,), commit=True)
+
+    # La desinscription fonctionne sans session.
+    stop = app.test_client()
+    r = stop.get(f"/api/profil/resume/stop?u={id_ife}&j=faux")
+    verifier("Une désinscription mal signée est refusée", r.status_code == 400)
+    with app.app_context():
+        jeton = mod_resume.jeton_desinscription(id_ife)
+    r = stop.get(f"/api/profil/resume/stop?u={id_ife}&j={jeton}")
+    verifier("La désinscription aboutit sans être connecté",
+             r.status_code == 200, r.get_data(as_text=True)[:110])
+    with app.app_context():
+        verifier("Le refus est enregistré", not mod_resume._accepte(id_ife))
+
+    # Un resume vide n'est pas envoye : il apprend a ne plus ouvrir.
+    verifier("Un seuil minimum de nouveautés est exigé",
+             mod_resume.SEUIL_NOUVEAUTES >= 2)
+    verifier("Le délai annoncé est bien de deux jours",
+             mod_resume.DELAI_HEURES == 48)
 
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)

@@ -973,7 +973,7 @@ async function chargerFilDepuisApi() {
       idAuteur: q.id_utilisateur || q.id_auteur || null,
       photoAuteur: q.photo_url || null,
       pays: q.pays || '',
-      temps: _tempsRelatif(q.publiee_le),
+      publiee_le: q.publiee_le,
       utile: q.nb_utiles || 0,
       repCount: q.nb_reponses || 0,
       reponses: [],
@@ -1036,8 +1036,6 @@ function _dateServeur(valeur) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-/* Date et heure, dans le fuseau de la personne qui regarde. Une action
-   d'administration sans heure ne se recoupe avec rien. */
 /* Une ou deux lettres pour l'avatar, calculées comme côté serveur.
 
    L'ancienne formule prenait le premier caractère brut : un prénom
@@ -1054,6 +1052,8 @@ function initialesDe(prenom, nom) {
   return lettres.join('').slice(0, 2);
 }
 
+/* Date et heure, dans le fuseau de la personne qui regarde. Une action
+   d'administration sans heure ne se recoupe avec rien. */
 function formatHorodatage(valeur, avecSecondes = false) {
   const d = _dateServeur(valeur);
   if (!d) return '';
@@ -1064,20 +1064,50 @@ function formatHorodatage(valeur, avecSecondes = false) {
   });
 }
 
+/* Date seule, pour un repère qui n'a pas besoin de l'heure : la date
+   d'inscription, une date limite de candidature. */
 function formatDate(valeur) {
   const d = _dateServeur(valeur);
   return d ? d.toLocaleDateString('fr-FR') : '';
 }
 
+/* Date longue, pour une ligne isolée qu'on lit plutôt qu'on ne compare :
+   « 23 septembre 2026 » se retient, « 23/09/2026 » se déchiffre. */
+function formatDateLongue(valeur) {
+  const d = _dateServeur(valeur);
+  if (!d) return '';
+  return d.toLocaleDateString('fr-FR',
+    { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+/* Ancienneté dite en français. Passé une semaine, elle donne la date
+   ET l'heure : « il y a 3 j » puis plus rien d'exploitable au-delà
+   obligeait à deviner à quel moment de la journée les choses s'étaient
+   produites, ce qui compte dès qu'on recoupe deux évènements. */
 function _tempsRelatif(dateIso) {
   const d = _dateServeur(dateIso);
   if (!d) return '';
   const sec = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (sec < 0) return formatHorodatage(d);
   if (sec < 60) return "à l'instant";
-  if (sec < 3600) return `il y a ${Math.floor(sec/60)} min`;
-  if (sec < 86400) return `il y a ${Math.floor(sec/3600)} h`;
-  if (sec < 86400 * 7) return `il y a ${Math.floor(sec/86400)} j`;
-  return formatDate(d);
+  if (sec < 3600) return `il y a ${Math.floor(sec / 60)} min`;
+  if (sec < 86400) return `il y a ${Math.floor(sec / 3600)} h`;
+  if (sec < 86400 * 7) return `il y a ${Math.floor(sec / 86400)} j`;
+  return formatHorodatage(d);
+}
+
+/* Balise <time> complète : ce qui se lit, et l'instant exact au survol.
+
+   Une ancienneté seule (« il y a 3 j ») se comprend d'un coup d'œil mais
+   ne se recoupe avec rien ; un horodatage seul se recoupe mais ne se lit
+   pas. Les deux voyagent donc ensemble, le second en infobulle, et
+   l'attribut datetime reste lisible par une machine. */
+function baliseTemps(valeur, { relatif = true, classe = '' } = {}) {
+  const d = _dateServeur(valeur);
+  if (!d) return '';
+  const texte = relatif ? _tempsRelatif(d) : formatHorodatage(d);
+  return `<time datetime="${d.toISOString()}"${classe ? ` class="${classe}"` : ''
+    } title="${echapper(formatHorodatage(d, true))}">${echapper(texte)}</time>`;
 }
 
 function rendreFil() {
@@ -1113,7 +1143,7 @@ function carteQuestionHTML(q) {
         ${avatarLien(q.idAuteur, q.initiales, 's', q.photoAuteur, false, q.auteur)}
         <div class="info"><strong class="nom-cliquable" ${q.idAuteur
           ? `onclick="ouvrirProfilUtilisateur(${q.idAuteur})"` : ''
-          }>${echapper(q.auteur)}</strong> · <span>${echapper(q.pays)}</span><time>${echapper(q.temps)}</time></div>
+          }>${echapper(q.auteur)}</strong> · <span>${echapper(q.pays)}</span>${baliseTemps(q.publiee_le)}</div>
         <button class="btn-fantome btn-petit" title="Signaler" aria-label="Signaler" onclick="signaler(${q.id})">${ic('drapeau','ic ic-s')}</button>
       </div>
       <h3 class="q-titre" style="cursor:pointer;" onclick="ouvrirQuestion(${q.id})">${echapper(q.titre)}</h3>
@@ -1280,7 +1310,7 @@ async function ouvrirQuestion(id) {
         ${avatarLien(q.idAuteur, q.initiales, 's', q.photoAuteur, false, q.auteur)}
         <div class="info"><strong class="nom-cliquable" ${q.idAuteur
           ? `onclick="ouvrirProfilUtilisateur(${q.idAuteur})"` : ''
-          }>${echapper(q.auteur)}</strong> · <span>${echapper(q.pays)}</span><time>${echapper(q.temps)}</time></div>
+          }>${echapper(q.auteur)}</strong> · <span>${echapper(q.pays)}</span>${baliseTemps(q.publiee_le)}</div>
       </div>
       <h2 class="q-titre">${echapper(q.titre)}</h2>
       <p class="q-corps-entier texte-libre">${echapper(q.corps)}</p>
@@ -1328,7 +1358,7 @@ function reponseHTML(r) {
         <div class="info"><strong class="nom-cliquable"${r.idAuteur
           ? ` onclick="ouvrirProfilUtilisateur(${r.idAuteur})"` : ''
           }>${echapper(r.auteur)}</strong> ${badge}
-          ${r.date ? `<time>${echapper(formatHorodatage(r.date))}</time>` : ''}</div>
+          ${baliseTemps(r.date, { relatif: false })}</div>
       </div>
       <p class="texte-libre">${echapper(r.contenu)}</p>
       <div class="actions">
@@ -1959,7 +1989,7 @@ function rendreNotifications() {
   document.getElementById('liste-notifs').innerHTML = notifications.map((n, i) => `
     <div class="notif-item ${n.nonLu?'non-lu':''} ${n.questionId ? 'cliquable' : ''}" onclick="cliquerNotif(${i})">
       <div class="notif-icone">${ic('cloche','ic ic-s')}</div>
-      <div><p>${echapper(n.texte)}</p><time>${echapper(n.temps)}</time></div>
+      <div><p>${echapper(n.texte)}</p>${baliseTemps(n.cree_le)}</div>
     </div>`).join('');
   majBadgeNotifs();
 }
@@ -2004,7 +2034,7 @@ async function chargerNotificationsDepuisApi() {
     notifications.length = 0;
     liste.forEach(n => notifications.push({
       texte: n.texte,
-      temps: _tempsRelatif(n.cree_le),
+      cree_le: n.cree_le,
       nonLu: !n.est_lue,
       questionId: n.lien_question || null,
     }));
@@ -2391,12 +2421,15 @@ const PREFERENCES_NOTIF = [
   ['reponse_question', 'Nouvelle réponse à mes questions'],
   ['reactions',        'Réactions sur mes publications'],
   ['questions_secteur','Nouvelles questions dans mes secteurs'],
+  ['resume_activite',  "Résumé de l'activité, au plus tous les deux jours"],
   ['infolettre',       'Infolettre hebdomadaire'],
 ];
 
-/* Le courriel ne reprend que les trois premières : recevoir un message
-   pour chaque réaction saturerait la boîte de n'importe qui. */
-const PREFERENCES_EMAIL = PREFERENCES_NOTIF.slice(0, 3);
+/* Le courriel ne reprend pas les réactions : recevoir un message pour
+   chacune saturerait la boîte de n'importe qui. Le résumé, lui, n'a de
+   sens que par courriel : il s'adresse à qui ne revient pas. */
+const PREFERENCES_EMAIL = PREFERENCES_NOTIF.filter(
+  ([cle]) => cle !== 'reactions');
 
 function panneauNotifsParam() {
   return `<div class="section-param"><h2>Notifications</h2>
@@ -2589,7 +2622,7 @@ async function chargerSessions() {
       <div class="ligne-session">
         <div>
           <strong>${echapper(s.appareil)}</strong>
-          <div class="desc">Ouverte ${_tempsRelatif(s.cree_le)}</div>
+          <div class="desc">Ouverte ${baliseTemps(s.cree_le)}</div>
         </div>
         ${s.courante
           ? '<span class="tag tag-vert">Session courante</span>'
@@ -2988,7 +3021,7 @@ async function adminMentors() {
           ${parcours ? `<dt>Parcours</dt><dd>${parcours}</dd>` : ''}
           ${m.lien_pro ? `<dt>Profil professionnel</dt><dd>
              <a href="${echapper(m.lien_pro)}" target="_blank" rel="noopener noreferrer nofollow">Ouvrir le lien</a></dd>` : ''}
-          ${m.depose_le ? `<dt>Déposée le</dt><dd>${echapper(formatHorodatage(m.depose_le))}</dd>` : ''}
+          ${m.depose_le ? `<dt>Déposée le</dt><dd>${baliseTemps(m.depose_le, { relatif: false })}</dd>` : ''}
         </dl>
         ${m.motivation ? `<div class="bloc-motivation">
             <strong>Motivation</strong>
@@ -3126,7 +3159,7 @@ function carteSignalement(s) {
       ? `<div class="signalement-decision">Décision : <strong>${
            echapper(libelleAction(s.action) || s.statut)}</strong>${
            s.admin_prenom ? ` par ${echapper(s.admin_prenom + ' ' + s.admin_nom)}` : ''}${
-           s.traite_le ? ` le ${echapper(formatHorodatage(s.traite_le))}` : ''}</div>`
+           s.traite_le ? ` le ${baliseTemps(s.traite_le, { relatif: false })}` : ''}</div>`
       : `<div class="signalement-actions">
           ${DECISIONS_SIGNALEMENT.map(d => `<button
              class="btn ${d.classe} btn-petit" title="${echapper(d.aide)}"
@@ -3210,7 +3243,7 @@ async function adminAudit() {
     <div class="cadre-tableau"><table class="tableau">
       <thead><tr><th>Date</th><th>Acteur</th><th>Action</th><th>Cible</th><th>Détails</th></tr></thead>
       <tbody>${liste.map(a => `<tr>
-        <td class="horodatage">${formatHorodatage(a.cree_le, true)}</td>
+        <td class="horodatage">${baliseTemps(a.cree_le, { relatif: false })}</td>
         <td>${echapper(a.prenom + ' ' + a.nom)}</td>
         <td><span class="tag">${echapper(a.action)}</span></td>
         <td>${a.type_cible ? echapper(a.type_cible) + ' #' + a.id_cible : '·'}</td>
@@ -4431,7 +4464,7 @@ async function adminAdministrateurs() {
               est_super ? 'super administrateur' : 'administrateur'}</span>
             ${a.est_actif ? '' : '<span class="tag tag-suspendu">suspendu</span>'}
             ${a.derniere_co ? `<span class="desc">vu le ${
-              echapper(formatHorodatage(a.derniere_co))}</span>` : ''}
+              formatHorodatage(a.derniere_co)}</span>` : ''}
           </div>
         </div>
         ${est_super
@@ -4761,7 +4794,7 @@ function rendreProfilAutre(u) {
           : ''}
         ${u.pays ? `<span>${ic('position','ic ic-s')} ${echapper(u.pays)}</span>` : ''}
         ${u.cree_le ? `<span>Membre depuis le ${
-          echapper(formatDate(u.cree_le))}</span>` : ''}
+          formatDateLongue(u.cree_le)}</span>` : ''}
       </div>
       <div class="tags-profil">
         ${(u.secteurs || []).map(s =>
@@ -4889,7 +4922,7 @@ async function ouvrirConversation(id, nom) {
       ${messages.length
         ? messages.map(m => `<div class="message ${m.id_expediteur === moi ? 'de-moi' : ''}">
             <p>${echapper(m.contenu)}</p>
-            <time>${echapper(formatHorodatage(m.envoye_le))}</time>
+            ${baliseTemps(m.envoye_le)}
           </div>`).join('')
         : '<p class="desc">Aucun message. Écrivez le premier.</p>'}
     </div>
@@ -5489,7 +5522,7 @@ async function adminOpportunites() {
         <span class="opp-echeance ${e.urgence}">${echapper(e.texte)}</span>
       </div>
       <div class="msg-meta">Proposée par ${echapper(auteur)} ·
-        ${echapper(formatHorodatage(o.cree_le))}
+        ${baliseTemps(o.cree_le)}
         ${o.organisme ? ' · ' + echapper(o.organisme) : ''}</div>
       <p class="msg-corps texte-libre">${echapper(o.description)}</p>
       ${o.lien ? `<p class="msg-meta"><a href="${echapper(o.lien)}"
@@ -5564,7 +5597,7 @@ async function adminAssistance() {
           ? `<a href="#" onclick="event.preventDefault(); ouvrirProfilUtilisateur(${m.id_utilisateur})">${echapper(qui)}</a>`
           : echapper(qui)}
         ${m.email ? ' · ' + echapper(m.email) : ''}
-        · ${echapper(formatHorodatage(m.cree_le))}
+        · ${baliseTemps(m.cree_le)}
         ${m.page ? ' · depuis « ' + echapper(m.page) + ' »' : ''}
       </div>
       <p class="msg-corps texte-libre">${echapper(m.message)}</p>

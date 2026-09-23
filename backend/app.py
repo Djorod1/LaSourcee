@@ -36,6 +36,7 @@ from routes.notifications import bp_notifications
 from routes.recherche     import bp_recherche
 from routes.equipe        import bp_equipe
 from routes.opportunites  import bp_opportunites
+from routes.taches       import bp_taches
 from routes.admin         import bp_admin
 
 logger = logging.getLogger("lasource")
@@ -141,7 +142,8 @@ def creer_application():
 
     for bp in (bp_auth, bp_oauth, bp_profil, bp_questions, bp_reponses,
                bp_mentors, bp_candidature, bp_messagerie, bp_notifications,
-               bp_recherche, bp_equipe, bp_opportunites, bp_admin):
+               bp_recherche, bp_equipe, bp_opportunites, bp_taches,
+               bp_admin):
         app.register_blueprint(bp)
 
     app.teardown_appcontext(fermer_connexion)

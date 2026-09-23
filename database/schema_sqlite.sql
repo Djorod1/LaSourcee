@@ -72,6 +72,7 @@ CREATE TABLE utilisateur (
     -- Derniere action, et non derniere connexion : quelqu'un peut
     -- s'etre connecte il y a trois jours et lire en ce moment meme.
     derniere_activite TEXT,
+    resume_envoye_le TEXT,
     FOREIGN KEY (id_pays) REFERENCES pays(id_pays) ON DELETE SET NULL
 );
 

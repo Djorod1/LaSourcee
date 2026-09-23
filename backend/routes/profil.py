@@ -1,5 +1,6 @@
 """Lecture et mise à jour du profil utilisateur."""
 
+import json
 import unicodedata
 
 from flask import Blueprint, g, jsonify, request
@@ -805,6 +806,11 @@ PREFERENCES_CONNUES = {
     "reactions": True,
     "questions_secteur": False,
     "infolettre": False,
+    # Le résumé de ce qui bouge, au plus une fois tous les deux jours.
+    # Activé par défaut : c'est ce qui ramène des gens qui n'ont aucune
+    # raison de revenir d'eux-mêmes, et chaque message porte son lien de
+    # désinscription.
+    "resume_activite": True,
 }
 CANAUX = ("app", "email")
 
@@ -820,7 +826,6 @@ def _lire_preferences(id_user):
     serait illisible, retombe sur les valeurs par défaut plutôt que de
     faire échouer l'affichage.
     """
-    import json
 
     prefs = _preferences_par_defaut()
     ligne = recuperer_un(
@@ -857,7 +862,6 @@ def enregistrer_preferences():
     Seules les clés connues sont retenues : le contenu écrit en base est
     donc borné, quoi qu'envoie le client.
     """
-    import json
 
     recu = request.get_json(silent=True) or {}
     prefs = _preferences_par_defaut()
@@ -969,4 +973,39 @@ def exporter_mes_donnees():
             "SELECT s.libelle FROM secteur s "
             "JOIN utilisateur_secteur us ON us.id_secteur = s.id_secteur "
             "WHERE us.id_utilisateur = %s", (id_user,)),
+    })
+
+
+# ============================================================
+# RÉSUMÉ PÉRIODIQUE
+# ============================================================
+
+@bp_profil.get("/resume/stop")
+def desinscrire_resume():
+    """Désinscription du résumé, sans avoir à se connecter.
+
+    Un désabonnement difficile ne se fait pas : il se règle en marquant
+    l'expéditeur comme indésirable, ce qui coûte au domaine entier. Le
+    lien porte donc une signature dérivée de la clé du serveur, valable
+    sans session et inutilisable pour désinscrire quelqu'un d'autre.
+    """
+    from services.resume import jeton_valide
+
+    try:
+        id_user = int(request.args.get("u") or 0)
+    except (TypeError, ValueError):
+        id_user = 0
+    if not id_user or not jeton_valide(id_user, request.args.get("j")):
+        return jsonify({"erreur": "Lien de désinscription invalide."}), 400
+
+    prefs = _lire_preferences(id_user)
+    prefs.setdefault("email", {})["resume_activite"] = False
+    executer(
+        "UPDATE utilisateur SET preferences_notif = %s WHERE id_utilisateur = %s",
+        (json.dumps(prefs), id_user), commit=True)
+    return jsonify({
+        "ok": True,
+        "message": "C'est fait : vous ne recevrez plus le résumé de "
+                   "l'activité. Les réponses à vos propres questions "
+                   "continuent de vous parvenir.",
     })

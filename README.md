@@ -463,6 +463,48 @@ les prennent en charge, y répondent et les marquent traités.
 
 ---
 
+## Résumé périodique
+
+Une plateforme de questions et de réponses meurt du même silence des
+deux côtés : personne ne publie parce que personne ne répond, et
+personne ne répond parce que personne ne publie. Un message périodique
+casse cette boucle, en disant ce qui s'est passé à des gens qui n'ont
+aucune raison de revenir d'eux-mêmes.
+
+Quatre règles le gouvernent, et chacune existe parce que son contraire
+fait se désabonner :
+
+- **jamais deux fois en deux jours.** Un message quotidien devient du
+  bruit, et le bruit se range dans les indésirables avec le reste du
+  domaine expéditeur ;
+- **rien à dire, rien à envoyer.** Un résumé vide apprend à ne plus
+  ouvrir les suivants : au moins deux nouveautés sont exigées ;
+- **ce qui concerne la personne d'abord** : les réponses à ses propres
+  questions, puis son secteur, puis les questions sans réponse si elle
+  est référente, puis les nouvelles bourses ;
+- **un lien de désinscription dans chaque message**, qui fonctionne sans
+  se connecter ni retrouver un réglage.
+
+Un hébergement serverless n'exécute rien de lui-même : ni démon, ni
+crontab. L'envoi est donc déclenché par un appel HTTP que Vercel
+programme (`crons` dans `vercel.json`, tous les deux jours à 9 h UTC),
+sur la route `POST /api/taches/resume`.
+
+Cette route envoie des e-mails en masse : elle exige un secret partagé,
+et le refuse plutôt que de l'ignorer, pour qu'une mauvaise configuration
+se voie tout de suite au lieu de passer pour une panne d'envoi.
+
+```env
+CRON_SECRET=une-chaine-longue-et-aleatoire
+```
+
+Sans cette variable, aucun résumé ne part et le refus est journalisé.
+Le réglage est modifiable par chacun dans ses paramètres, et cette
+collecte doit être annoncée dans la politique de confidentialité au même
+titre que le reste.
+
+---
+
 ## Fonctionnalités retirées
 
 ### Le suivi de référents
