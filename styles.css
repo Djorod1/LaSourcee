@@ -3206,3 +3206,25 @@ time[title] { cursor: help; }
   border-top: 1px solid var(--bordure); padding: 22px 20px 34px;
   text-align: center; color: var(--texte-doux); font-size: 14px;
 }
+
+/* Réponse retenue par l'auteur de la question. Elle passe en tête et se
+   voit du premier coup d'œil : c'est elle qui évite à qui arrive plus
+   tard, avec la même question, de lire les dix autres. */
+.reponse.retenue {
+  border-left: 3px solid var(--vert);
+  background: var(--vert-clair);
+}
+.bandeau-retenue {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: var(--vert-fonce);
+  margin-bottom: 8px;
+}
+.btn-lien {
+  background: none; border: none; padding: 0; font: inherit; font-size: 13px;
+  color: var(--texte-doux); cursor: pointer; text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.btn-lien:hover { color: var(--primaire); }
+.btn-lien.actif { color: var(--vert-fonce); font-weight: 600; }
+.fil-reponse:empty { display: none; }
+.fil-reponse { margin-top: 10px; }

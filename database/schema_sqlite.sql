@@ -138,6 +138,7 @@ CREATE TABLE question (
     vues         INTEGER NOT NULL DEFAULT 0,
     premiere_reponse_le TEXT,
     resolue_le   TEXT,
+    id_reponse_retenue INTEGER,
     FOREIGN KEY (id_auteur)  REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE,
     FOREIGN KEY (id_secteur) REFERENCES secteur(id_secteur)         ON DELETE SET NULL
 );

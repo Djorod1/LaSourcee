@@ -2764,6 +2764,77 @@ def executer_tests():
              .get_data(as_text=True))
     app.config["QUESTIONS_PUBLIQUES"] = True
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  39. RÉPONSES CLASSÉES, RETENUES ET ENFILÉES")
+    print("═" * 70)
+
+    # Une reponse a une reponse : la colonne existait depuis l'origine
+    # mais rien ne l'exploitait, et un echange en trois temps se lisait
+    # comme trois reponses independantes a la question de depart.
+    r = lecteur.post("/api/reponses", json={
+        "id_question": id_q, "id_parent_reponse": id_r,
+        "contenu": "Merci, mais l'atelier est-il loin de Bohicon ?"})
+    verifier("On peut répondre à une réponse", r.status_code in (200, 201),
+             r.get_data(as_text=True)[:110])
+
+    detail = lecteur.get(f"/api/questions/{id_q}").get_json() or {}
+    racines = detail.get("reponses") or []
+    verifier("Le fil n'apparaît pas comme une réponse de plus",
+             len(racines) == 1, f"{len(racines)} racine(s)")
+    verifier("Le fil est rangé sous la réponse à laquelle il répond",
+             len((racines[0].get("sous_reponses") or [])) == 1)
+
+    # La reponse retenue par l'auteur passe en tete.
+    autre = cand.post("/api/reponses", json={
+        "id_question": id_q,
+        "contenu": "Autre avis : commencez par visiter les deux ateliers."})
+    id_autre = (autre.get_json() or {}).get("id_reponse")
+
+    r = cand.post(f"/api/questions/{id_q}/retenir",
+                  json={"id_reponse": id_autre})
+    verifier("Un tiers ne choisit pas la réponse qui a aidé",
+             r.status_code == 403)
+    r = lecteur.post(f"/api/questions/{id_q}/retenir",
+                     json={"id_reponse": id_autre})
+    verifier("L'auteur de la question retient une réponse",
+             r.status_code == 200, r.get_data(as_text=True)[:110])
+    verifier("La question passe en résolue",
+             (r.get_json() or {}).get("statut") == "resolue")
+    verifier("Le référent est prévenu que sa réponse a servi",
+             jeton_sql("SELECT COUNT(*) FROM notification "
+                       "WHERE id_destinataire = ? AND texte LIKE ?",
+                       (id_ref, "%retenue comme celle qui a aidé%")) >= 1)
+
+    detail = lecteur.get(f"/api/questions/{id_q}").get_json() or {}
+    racines = detail.get("reponses") or []
+    verifier("La réponse retenue passe en tête",
+             racines and racines[0].get("id_reponse") == id_autre,
+             str([x.get("id_reponse") for x in racines]))
+    verifier("Elle est signalée comme telle",
+             racines and racines[0].get("retenue") is True)
+    verifier("Le détail porte la réponse retenue",
+             detail.get("id_reponse_retenue") == id_autre)
+
+    # Se tromper doit se corriger sans passer par l'administration.
+    r = lecteur.post(f"/api/questions/{id_q}/retenir",
+                     json={"id_reponse": id_autre})
+    verifier("Un second choix identique annule le précédent",
+             (r.get_json() or {}).get("retenue") is None)
+    verifier("La question repasse en ouverte",
+             jeton_sql("SELECT statut FROM question WHERE id_question = ?",
+                       (id_q,)) == "ouverte")
+
+    # Une reponse d'une autre question n'a rien a faire ici.
+    autre_q = lecteur.post("/api/questions", json={
+        "titre": "Une question sans rapport avec la précédente",
+        "corps": "Elle sert à vérifier qu'on ne retient pas n'importe quoi.",
+        "id_secteur": 1}).get_json() or {}
+    r = lecteur.post(f"/api/questions/{autre_q.get('id_question')}/retenir",
+                     json={"id_reponse": id_autre})
+    verifier("Une réponse d'une autre question est refusée",
+             r.status_code == 400)
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

@@ -1196,6 +1196,31 @@ async function basculerUtileQ(id) {
   }
 }
 
+/* Une réponse du serveur, mise à la forme de l'interface, avec son fil
+   éventuel. La colonne id_parent_reponse existait depuis l'origine mais
+   rien ne l'exploitait : un échange en trois temps se lisait comme
+   trois réponses indépendantes à la question de départ. */
+function adapterReponse(r) {
+  return {
+    id: r.id_reponse,
+    idAuteur: r.id_utilisateur,
+    auteur: `${r.prenom || ''} ${r.nom || ''}`.trim() || 'Membre',
+    init: initialesDe(r.prenom, r.nom),
+    photo: r.photo_url || null,
+    mentor: r.role === 'mentor',
+    verifie: !!r.verifie,
+    contenu: r.contenu || '',
+    date: r.cree_le,
+    utile: r.nb_utiles || 0,
+    monUtile: !!r.mon_utile,
+    note: r.note_moyenne || 0,
+    nbNotes: r.nb_notes || 0,
+    maNote: r.ma_note || 0,
+    retenue: !!r.retenue,
+    sousReponses: (r.sous_reponses || []).map(adapterReponse),
+  };
+}
+
 async function basculerSauver(id) {
   const etait = etat.sauvegardees.has(id);
   if (etait) etat.sauvegardees.delete(id); else etat.sauvegardees.add(id);
@@ -1256,24 +1281,12 @@ async function ouvrirQuestion(id) {
       const d = await API.get('/questions/' + id);
       q.corps = d.corps ?? q.corps;
       q.utile = d.nb_utiles ?? q.utile;
-      q.repCount = (d.reponses || []).length;
-      q.reponses = (d.reponses || []).map(r => ({
-        id: r.id_reponse,
-        idAuteur: r.id_utilisateur,
-        auteur: `${r.prenom || ''} ${r.nom || ''}`.trim() || 'Membre',
-        init: initialesDe(r.prenom, r.nom),
-        photo: r.photo_url || null,
-        mentor: r.role === 'mentor',
-        verifie: !!r.verifie,
-        contenu: r.contenu || '',
-        date: r.cree_le,
-        utile: r.nb_utiles || 0,
-        monUtile: !!r.mon_utile,
-        note: r.note_moyenne || 0,
-        nbNotes: r.nb_notes || 0,
-        maNote: r.ma_note || 0,
-        parent: r.id_parent_reponse || null,
-      }));
+      q.idAuteur = d.id_auteur ?? q.idAuteur;
+      q.statut = d.statut;
+      q.reponseRetenue = d.id_reponse_retenue || null;
+      q.repCount = (d.reponses || []).reduce(
+        (n, r) => n + 1 + ((r.sous_reponses || []).length), 0);
+      q.reponses = (d.reponses || []).map(r => adapterReponse(r));
       if (d.mon_utile) etat.utilesQ.add(id); else etat.utilesQ.delete(id);
       if (d.sauvegardee) etat.sauvegardees.add(id);
       else etat.sauvegardees.delete(id);
@@ -1321,7 +1334,7 @@ async function ouvrirQuestion(id) {
       </div>
       <div class="reponses" style="display:flex; flex-direction:column;">
         <h4 style="margin:14px 0 8px;">${q.reponses.length} réponse(s)</h4>
-        ${q.reponses.map(r => reponseHTML(r)).join('') || '<p style="color:var(--texte-doux); font-size:14px;">Aucune réponse pour le moment.</p>'}
+        ${q.reponses.map(r => reponseHTML(r, q.id)).join('') || '<p style="color:var(--texte-doux); font-size:14px;">Aucune réponse pour le moment.</p>'}
         ${zoneRep}
       </div>
     </article>`;
@@ -1334,7 +1347,7 @@ function ajusterHauteur(champ) {
   champ.style.height = Math.min(champ.scrollHeight, 420) + 'px';
 }
 
-function reponseHTML(r) {
+function reponseHTML(r, qid, imbriquee = false) {
   const cls = r.mentor ? 'reponse mentor' : 'reponse';
   const badge = r.verifie
     ? `<span class="badge-verifie">${ic('check','ic ic-s')} Référent vérifié</span>`
@@ -1351,8 +1364,31 @@ function reponseHTML(r) {
     ${r.nbNotes ? `<span class="etoiles-bilan">${r.note} sur ${r.nbNotes} avis</span>`
                 : '<span class="etoiles-bilan">Aucun avis</span>'}
   </span>` : '';
+  // Seul l'auteur de la question désigne ce qui l'a aidé : un
+  // administrateur qui trancherait à sa place déciderait de ce qui a
+  // servi à quelqu'un d'autre.
+  const monQuestion = etat.utilisateur && qid
+    && questions.find(x => x.id === qid)?.idAuteur === etat.utilisateur.id;
+  const bandeau = r.retenue
+    ? `<div class="bandeau-retenue">${ic('check','ic ic-s')} Réponse retenue
+         par l'auteur de la question</div>`
+    : '';
+  const choix = (monQuestion && !imbriquee)
+    ? `<button class="btn-lien${r.retenue ? ' actif' : ''}"
+               onclick="retenirReponse(${qid}, ${r.id})">${
+        r.retenue ? 'Ne plus retenir' : "C'est cette réponse qui m'a aidé"}</button>`
+    : '';
+  const repondre = (!imbriquee && etat.utilisateur)
+    ? `<button class="btn-lien" onclick="ouvrirFilReponse(${qid}, ${r.id}, this)">
+         Répondre</button>`
+    : '';
+  const sous = (r.sousReponses || [])
+    .map(sr => reponseHTML(sr, qid, true)).join('');
+
   return `
-    <div class="${cls}" data-rep="${r.id}">
+    <div class="${cls}${r.retenue ? ' retenue' : ''}${
+      imbriquee ? ' reponse-imbriquee' : ''}" data-rep="${r.id}">
+      ${bandeau}
       <div class="r-entete">
         ${avatarLien(r.idAuteur, r.init, 's', r.photo, r.verifie, r.auteur)}
         <div class="info"><strong class="nom-cliquable"${r.idAuteur
@@ -1367,8 +1403,67 @@ function reponseHTML(r) {
                 aria-label="En favoris" title="En favoris">${
           iconePouce(!!r.monUtile)}<span class="cnt">${r.utile}</span><span class="lbl">En favoris</span></button>
         ${etoiles}
+        ${repondre}
+        ${choix}
       </div>
+      <div class="fil-reponse" id="fil-rep-${r.id}"></div>
+      ${sous}
     </div>`;
+}
+
+/* Ouvre une zone de saisie sous une réponse, pour lui répondre à elle
+   plutôt qu'à la question. Une seule à la fois : deux champs ouverts
+   font écrire dans le mauvais. */
+function ouvrirFilReponse(qid, idParent, bouton) {
+  document.querySelectorAll('.fil-reponse').forEach(z => {
+    if (z.id !== 'fil-rep-' + idParent) z.innerHTML = '';
+  });
+  const zone = document.getElementById('fil-rep-' + idParent);
+  if (!zone) return;
+  if (zone.innerHTML) { zone.innerHTML = ''; return; }
+  zone.innerHTML = `<div class="composeur-reponse">
+    <textarea id="sous-rep-${idParent}" rows="2" maxlength="4000"
+              placeholder="Répondre à cette réponse…"
+              oninput="ajusterHauteur(this)"
+              onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){event.preventDefault(); envoyerSousReponse(${qid}, ${idParent}, this);}"></textarea>
+    <div class="composeur-pied">
+      <span class="aide-champ">Ctrl + Entrée pour envoyer.</span>
+      <button class="btn btn-primaire btn-petit"
+              onclick="envoyerSousReponse(${qid}, ${idParent}, this)">Envoyer</button>
+    </div>
+  </div>`;
+  zone.querySelector('textarea')?.focus();
+}
+
+async function envoyerSousReponse(qid, idParent, element) {
+  const champ = document.getElementById('sous-rep-' + idParent);
+  const contenu = (champ?.value || '').trim();
+  if (!contenu) return toast('Écrivez votre réponse.', 'erreur');
+  if (!MODE.api) return toast('Serveur indisponible.', 'erreur');
+  try {
+    await API.post('/reponses', { id_question: qid, contenu,
+                                  id_parent_reponse: idParent });
+    toast('Réponse envoyée.');
+    await ouvrirQuestion(qid);
+  } catch (err) {
+    toast(err.message || 'Publication impossible.', 'erreur');
+  }
+}
+
+/* L'auteur de la question désigne la réponse qui l'a aidé. Sans cela,
+   dix réponses se valent à l'écran, et celui qui arrive plus tard avec
+   la même question doit toutes les lire pour deviner laquelle a servi. */
+async function retenirReponse(qid, idReponse) {
+  if (!MODE.api) return toast('Serveur indisponible.', 'erreur');
+  try {
+    const r = await API.post(`/questions/${qid}/retenir`,
+                             { id_reponse: idReponse });
+    toast(r.retenue ? 'Réponse retenue. Votre question passe en résolue.'
+                    : 'Choix annulé.');
+    await ouvrirQuestion(qid);
+  } catch (err) {
+    toast(err.message || 'Action impossible.', 'erreur');
+  }
 }
 
 /* Enregistre une note de un à cinq sur une réponse. */

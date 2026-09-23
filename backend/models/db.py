@@ -389,6 +389,11 @@ COLONNES_ATTENDUES = [
     ("question", "vues", "INTEGER NOT NULL DEFAULT 0"),
     ("question", "premiere_reponse_le", "TEXT"),
     ("question", "resolue_le", "TEXT"),
+    # La reponse que l'auteur de la question a retenue. Sans elle,
+    # dix reponses se valent a l'ecran, et celui qui arrive avec la
+    # meme question doit toutes les lire pour deviner laquelle a
+    # servi.
+    ("question", "id_reponse_retenue", "INTEGER"),
     ("verification_email", "code", "TEXT"),
     ("verification_email", "tentatives", "INTEGER NOT NULL DEFAULT 0"),
     ("signalement", "action", "TEXT"),

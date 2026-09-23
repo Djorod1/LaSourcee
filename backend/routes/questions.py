@@ -5,7 +5,7 @@ from flask import Blueprint, g, jsonify, request
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from services import evenements
 from utils.auth_helpers import connexion_requise
-from services.notifications import notifier_reaction
+from services.notifications import notifier_reaction, notifier
 
 bp_questions = Blueprint("questions", __name__, url_prefix="/api/questions")
 
@@ -107,6 +107,7 @@ def publier():
 def detail(id_q):
     q = recuperer_un(
         """SELECT q.id_question, q.titre, q.corps, q.publiee_le, q.statut,
+                  q.id_auteur, q.id_reponse_retenue, q.resolue_le,
                   s.id_secteur, s.libelle AS secteur, s.couleur,
                   u.id_utilisateur, u.prenom, u.nom, u.photo_url,
                   p.libelle AS pays,
@@ -171,6 +172,32 @@ def detail(id_q):
     for r in q["reponses"]:
         r["mon_utile"] = bool(r.get("mon_utile"))
         r["note_moyenne"] = round(float(r["note_moyenne"] or 0), 1)
+        r["retenue"] = (q.get("id_reponse_retenue") == r["id_reponse"])
+        r["sous_reponses"] = []
+
+    # Les reponses a une reponse vivent sous elle plutot qu'en vrac dans
+    # la liste : la colonne existait depuis l'origine, mais rien ne
+    # l'exploitait, et un echange en trois temps se lisait comme trois
+    # reponses independantes a la question de depart.
+    racines = [r for r in q["reponses"] if not r.get("id_parent_reponse")]
+    par_id = {r["id_reponse"]: r for r in racines}
+    for r in q["reponses"]:
+        parent = par_id.get(r.get("id_parent_reponse"))
+        if parent is not None:
+            parent["sous_reponses"].append(r)
+
+    # L'ordre dit ce qui merite d'etre lu en premier : la reponse que
+    # l'auteur a retenue, puis celles des referents verifies, puis les
+    # plus jugees utiles. Le pur ordre chronologique enterrait la
+    # meilleure reponse sous cinq autres des qu'un fil s'animait.
+    def _rang(r):
+        return (0 if r.get("retenue") else 1,
+                0 if r.get("verifie") else 1,
+                -(r.get("nb_utiles") or 0),
+                -(r.get("note_moyenne") or 0),
+                str(r.get("cree_le") or ""))
+
+    q["reponses"] = sorted(racines, key=_rang)
 
     q["mon_utile"] = bool(recuperer_un(
         """SELECT 1 FROM marquage_question
@@ -195,6 +222,68 @@ def supprimer(id_q):
     executer("DELETE FROM question WHERE id_question = %s",
              (id_q,), commit=True)
     return jsonify({"ok": True})
+
+
+@bp_questions.post("/<int:id_q>/retenir")
+@connexion_requise
+def retenir(id_q):
+    """L'auteur d'une question désigne la réponse qui l'a aidé.
+
+    Sans cela, dix réponses se valent à l'écran, et celui qui arrive
+    plus tard avec la même question doit toutes les lire pour deviner
+    laquelle a servi. C'est aussi ce qui permet de dire qu'une question
+    est résolue sans demander à personne de le déclarer.
+
+    Le choix appartient à l'auteur, et à lui seul : un administrateur
+    qui trancherait à sa place déciderait de ce qui l'a aidé.
+    """
+    q = recuperer_un(
+        "SELECT id_auteur, id_reponse_retenue FROM question "
+        "WHERE id_question = %s", (id_q,))
+    if not q:
+        return jsonify({"erreur": "Question introuvable."}), 404
+    if q["id_auteur"] != g.utilisateur["id_utilisateur"]:
+        return jsonify({"erreur": "Seul l'auteur de la question choisit la "
+                                  "réponse qui l'a aidé."}), 403
+
+    d = request.get_json(silent=True) or {}
+    id_r = d.get("id_reponse")
+    if id_r is None:
+        return jsonify({"erreur": "id_reponse requis."}), 400
+    try:
+        id_r = int(id_r)
+    except (TypeError, ValueError):
+        return jsonify({"erreur": "id_reponse invalide."}), 400
+
+    reponse = recuperer_un(
+        "SELECT id_question, id_auteur FROM reponse WHERE id_reponse = %s",
+        (id_r,))
+    if not reponse or reponse["id_question"] != id_q:
+        return jsonify({"erreur": "Cette réponse n'est pas sur cette "
+                                  "question."}), 400
+
+    # Un second appel sur la meme reponse annule le choix : se tromper
+    # doit se corriger sans passer par l'administration.
+    if q.get("id_reponse_retenue") == id_r:
+        executer("UPDATE question SET id_reponse_retenue = NULL, "
+                 "statut = 'ouverte', resolue_le = NULL "
+                 "WHERE id_question = %s", (id_q,), commit=True)
+        return jsonify({"retenue": None, "statut": "ouverte"})
+
+    executer(
+        """UPDATE question
+              SET id_reponse_retenue = %s, statut = 'resolue',
+                  resolue_le = CURRENT_TIMESTAMP
+            WHERE id_question = %s""",
+        (id_r, id_q), commit=True)
+
+    if reponse["id_auteur"] != g.utilisateur["id_utilisateur"]:
+        notifier(reponse["id_auteur"],
+                 "Votre réponse a été retenue comme celle qui a aidé.",
+                 type_notif="reaction", id_question=id_q)
+    evenements.depuis_requete("reponse_retenue", type_cible="question",
+                              id_cible=id_q, contexte={"reponse": id_r})
+    return jsonify({"retenue": id_r, "statut": "resolue"})
 
 
 # ---------- Marquages : utile / aimé ----------

@@ -153,6 +153,7 @@ CREATE TABLE question (
     vues             INT UNSIGNED NOT NULL DEFAULT 0,
     premiere_reponse_le DATETIME  NULL,
     resolue_le       DATETIME     NULL,
+    id_reponse_retenue INT UNSIGNED NULL,
     PRIMARY KEY (id_question),
     KEY idx_question_auteur  (id_auteur),
     KEY idx_question_secteur (id_secteur, publiee_le),
