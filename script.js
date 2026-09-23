@@ -671,39 +671,41 @@ function ajouterSecteurPerso() {
   input.focus();
 }
 
-/* Liste exhaustive des pays (FR) pour le sélecteur de l'onboarding. */
-const LISTE_PAYS = [
-  "Afghanistan","Afrique du Sud","Albanie","Algérie","Allemagne","Andorre","Angola","Antigua-et-Barbuda","Arabie saoudite","Argentine","Arménie","Australie","Autriche","Azerbaïdjan",
-  "Bahamas","Bahreïn","Bangladesh","Barbade","Belgique","Belize","Bénin","Bhoutan","Biélorussie","Birmanie (Myanmar)","Bolivie","Bosnie-Herzégovine","Botswana","Brésil","Brunei","Bulgarie","Burkina Faso","Burundi",
-  "Cambodge","Cameroun","Canada","Cap-Vert","Chili","Chine","Chypre","Colombie","Comores","Corée du Nord","Corée du Sud","Costa Rica","Côte d'Ivoire","Croatie","Cuba",
-  "Danemark","Djibouti","Dominique",
-  "Égypte","Émirats arabes unis","Équateur","Érythrée","Espagne","Estonie","Eswatini","États-Unis","Éthiopie",
-  "Fidji","Finlande","France",
-  "Gabon","Gambie","Géorgie","Ghana","Grèce","Grenade","Guatemala","Guinée","Guinée équatoriale","Guinée-Bissau","Guyana",
-  "Haïti","Honduras","Hongrie",
-  "Îles Marshall","Îles Salomon","Inde","Indonésie","Irak","Iran","Irlande","Islande","Israël","Italie",
-  "Jamaïque","Japon","Jordanie",
-  "Kazakhstan","Kenya","Kirghizistan","Kiribati","Koweït",
-  "Laos","Lesotho","Lettonie","Liban","Libéria","Libye","Liechtenstein","Lituanie","Luxembourg",
-  "Macédoine du Nord","Madagascar","Malaisie","Malawi","Maldives","Mali","Malte","Maroc","Maurice","Mauritanie","Mexique","Micronésie","Moldavie","Monaco","Mongolie","Monténégro","Mozambique",
-  "Namibie","Nauru","Népal","Nicaragua","Niger","Nigéria","Norvège","Nouvelle-Zélande",
-  "Oman","Ouganda","Ouzbékistan",
-  "Pakistan","Palaos","Palestine","Panama","Papouasie-Nouvelle-Guinée","Paraguay","Pays-Bas","Pérou","Philippines","Pologne","Portugal",
-  "Qatar",
-  "République centrafricaine","République démocratique du Congo","République dominicaine","République du Congo","République tchèque","Roumanie","Royaume-Uni","Russie","Rwanda",
-  "Saint-Christophe-et-Niévès","Saint-Marin","Saint-Vincent-et-les-Grenadines","Sainte-Lucie","Salvador","Samoa","Sao Tomé-et-Principe","Sénégal","Serbie","Seychelles","Sierra Leone","Singapour","Slovaquie","Slovénie","Somalie","Soudan","Soudan du Sud","Sri Lanka","Suède","Suisse","Suriname","Syrie",
-  "Tadjikistan","Tanzanie","Tchad","Thaïlande","Timor oriental","Togo","Tonga","Trinité-et-Tobago","Tunisie","Turkménistan","Turquie","Tuvalu",
-  "Ukraine","Uruguay",
-  "Vanuatu","Vatican","Venezuela","Viêt Nam",
-  "Yémen",
-  "Zambie","Zimbabwe"
-];
-function remplirSelectPays() {
+/* Pays proposés, servis par le serveur.
+
+   La page portait sa propre liste de deux cent cinquante pays, alors
+   que la table n'en contenait que dix-huit. Choisir le Gabon ou le
+   Rwanda ne correspondait donc à aucune ligne : l'identifiant restait
+   vide et le pays disparaissait du profil sans un mot. La liste
+   affichée et la liste enregistrable sont désormais la même. */
+let _pays = null;
+
+async function chargerPays() {
+  if (_pays) return _pays;
+  try {
+    const r = await API.get('/profil/referentiels');
+    _pays = (r.pays || []).map(p => p.libelle);
+  } catch (_) {
+    _pays = [];
+  }
+  return _pays;
+}
+
+function optionsPays(choisi) {
+  if (!_pays || !_pays.length) {
+    return '<option value="">Liste indisponible, réessayez</option>';
+  }
+  return '<option value="">Sélectionnez votre pays</option>'
+    + _pays.map(p => `<option value="${echapper(p)}"${
+        p === choisi ? ' selected' : ''}>${echapper(p)}</option>`).join('');
+}
+
+async function remplirSelectPays() {
   const sel = document.getElementById('select-pays');
   if (!sel || sel.dataset.remp === '1') return;
+  await chargerPays();
   sel.dataset.remp = '1';
-  sel.innerHTML = '<option value="">Sélectionnez votre pays</option>' +
-    LISTE_PAYS.map(p => `<option value="${p}">${p}</option>`).join('');
+  sel.innerHTML = optionsPays(sel.value);
 }
 
 /* Remplit les listes du parcours avec les valeurs du serveur.
@@ -1144,7 +1146,14 @@ async function basculerUtileQ(id) {
       toast(err.message || 'Action impossible.', 'erreur');
     }
   } else {
-    toast(etat.utilesQ.has(id) ? 'En favoris.' : 'Retiré des favoris.');
+    // Hors ligne, rien n'est enregistre : l'annoncer comme un succes
+    // ferait croire a une action retenue, et la surprise viendrait au
+    // rechargement suivant.
+    if (etaitMarque) { etat.utilesQ.add(id); q.utile++; }
+    else             { etat.utilesQ.delete(id); q.utile = Math.max(0, q.utile - 1); }
+    rendreCourant();
+    toast("Serveur indisponible : cette action n'a pas été enregistrée.",
+          'erreur');
   }
 }
 
@@ -1167,7 +1176,10 @@ async function basculerSauver(id) {
       toast(err.message || 'Action impossible.', 'erreur');
     }
   } else {
-    toast(etat.sauvegardees.has(id) ? 'Question sauvegardée.' : 'Retirée de vos sauvegardes.');
+    if (etait) etat.sauvegardees.add(id); else etat.sauvegardees.delete(id);
+    rendreCourant();
+    toast("Serveur indisponible : cette action n'a pas été enregistrée.",
+          'erreur');
   }
 }
 
@@ -1955,12 +1967,24 @@ function majBadgeNotifs() {
   b.style.display = n ? 'flex' : 'none'; b.textContent = n;
 }
 async function toutMarquerLu() {
+  const avant = notifications.map(n => n.nonLu);
   notifications.forEach(n => n.nonLu = false);
   rendreNotifications();
-  if (MODE.api) {
-    try { await API.post('/notifications/tout-lu', {}); } catch (_) { /* tolère */ }
+  if (!MODE.api) {
+    return toast('Serveur indisponible.', 'erreur');
   }
-  toast('Toutes les notifications ont été marquées comme lues.');
+  try {
+    await API.post('/notifications/tout-lu', {});
+    toast('Toutes les notifications ont été marquées comme lues.');
+  } catch (err) {
+    // L'echec etait avale et le message de succes tombait quand meme :
+    // les notifications revenaient non lues au rechargement suivant,
+    // sans que rien ne l'ait annonce.
+    notifications.forEach((n, i) => n.nonLu = avant[i]);
+    rendreNotifications();
+    toast(err.message || "Les notifications n'ont pas pu être marquées.",
+          'erreur');
+  }
 }
 
 /* Recharge les notifications depuis le backend (silencieux). */
@@ -2090,7 +2114,9 @@ function changerPanParam(elem, p) {
   elem.classList.add('actif');
   const c = document.getElementById('contenu-param');
   if (p === 'compte') {
-    chargerReferentielsProfil().then(() => {
+    // Les pays viennent du serveur : le panneau attend la liste plutôt
+    // que de s'afficher avec un sélecteur vide.
+    Promise.all([chargerReferentielsProfil(), chargerPays()]).then(() => {
       c.innerHTML = panneauCompte();
       // L'état de la limite se calcule au rendu, pas au premier clic :
       // sinon quelqu'un arrivant avec quatre objectifs déjà cochés
@@ -2107,8 +2133,7 @@ function panneauCompte() {
   const u = etat.utilisateur;
   const secteursDefaut = ['Technologie','Médecine','Droit','Finance','Arts','Éducation','Ingénierie','Entrepreneuriat'];
   const secteursPerso = (u.secteurs || []).filter(s => !secteursDefaut.includes(s));
-  const optsPays = LISTE_PAYS.map(p =>
-    `<option value="${echapper(p)}"${p === u.pays ? ' selected' : ''}>${echapper(p)}</option>`).join('');
+  const optsPays = optionsPays(u.pays);
   return `<div class="section-param">
     <h2>Mon compte</h2>
     <div class="champs-cote">
@@ -2118,7 +2143,7 @@ function panneauCompte() {
     <div class="champ"><label>E-mail</label><input id="pc-email" type="email" value="${echapper(u.email || (u.prenom.toLowerCase() + '.' + u.nom.toLowerCase() + '@email.com'))}" /></div>
     <div class="champs-cote">
       <div class="champ"><label for="pc-pays">Pays</label>
-        <select id="pc-pays"><option value="">Sélectionnez votre pays</option>${optsPays}</select>
+        <select id="pc-pays">${optsPays}</select>
       </div>
       <div class="champ"><label for="pc-tel">Téléphone <span class="facultatif">visible de vous seul</span></label>
         <input id="pc-tel" type="tel" inputmode="tel" autocomplete="tel"

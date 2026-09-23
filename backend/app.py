@@ -158,6 +158,13 @@ def creer_application():
             # Une base deja en service ne rejoue pas le fichier de schema :
             # les colonnes ajoutees depuis doivent etre posees ici.
             completer_colonnes(app)
+            # Les pays proposes a l'inscription : la liste d'origine
+            # tenait en dix-huit entrees, et quelqu'un au Gabon, au
+            # Rwanda ou en Haiti ne trouvait que « Autre ». Le fichier
+            # de schema ne se rejoue pas sur une base en service.
+            from services.referentiels import completer_pays
+            with app.app_context():
+                completer_pays()
         except Exception as exc:
             logger.error("Initialisation de la base impossible : %s", exc)
 

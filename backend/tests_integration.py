@@ -2509,6 +2509,53 @@ def executer_tests():
                        "WHERE u.email = ? AND n.texte LIKE ?",
                        ("ife@test.io", "%a répondu à votre message%")) >= 1)
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  36. OUVERTURE AUX AUTRES PAYS")
+    print("═" * 70)
+
+    # La page portait une liste de deux cent cinquante pays alors que la
+    # table n'en contenait que dix-huit : choisir le Gabon ou le Rwanda
+    # ne correspondait a aucune ligne, et le pays disparaissait du
+    # profil sans un mot.
+    pays = (etu.get("/api/profil/referentiels").get_json() or {}).get("pays", [])
+    noms = {p["libelle"] for p in pays}
+    verifier("Le référentiel dépasse le périmètre d'origine",
+             len(pays) >= 100, f"{len(pays)} pays")
+    for attendu in ("Gabon", "Rwanda", "Haïti", "Cameroun", "Bénin",
+                    "Canada", "Japon", "Nigéria"):
+        verifier(f"« {attendu} » figure dans la liste", attendu in noms)
+    verifier("« Autre » reste proposé en dernier recours", "Autre" in noms)
+    verifier("Aucun pays n'est en double",
+             len(noms) == len(pays), f"{len(pays) - len(noms)} doublon(s)")
+
+    # Le rattrapage tourne a chaque demarrage : il ne doit rien ajouter
+    # deux fois.
+    from services.referentiels import completer_pays
+    with app.app_context():
+        ajoutes = completer_pays()
+    verifier("Un second passage n'ajoute aucun pays", ajoutes == 0,
+             f"{ajoutes} ajout(s)")
+
+    hors = app.test_client()
+    id_gabon = next(p["id_pays"] for p in pays if p["libelle"] == "Gabon")
+    r = hors.post("/api/auth/inscription", json={
+        "prenom": "Ntsame", "nom": "Obame", "email": "ntsame@test.io",
+        "mot_de_passe": "NtsameTest2026!", "role": "etudiant",
+        "consentement": CONSENT_TESTS,
+        "profil": {"pays": "Gabon", "telephone": "+241 06 12 34 56"}})
+    verifier("Une inscription depuis un autre pays aboutit",
+             r.status_code in (200, 201), r.get_data(as_text=True)[:110])
+    verifier("Le pays est bien celui qui a été choisi",
+             jeton_sql("SELECT id_pays FROM utilisateur WHERE email = ?",
+                       ("ntsame@test.io",)) == id_gabon)
+    verifier("Le pays est relu sur le profil",
+             (hors.get("/api/profil/moi").get_json() or {}).get("pays")
+             == "Gabon")
+    verifier("Un numéro étranger est accepté",
+             jeton_sql("SELECT telephone FROM utilisateur WHERE email = ?",
+                       ("ntsame@test.io",)) == "+241061234 56".replace(" ", ""))
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)
