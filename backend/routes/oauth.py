@@ -17,6 +17,8 @@ from urllib.parse import urlencode
 
 from flask import Blueprint, current_app, jsonify, redirect, request, session
 
+import hmac
+
 from utils.noms import normaliser_nom, depuis_adresse
 from models.db import recuperer_un, executer, curseur
 from utils.auth_helpers import creer_session, poser_cookie_session
@@ -123,6 +125,12 @@ def connexion_google():
                       "Validez-la dans votre compte Google, puis "
                       "réessayez, ou créez un compte avec un mot de passe."
         }), 403
+    except CompteSuspendu:
+        return jsonify({
+            "erreur": "Ce compte a été fermé par l'administration de "
+                      "LaSourcee. Écrivez à l'équipe si vous pensez qu'il "
+                      "s'agit d'une erreur."
+        }), 403
     return _terminer_connexion(id_user)
 
 
@@ -168,7 +176,11 @@ def retour_linkedin():
         return redirect("/?erreur=" + erreur)
     if not code:
         return jsonify({"erreur": "Code OAuth manquant."}), 400
-    if etat != session.pop("linkedin_state", None):
+    attendu = session.pop("linkedin_state", None)
+    # Sans le premier test, deux absences se valaient : un appel forge
+    # sans « state », depuis un navigateur sans session, franchissait le
+    # controle. C'est exactement ce que ce controle doit empecher.
+    if not etat or not attendu or not hmac.compare_digest(etat, attendu):
         return jsonify({"erreur": "État OAuth invalide (CSRF)."}), 400
 
     # Échanger le code contre un access token
@@ -222,6 +234,8 @@ def retour_linkedin():
         )
     except AdresseNonVerifiee:
         return redirect("/?erreur=linkedin_adresse_non_verifiee")
+    except CompteSuspendu:
+        return redirect("/?erreur=compte_suspendu")
     # La réponse DOIT être celle qui porte le cookie : renvoyer une
     # redirection construite à part perdrait la session.
     return _terminer_connexion(id_user, redirection="/?connexion=linkedin")
@@ -233,6 +247,10 @@ def retour_linkedin():
 
 class AdresseNonVerifiee(Exception):
     """Le fournisseur externe ne garantit pas l'adresse annoncée."""
+
+
+class CompteSuspendu(Exception):
+    """Le compte existe mais l'administration l'a fermé."""
 
 
 def _trouver_ou_creer_compte_externe(fournisseur, sub_externe,
@@ -263,10 +281,15 @@ def _trouver_ou_creer_compte_externe(fournisseur, sub_externe,
         raise AdresseNonVerifiee(email)
 
     compte = recuperer_un(
-        "SELECT id_utilisateur, email_verifie FROM utilisateur "
+        "SELECT id_utilisateur, email_verifie, est_actif FROM utilisateur "
         "WHERE email = %s",
         (email,),
     )
+    # Un compte suspendu obtenait un cookie de session, que la requete
+    # suivante refusait : l'ecran annoncait « Votre session a expire »
+    # juste apres une connexion reussie, ce qui ne dit rien de vrai.
+    if compte and not compte.get("est_actif"):
+        raise CompteSuspendu(email)
 
     with curseur(commit=True) as cur:
         if compte:

@@ -3621,6 +3621,9 @@ const MESSAGES_RETOUR = {
     "LinkedIn n'a pas transmis votre adresse e-mail. Autorisez le "
     + 'partage de l\'adresse, ou créez un compte avec un mot de passe.',
   linkedin: 'La connexion LinkedIn a échoué. Réessayez dans un instant.',
+  compte_suspendu:
+    "Ce compte a été fermé par l'administration de LaSourcee. "
+    + "Écrivez à l'équipe si vous pensez qu'il s'agit d'une erreur.",
   access_denied: 'Connexion annulée.',
 };
 

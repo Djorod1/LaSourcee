@@ -1865,20 +1865,38 @@ def executer_tests():
     verifier("Le code se lit dans le message",
              bool(code_n) and f"{str(code_n)[:3]} {str(code_n)[3:]}" in message)
 
-    # Demander un nouveau code : l'ancien doit cesser de valoir, sinon
-    # deux codes circulent et l'on ne sait plus lequel saisir.
+    # Redemander le code : c'est le MEME qui repart, tant qu'il vaut.
+    #
+    # Il etait auparavant detruit puis remplace, ce qui donnait a
+    # n'importe qui le moyen d'invalider le code d'un autre sans jamais
+    # y avoir acces : la personne venait de le recevoir, le recopiait,
+    # et s'entendait repondre « Code incorrect ».
     r = anon.post("/api/auth/renvoyer-confirmation",
                   json={"email": "nadege@test.io"})
-    verifier("Un nouveau code se demande", r.status_code == 200)
-    code_n2 = jeton_sql("SELECT v.code FROM verification_email v "
-                        "JOIN utilisateur u ON u.id_utilisateur = v.id_utilisateur "
-                        "WHERE u.email = ? AND v.verifie_le IS NULL "
-                        "ORDER BY v.cree_le DESC", ("nadege@test.io",))
-    verifier("Le nouveau code diffère du précédent", code_n2 != code_n)
-    verifier("L'ancien code ne vaut plus",
+    verifier("Un code se redemande", r.status_code == 200)
+    codes = jeton_sql("SELECT COUNT(*) FROM verification_email v "
+                      "JOIN utilisateur u ON u.id_utilisateur = v.id_utilisateur "
+                      "WHERE u.email = ? AND v.verifie_le IS NULL",
+                      ("nadege@test.io",))
+    verifier("Un seul code reste en circulation", codes == 1, str(codes))
+    # Compare a TOUS les codes en attente, pas au plus recent : deux
+    # lignes creees dans la meme seconde se departagent au hasard, et
+    # l'assertion reussissait alors meme quand un second code existait.
+    # GROUP_CONCAT n'existe pas sur PostgreSQL : on compte les codes qui
+    # DIFFERENT du precedent, ce qui s'ecrit pareil sur les deux moteurs.
+    autres = jeton_sql("SELECT COUNT(*) FROM verification_email v "
+                       "JOIN utilisateur u "
+                       "  ON u.id_utilisateur = v.id_utilisateur "
+                       "WHERE u.email = ? AND v.verifie_le IS NULL "
+                       "  AND v.code <> ?",
+                       ("nadege@test.io", str(code_n)))
+    verifier("C'est le même code qui repart, et lui seul",
+             autres == 0, f"{autres} autre(s) code(s) en attente")
+    code_n2 = code_n
+    verifier("Un tiers ne peut donc pas invalider le code de quelqu'un",
              anon.post("/api/auth/verifier-code",
                        json={"email": "nadege@test.io",
-                             "code": str(code_n)}).status_code in (400, 410))
+                             "code": str(code_n)}).status_code == 200)
     verifier("Le nouveau code confirme l'adresse",
              anon.post("/api/auth/verifier-code",
                        json={"email": "nadege@test.io",
@@ -3177,6 +3195,92 @@ def executer_tests():
                     json={"role": "admin"})
     verifier("Le dernier super administrateur ne se retire pas lui-même",
              r.status_code == 400, r.get_data(as_text=True)[:110])
+
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  44. SESSIONS, CODES ET CONNEXIONS EXTERNES")
+    print("═" * 70)
+
+    from utils.auth_helpers import hacher_mot_de_passe as _hacher
+
+    with app.app_context():
+        _maj("""INSERT INTO utilisateur
+                  (prenom, nom, email, mot_de_passe, role, est_actif,
+                   email_verifie)
+                VALUES ('Sylvie', 'Essai', 'sylvie@test.io', %s,
+                        'etudiant', 1, 1)""",
+             (_hacher("SylvieTest2026!"),), commit=True)
+    id_sylvie = _id("sylvie@test.io")
+
+    bureau = app.test_client()
+    bureau.post("/api/auth/connexion", json={"email": "sylvie@test.io",
+                                             "mot_de_passe": "SylvieTest2026!"})
+    cyber = app.test_client()
+    cyber.post("/api/auth/connexion", json={"email": "sylvie@test.io",
+                                            "mot_de_passe": "SylvieTest2026!"})
+    verifier("Deux appareils sont connectés au même compte",
+             bureau.get("/api/profil/moi").status_code == 200
+             and cyber.get("/api/profil/moi").status_code == 200)
+
+    # Quelqu'un qui change son mot de passe parce qu'il a laisse sa
+    # session ouverte dans un cybercafe croyait reprendre la main :
+    # elle y restait ouverte.
+    r = bureau.post("/api/auth/changer-mdp",
+                    json={"mot_de_passe_actuel": "SylvieTest2026!",
+                          "nouveau_mot_de_passe": "SylvieNouveau2026!"})
+    verifier("Le mot de passe se change", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+    verifier("L'autre appareil est déconnecté",
+             cyber.get("/api/profil/moi").status_code == 401)
+    verifier("L'appareil qui a changé le mot de passe reste connecté",
+             bureau.get("/api/profil/moi").status_code == 200)
+
+    # Un compte ferme ne doit pas obtenir de session par un fournisseur
+    # externe : il en obtenait une, que la requete suivante refusait,
+    # et l'ecran annoncait « Votre session a expire » juste apres une
+    # connexion reussie.
+    from routes.oauth import (_trouver_ou_creer_compte_externe,
+                              CompteSuspendu, AdresseNonVerifiee)
+    with app.app_context():
+        _maj("UPDATE utilisateur SET est_actif = 0 WHERE id_utilisateur = %s",
+             (id_sylvie,), commit=True)
+        refuse = False
+        try:
+            _trouver_ou_creer_compte_externe(
+                "google", "sub-essai-1", "sylvie@test.io", True,
+                "Sylvie", "Essai", None)
+        except CompteSuspendu:
+            refuse = True
+        verifier("Un compte fermé est refusé à la connexion externe", refuse)
+        _maj("UPDATE utilisateur SET est_actif = 1 WHERE id_utilisateur = %s",
+             (id_sylvie,), commit=True)
+
+        # Et une adresse que le fournisseur ne garantit pas reste
+        # refusee, comme avant.
+        refuse = False
+        try:
+            _trouver_ou_creer_compte_externe(
+                "google", "sub-essai-2", "inconnue@test.io", False,
+                "Qui", "Sait", None)
+        except AdresseNonVerifiee:
+            refuse = True
+        verifier("Une adresse non garantie reste refusée", refuse)
+
+    # L'etat OAuth : deux absences se valaient, et un appel forge sans
+    # « state » franchissait le controle cense l'empecher.
+    import os as _os2
+    _os2.environ.update({"LINKEDIN_CLIENT_ID": "essai",
+                         "LINKEDIN_CLIENT_SECRET": "essai",
+                         "LINKEDIN_REDIRECT_URI": "https://exemple.test/cb"})
+    sans_etat = app.test_client()
+    r = sans_etat.get("/api/auth/linkedin/callback?code=abc")
+    verifier("Un retour OAuth sans état est refusé",
+             r.status_code == 400, str(r.status_code))
+    r = sans_etat.get("/api/auth/linkedin/callback?code=abc&state=invente")
+    verifier("Un état inventé est refusé", r.status_code == 400)
+    for cle in ("LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET",
+                "LINKEDIN_REDIRECT_URI"):
+        _os2.environ.pop(cle, None)
 
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)

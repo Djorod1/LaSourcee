@@ -604,7 +604,16 @@ def changer_mdp():
         (nouveau_hache, user["id_utilisateur"]),
         commit=True,
     )
-    return jsonify({"ok": True})
+
+    # Les autres appareils sont déconnectés, comme le fait déjà la
+    # réinitialisation. Quelqu'un qui change son mot de passe parce
+    # qu'il a laissé sa session ouverte dans un cybercafé ou une salle
+    # informatique croyait reprendre la main : elle y restait ouverte.
+    jeton = jeton_session_courant()
+    fermees = executer(
+        "DELETE FROM session_web WHERE id_utilisateur = %s AND id_token <> %s",
+        (user["id_utilisateur"], jeton or ""), commit=True) or 0
+    return jsonify({"ok": True, "autres_appareils_deconnectes": fermees})
 
 
 # --- Sessions actives --------------------------------------------------------
@@ -753,16 +762,48 @@ def renvoyer_confirmation():
         "SELECT id_utilisateur, prenom, email_verifie FROM utilisateur "
         "WHERE email = %s AND est_actif = 1", (email,))
     if user and not user["email_verifie"]:
-        # Les jetons precedents sont invalides : deux liens actifs pour
-        # la meme adresse doublent la surface d'attaque sans rien
-        # apporter.
-        executer("DELETE FROM verification_email WHERE id_utilisateur = %s "
-                 "AND verifie_le IS NULL",
-                 (user["id_utilisateur"],), commit=True)
-        _envoyer_email_verification(
-            user["id_utilisateur"], email, user["prenom"])
+        # Le code en cours est renvoye tel quel s'il est encore valable,
+        # au lieu d'etre detruit puis remplace.
+        #
+        # N'importe qui pouvait appeler cette route avec l'adresse de
+        # quelqu'un d'autre : la personne venait de recevoir son code,
+        # le recopiait, et s'entendait repondre « Code incorrect ». Elle
+        # n'avait aucun moyen de comprendre pourquoi.
+        _renvoyer_ou_creer_code(user["id_utilisateur"], email,
+                                user["prenom"])
 
     return reponse_neutre
+
+
+def _renvoyer_ou_creer_code(id_user, email, prenom):
+    """Renvoie le code en cours s'il est encore valable, sinon en crée un.
+
+    Détruire le code précédent à chaque demande donnait à n'importe qui
+    le moyen d'invalider celui d'un autre, sans jamais y avoir accès.
+    """
+    from utils.email import envoyer
+
+    en_cours = recuperer_un(
+        """SELECT code FROM verification_email
+            WHERE id_utilisateur = %s AND verifie_le IS NULL
+              AND code IS NOT NULL AND expire_le > %s
+         ORDER BY expire_le DESC LIMIT 1""",
+        (id_user, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
+
+    if not en_cours:
+        return _envoyer_email_verification(id_user, email, prenom)
+
+    code = str(en_cours["code"])
+    espace = " ".join((code[:3], code[3:]))
+    return envoyer(
+        email, f"Votre code LaSourcee : {espace}",
+        f"Bonjour {prenom},\n\n"
+        f"Voici de nouveau votre code de confirmation : {espace}\n\n"
+        "Il reste valable. Recopiez simplement les six chiffres dans la "
+        "page de confirmation.\n\n"
+        "Si vous n'avez rien demandé, ignorez ce message : votre compte "
+        "n'a pas changé.\n\n"
+        "L'équipe LaSourcee")
 
 
 @bp_auth.post("/confirmation/moi")
