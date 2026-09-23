@@ -606,10 +606,6 @@ def _charger_profil(id_user, public=False):
         """SELECT COUNT(*) AS n FROM marquage_reponse m
              JOIN reponse r ON r.id_reponse = m.id_reponse
             WHERE r.id_auteur = %s AND m.type_marquage = 'utile'""")
-    base["nb_suivis"] = _compter(
-        "SELECT COUNT(*) AS n FROM suivi_mentor WHERE id_suiveur = %s")
-    base["nb_abonnes"] = _compter(
-        "SELECT COUNT(*) AS n FROM suivi_mentor WHERE id_mentor = %s")
 
     # Presence. Calculee ici plutot que dans le navigateur : celui-ci ne
     # connait ni l'heure du serveur ni le seuil retenu, et deux
@@ -678,7 +674,6 @@ PREFERENCES_CONNUES = {
     "reponse_question": True,
     "reactions": True,
     "questions_secteur": False,
-    "reponses_suivis": True,
     "infolettre": False,
 }
 CANAUX = ("app", "email")

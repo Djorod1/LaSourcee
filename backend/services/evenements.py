@@ -43,7 +43,6 @@ TYPES = {
     "question_vue": "Consultation d'une question",
     "reponse_utile": "Reponse marquee utile",
     "question_utile": "Question marquee utile",
-    "suivi": "Abonnement a un referent",
     "recherche": "Recherche effectuee",
     "candidature": "Depot d'une candidature de referent",
     "candidature_tranchee": "Decision sur une candidature",

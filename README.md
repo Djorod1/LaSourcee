@@ -210,11 +210,11 @@ frontend et pourrait servir une autre interface sans modification.
 │   │   └── audit.py            journal des actions d'administration
 │   ├── routes/
 │   │   ├── auth.py             inscription, connexion, mot de passe
-│   │   ├── oauth.py            Google et LinkedIn
+│   │   ├── oauth.py            connexion Google
 │   │   ├── profil.py           profils et référentiels
 │   │   ├── questions.py        publication, fil, favoris, signalements
 │   │   ├── reponses.py         réponses
-│   │   ├── mentors.py          annuaire et suivi
+│   │   ├── mentors.py          annuaire des référents
 │   │   ├── candidature_mentor.py  candidature et validation
 │   │   ├── messagerie.py       conversations privées
 │   │   ├── notifications.py    notifications
@@ -302,7 +302,7 @@ un gain nul côté utilisateur, qui ne voit jamais ces chaînes.
 | Rôle en base | Nom affiché | Capacités |
 |---|---|---|
 | `visiteur` | Visiteur | consulter le fil public |
-| `etudiant` | Bénéficiaire | publier des questions, commenter, mettre en favori, suivre des référents |
+| `etudiant` | Bénéficiaire | publier des questions, commenter, mettre en favori, écrire aux référents |
 | `mentor` | Référent | répondre aux questions, statut de vérification, profil public enrichi |
 | `admin` | Administrateur | modération, suspension, validation des candidatures |
 | `super_admin` | Administrateur principal | création d'autres administrateurs, journal d'audit complet |
@@ -401,6 +401,37 @@ Trois limites sont posées, et elles sont volontaires :
 Ce que la plateforme collecte doit rester annoncé aux membres dans la
 politique de confidentialité : une collecte silencieuse, même
 techniquement irréprochable, ne l'est pas juridiquement.
+
+---
+
+## Fonctionnalités retirées
+
+### Le suivi de référents
+
+On pouvait s'abonner à un référent. La fonctionnalité a été retirée, et
+il vaut mieux dire pourquoi que de laisser croire à un oubli.
+
+Elle n'alimentait rien : s'abonner n'ajoutait aucun fil, ne changeait
+l'ordre d'aucune liste, n'ouvrait aucun échange. Les deux endroits qui
+affichaient « Référents suivis » — la colonne latérale et un onglet du
+profil — montraient en réalité les quatre premiers référents de
+l'annuaire dès que la liste des abonnements était vide, c'est-à-dire
+presque toujours, puisque cette liste n'était jamais chargée depuis le
+serveur. Une personne qui venait de s'inscrire y voyait donc un inconnu
+présenté comme quelqu'un qu'elle suivait.
+
+Ce qui manquait n'était pas un abonnement, mais un moyen de s'adresser
+à quelqu'un. Le bouton « Suivre » a été remplacé par « Écrire », qui
+n'apparaît que lorsque la règle le permet (voir *Qui peut écrire à
+qui*).
+
+La table `suivi_mentor` n'est plus créée ni lue. Sur une base déjà en
+service elle subsiste sans gêner ; la supprimer est facultatif et se
+fait à la main :
+
+```sql
+DROP TABLE IF EXISTS suivi_mentor;
+```
 
 ---
 

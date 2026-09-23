@@ -444,8 +444,8 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
 .liste-suivis { display: flex; flex-direction: column; gap: 10px; }
 .suivi-item { display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: var(--rayon-s); }
 .suivi-item:hover { background: var(--fond); cursor: pointer; }
-.suivi-item .info { flex: 1; font-size: 13px; }
-.suivi-item .info strong { display: block; }
+.suivi-item .info { flex: 1; font-size: 13px; min-width: 0; }
+.suivi-item .info strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .suivi-item .info span { color: var(--texte-doux); font-size: 12px; }
 
 /* Fil de questions */

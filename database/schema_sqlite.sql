@@ -192,16 +192,6 @@ CREATE TABLE sauvegarde (
     FOREIGN KEY (id_question)    REFERENCES question(id_question)       ON DELETE CASCADE
 );
 
-CREATE TABLE suivi_mentor (
-    id_suiveur  INTEGER NOT NULL,
-    id_mentor   INTEGER NOT NULL,
-    cree_le     TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id_suiveur, id_mentor),
-    CHECK (id_suiveur <> id_mentor),
-    FOREIGN KEY (id_suiveur) REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE,
-    FOREIGN KEY (id_mentor)  REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE
-);
-
 CREATE TABLE signalement (
     id_signalement  INTEGER PRIMARY KEY AUTOINCREMENT,
     id_signaleur    INTEGER NOT NULL,

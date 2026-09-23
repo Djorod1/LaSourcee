@@ -25,7 +25,6 @@ const etat = {
   ongletProfil: 'questions',
   utilesQ: new Set(),       // ids des questions marquées utiles par moi
   sauvegardees: new Set(),  // ids des questions sauvegardées
-  suivis: new Set(),        // ids des mentors suivis
   rechercheTerme: '',
   sectionActive: 'fil'
 };
@@ -388,12 +387,9 @@ function appliquerUtilisateur(u) {
     // posees a 0 puis jamais mises a jour, si bien qu'un profil de
     // vingt questions affichait « 0 Questions posees ».
     questionsPosees: u.nb_questions || 0,
-    mentorsSuivis: u.nb_suivis || 0,
     nb_questions: u.nb_questions || 0,
     nb_reponses_publiees: u.nb_reponses_publiees || 0,
     nb_utiles_recus: u.nb_utiles_recus || 0,
-    nb_suivis: u.nb_suivis || 0,
-    nb_abonnes: u.nb_abonnes || 0,
     note_moyenne: u.note_moyenne || 0,
     anciennete: u.anciennete || '',
     cree_le: u.cree_le || null,
@@ -916,16 +912,24 @@ function rendreSidebarProfil() {
     <button class="btn btn-secondaire btn-petit btn-bloc" onclick="naviguerApp('profil')">Voir mon profil</button>
     <div class="profil-stats">
       <div><strong>${u.questionsPosees}</strong><span>Questions posées</span></div>
-      <div><strong>${u.mentorsSuivis}</strong><span>Référents suivis</span></div>
+      <div><strong>${u.nb_reponses_publiees || 0}</strong><span>Réponses apportées</span></div>
     </div>`;
   document.getElementById('mes-secteurs').innerHTML =
     u.secteurs.map((s, i) => `<span class="tag ${['','tag-ambre','tag-vert','tag-violet'][i%4]}">${echapper(s)}</span>`).join('');
+  // Ce bloc s'intitulait « Référents suivis » et montrait les quatre
+  // premiers référents de l'annuaire, que personne n'avait suivis. On
+  // y voyait donc un inconnu presenté comme quelqu'un qu'on suit. Il
+  // propose désormais ce qu'il a toujours montré : des référents à
+  // découvrir, choisis dans les secteurs de la personne.
+  const miens = new Set(u.secteurs || []);
+  const proches = mentors.filter(m => miens.has(m.secteur));
   document.getElementById('mentors-suivis').innerHTML =
-    mentors.slice(0, 4).map(m => `
+    (proches.length ? proches : mentors).slice(0, 4).map(m => `
       <div class="suivi-item" onclick="ouvrirProfilMentor(${m.id})">
         ${avatarHTML(m.initiales, 's')}
         <div class="info"><strong>${echapper(m.prenom + ' ' + m.nom)}</strong><span>${echapper(m.secteur)}</span></div>
-      </div>`).join('');
+      </div>`).join('')
+    || '<p class="note-param">Aucun référent pour le moment.</p>';
 }
 
 /* ============================================================
@@ -1306,65 +1310,13 @@ function rendreColonneDroite() {
       <li><a href="#" onclick="event.preventDefault(); ouvrirQuestion(${q.id})">${echapper(q.titre)}</a>
       <span>${q.utile} en favoris · ${q.repCount} réponses</span></li>`).join('');
   document.getElementById('mentors-suggeres').innerHTML =
-    mentors.slice(0, 4).map(m => {
-      const suivi = etat.suivis.has(m.id);
-      return `<li><div class="mentor-sugg">
+    mentors.slice(0, 4).map(m => `
+      <li><div class="mentor-sugg">
         ${avatarHTML(m.initiales)}
         <div class="info"><strong>${echapper(m.prenom + ' ' + m.nom)}</strong><span>${echapper(m.secteur)}</span></div>
-        <button class="btn btn-fantome btn-petit" onclick="basculerSuivre(${m.id})">${suivi ? ic('check','ic ic-s') + ' Suivi' : '+ Suivre'}</button>
-      </div></li>`;
-    }).join('');
-}
-
-async function basculerSuivre(mentorId) {
-  const m = mentors.find(x => x.id === mentorId); if (!m) return;
-  const etait = etat.suivis.has(mentorId);
-  if (etait) etat.suivis.delete(mentorId); else etat.suivis.add(mentorId);
-  rendreColonneDroite();
-
-  if (MODE.api) {
-    try {
-      const r = await API.post(`/mentors/${mentorId}/suivre`, {});
-      if (typeof r?.suivi === 'boolean') {
-        if (r.suivi) etat.suivis.add(mentorId); else etat.suivis.delete(mentorId);
-        rendreColonneDroite();
-      }
-      toast(r?.suivi
-        ? `Vous suivez désormais ${m.prenom}. Vous serez notifié(e) de ses réponses.`
-        : `Vous ne suivez plus ${m.prenom}.`);
-    } catch (err) {
-      if (etait) etat.suivis.add(mentorId); else etat.suivis.delete(mentorId);
-      rendreColonneDroite();
-      toast(err.message || 'Action impossible.', 'erreur');
-    }
-  } else {
-    toast(etat.suivis.has(mentorId)
-      ? `Vous suivez désormais ${m.prenom}. Vous serez notifié(e) de ses réponses.`
-      : `Vous ne suivez plus ${m.prenom}.`);
-  }
-}
-
-/* Quand un mentor répond, notifier tous ses abonnés */
-function notifierAbonnesMentor(nomMentor, questionId, titreQ) {
-  // Si l'utilisateur courant suit un mentor portant ce nom, il reçoit une notif
-  mentors.forEach(m => {
-    if (`${m.prenom} ${m.nom}` === nomMentor && etat.suivis.has(m.id)) {
-      notifications.unshift({
-        texte: `${nomMentor} (que vous suivez) a répondu à « ${titreQ} »`,
-        temps: "à l'instant", nonLu: true, questionId
-      });
-    }
-  });
-  rendreNotifications();
-}
-
-/* Hook : quand un mentor de la démo "ajoute" une réponse via l'admin/etc. — exposé pour usage futur */
-function mentorRepondAQuestion(mentorId, questionId, contenu) {
-  const m = mentors.find(x => x.id === mentorId); const q = questions.find(x => x.id === questionId);
-  if (!m || !q) return;
-  q.reponses.push({ auteur:`${m.prenom} ${m.nom}`, init:m.initiales, mentorId:m.id, mentor:true, verifie:m.verifie, contenu, utile:0 });
-  q.repCount++;
-  notifierAbonnesMentor(`${m.prenom} ${m.nom}`, q.id, q.titre);
+        <button class="btn btn-fantome btn-petit"
+                onclick="ouvrirProfilMentor(${m.id})">Voir</button>
+      </div></li>`).join('');
 }
 
 /* ============================================================
@@ -1499,8 +1451,7 @@ function rendreProfil() {
   stats.innerHTML = chiffres;
   document.getElementById('tabs-profil').innerHTML = `
     <div class="tab-profil actif" onclick="ongletProfil(this, 'questions')">Mes questions</div>
-    <div class="tab-profil" onclick="ongletProfil(this, 'sauvees')">Questions sauvegardées</div>
-    <div class="tab-profil" onclick="ongletProfil(this, 'mentors')">Référents suivis</div>`;
+    <div class="tab-profil" onclick="ongletProfil(this, 'sauvees')">Questions sauvegardées</div>`;
   ongletProfil(document.querySelector('.tab-profil.actif'), 'questions');
 }
 function ongletProfil(elem, t) {
@@ -1513,25 +1464,16 @@ function ongletProfil(elem, t) {
     c.innerHTML = carteCompletionProfil()
       + detailsProfil(etat.utilisateur)
       + questions.slice(0,3).map(q => carteQuestionHTML(q)).join('');
-  } else if (t === 'sauvees') {
+  } else {
     const liste = questions.filter(q => etat.sauvegardees.has(q.id));
     c.innerHTML = liste.length
       ? liste.map(q => carteQuestionHTML(q)).join('')
       : `<div class="etat-vide carte"><div class="illu">${ic('marque','ic ic-l')}</div><h3>Aucune question sauvegardée</h3><p>Sauvegardez les questions intéressantes pour les retrouver ici.</p></div>`;
-  } else {
-    const ids = [...etat.suivis];
-    const suiv = ids.length ? mentors.filter(m => etat.suivis.has(m.id)) : mentors.slice(0, 4);
-    c.innerHTML = `<div class="carte"><div class="carte-titre">Mes référents suivis</div>${suiv.map(m => `
-      <div class="suivi-item" onclick="ouvrirProfilMentor(${m.id})">
-        ${avatarHTML(m.initiales)}
-        <div class="info"><strong>${echapper(m.prenom + ' ' + m.nom)}</strong><span>${echapper(m.secteur + ' · ' + m.pays)}</span></div>
-      </div>`).join('')}</div>`;
   }
 }
 
 function rendreProfilMentor(m) {
   const dispoLabel = { disponible:'Disponible', occupe:'Occupé', absent:'Absent' }[m.dispo];
-  const suivi = etat.suivis.has(m.id);
   document.getElementById('entete-profil').innerHTML = `
     <div class="col-avatar">
       ${avatarHTML(m.initiales, 'xl', null, m.verifie)}
@@ -1547,8 +1489,13 @@ function rendreProfilMentor(m) {
       ${m.bio ? `<p class="bio-profil">${echapper(m.bio)}</p>` : ''}
     </div>
     <div class="col-actions">
-      <button class="btn ${suivi ? 'btn-secondaire' : 'btn-primaire'}" onclick="basculerSuivre(${m.id}); profilCible = mentors.find(x => x.id === ${m.id}); rendreProfilMentor(profilCible);">${suivi ? ic('check','ic ic-s') + ' Suivi' : '+ Suivre'}</button>
+      <span id="zone-ecrire"></span>
+      <button class="btn btn-secondaire" onclick="retourFil()">Retour au fil</button>
     </div>`;
+  // Le bouton « Suivre » n'apportait rien : il n'ouvrait aucun
+  // échange et les abonnements n'alimentaient aucun fil. C'est
+  // écrire qui manquait, et la règle dit si c'est permis.
+  majBoutonEcrire(m.id, `${m.prenom} ${m.nom}`);
   const stats = document.getElementById('stats-profil');
   stats.style.display = '';
   stats.innerHTML = `
@@ -1654,7 +1601,6 @@ function rendreEspaceMentor() {
     reponses: questions.reduce((n, q) =>
       n + q.reponses.filter(r => r.auteur.includes(u.prenom)).length, 0),
     secteurs: u.secteurs.length,
-    abonnes: u.mentorsSuivis,
   };
 
   c.innerHTML = `
@@ -1672,7 +1618,6 @@ function rendreEspaceMentor() {
     <div class="kpi-grid" style="margin-bottom:18px;">
       <div class="kpi-carte"><div class="kpi-icone">${ic('bulle')}</div><div class="label">Réponses publiées</div><div class="valeur">${stats.reponses}</div></div>
       <div class="kpi-carte"><div class="kpi-icone">${ic('etiquette')}</div><div class="label">Secteurs couverts</div><div class="valeur">${stats.secteurs}</div></div>
-      <div class="kpi-carte"><div class="kpi-icone">${ic('groupe')}</div><div class="label">Abonnés</div><div class="valeur">${stats.abonnes}</div></div>
     </div>
 
     <div class="carte">
@@ -2276,7 +2221,6 @@ const PREFERENCES_NOTIF = [
   ['reponse_question', 'Nouvelle réponse à mes questions'],
   ['reactions',        'Réactions sur mes publications'],
   ['questions_secteur','Nouvelles questions dans mes secteurs'],
-  ['reponses_suivis',  'Réponses des référents que je suis'],
   ['infolettre',       'Infolettre hebdomadaire'],
 ];
 
@@ -4623,7 +4567,6 @@ function rendreProfilAutre(u) {
   const nomComplet = `${u.prenom || ''} ${u.nom || ''}`.trim();
   const initiales = ((u.prenom || '?')[0] + (u.nom || '?')[0]).toUpperCase();
   const verifie = !!u.est_verifie;
-  const suivi = etat.suivis.has(u.id_utilisateur);
 
   const entete = document.getElementById('entete-profil');
   entete.innerHTML = `
@@ -4655,9 +4598,6 @@ function rendreProfilAutre(u) {
     </div>
     <div class="col-actions">
       <span id="zone-ecrire"></span>
-      ${u.role === 'mentor' ? `<button class="btn ${suivi ? 'btn-secondaire' : 'btn-primaire'}"
-        onclick="basculerSuiviProfil(${u.id_utilisateur}, this)">${
-        suivi ? 'Suivi' : 'Suivre'}</button>` : ''}
       <button class="btn btn-secondaire" onclick="retourFil()">Retour au fil</button>
     </div>`;
 
@@ -4683,23 +4623,7 @@ function retourFil() {
   naviguerApp('fil');
 }
 
-async function basculerSuiviProfil(id, bouton) {
-  // Une seule route, qui bascule : c'est elle qui dit l'état obtenu.
-  // Le déduire ici ferait diverger le bouton de la réalité dès qu'un
-  // autre onglet aurait agi entre-temps.
-  bouton.disabled = true;
-  try {
-    const r = await API.post(`/mentors/${id}/suivre`, {});
-    if (r.suivi) { etat.suivis.add(id); bouton.textContent = 'Suivi';
-                   bouton.className = 'btn btn-secondaire'; }
-    else { etat.suivis.delete(id); bouton.textContent = 'Suivre';
-           bouton.className = 'btn btn-primaire'; }
-  } catch (err) {
-    toast(err.message || 'Action impossible.', 'erreur');
-  } finally { bouton.disabled = false; }
-}
-
-/* Plusieurs objectifs, mais pas tous. Au-delà de quatre, le profil ne
+s. Au-delà de quatre, le profil ne
    dit plus rien : quelqu'un qui coche tout n'a rien précisé. La limite
    se voit avant d'être atteinte, plutôt que d'être opposée après coup
    par le serveur. */
@@ -5073,7 +4997,6 @@ function statistiquesProfil(u) {
       items.push(bloc(u.note_moyenne + ' ★', 'Note moyenne', true));
     }
     if (u.anciennete) items.push(bloc(u.anciennete, 'Expérience'));
-    if (u.nb_abonnes) items.push(bloc(u.nb_abonnes, 'Abonnés'));
   } else if (role === 'admin' || role === 'super_admin') {
     // Un administrateur n'a ni réponses ni note : lui en afficher
     // reviendrait à le juger sur une activité qui n'est pas la sienne.
@@ -5084,7 +5007,6 @@ function statistiquesProfil(u) {
     if (u.nb_reponses_publiees) {
       items.push(bloc(u.nb_reponses_publiees, 'Réponses apportées'));
     }
-    if (u.nb_suivis) items.push(bloc(u.nb_suivis, 'Référents suivis'));
     if (!items.length && u.cree_le) {
       // Un compte tout neuf : plutôt que trois zéros, la date d'arrivée.
       items.push(bloc(formatDate(u.cree_le), 'Membre depuis'));

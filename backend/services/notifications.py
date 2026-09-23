@@ -30,7 +30,6 @@ PREFERENCE_PAR_TYPE = {
     "reponse": "reponse_question",
     "reaction": "reactions",
     "nouvelle_question": "questions_secteur",
-    "suivi": None,
     "message": None,
     "systeme": None,
 }
@@ -124,16 +123,6 @@ def notifier_reaction(id_question, id_acteur, nom_acteur):
         type_notif="reaction",
         id_question=id_question,
         id_acteur=id_acteur,
-    )
-
-
-def notifier_suivi(id_referent, id_suiveur, nom_suiveur):
-    """Previent un referent qu'on s'est abonne a ses reponses."""
-    return notifier(
-        id_referent,
-        f"{nom_suiveur} suit désormais vos réponses.",
-        type_notif="suivi",
-        id_acteur=id_suiveur,
     )
 
 

@@ -223,18 +223,6 @@ CREATE TABLE sauvegarde (
         REFERENCES question(id_question) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
-CREATE TABLE suivi_mentor (
-    id_suiveur       INT UNSIGNED NOT NULL,
-    id_mentor        INT UNSIGNED NOT NULL,
-    cree_le          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id_suiveur, id_mentor),
-    CONSTRAINT fk_suivi_suiveur FOREIGN KEY (id_suiveur)
-        REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE,
-    CONSTRAINT fk_suivi_mentor  FOREIGN KEY (id_mentor)
-        REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE,
-    CONSTRAINT ck_suivi_pair    CHECK (id_suiveur <> id_mentor)
-) ENGINE=InnoDB;
-
 CREATE TABLE signalement (
     id_signalement   INT UNSIGNED NOT NULL AUTO_INCREMENT,
     id_signaleur     INT UNSIGNED NOT NULL,

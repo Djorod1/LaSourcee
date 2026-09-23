@@ -2150,7 +2150,7 @@ def executer_tests():
     ).get_json() or {}
     verifier("Le profil porte des comptes réels",
              all(c in prof_adm for c in
-                 ("nb_questions", "nb_reponses_publiees", "nb_suivis")),
+                 ("nb_questions", "nb_reponses_publiees", "nb_utiles_recus")),
              "« 0 Réponses » sur un profil d'administrateur venait d'un "
              "compteur réservé aux référents")
 
