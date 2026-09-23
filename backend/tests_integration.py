@@ -2697,6 +2697,73 @@ def executer_tests():
     verifier("Le délai annoncé est bien de deux jours",
              mod_resume.DELAI_HEURES == 48)
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  38. PAGES PUBLIQUES ET PLAN DU SITE")
+    print("═" * 70)
+
+    # Le site entier vivait derriere une connexion : un moteur de
+    # recherche n'en voyait qu'une page. Aucune quantite de balises ne
+    # compense l'absence de contenu lisible.
+    robot = app.test_client()          # aucun cookie, aucune session
+    page = robot.get(f"/question/{id_q}")
+    verifier("Une question se lit sans compte", page.status_code == 200,
+             str(page.status_code))
+    texte = page.get_data(as_text=True)
+    verifier("Le titre est un vrai titre de page",
+             "<h1>" in texte and "ateliers de soudure" in texte)
+    verifier("La réponse du référent est dans la page",
+             "Premier conseil." in texte)
+    verifier("Les données structurées décrivent une page de question",
+             '"@type": "QAPage"' in texte)
+    verifier("La meilleure réponse est déclarée aux moteurs",
+             '"acceptedAnswer"' in texte)
+    verifier("L'adresse canonique est déclarée",
+             'rel="canonical"' in texte)
+    verifier("La page invite à créer un compte",
+             "Rejoindre LaSourcee" in texte)
+
+    # Une question publique ne doit pas rendre publique la personne.
+    verifier("Le nom complet de l'auteur n'est jamais exposé",
+             "Hounkpatin" not in texte and "Akpaki" not in texte,
+             "prénom et initiale seulement")
+    verifier("Aucune adresse e-mail ne figure sur la page",
+             "@test.io" not in texte)
+
+    liste = robot.get("/questions")
+    verifier("La liste des questions se lit sans compte",
+             liste.status_code == 200)
+    verifier("Elle porte un lien vers chaque question",
+             f"/question/{id_q}-" in liste.get_data(as_text=True))
+
+    plan = robot.get("/sitemap.xml")
+    verifier("Le plan du site répond", plan.status_code == 200)
+    verifier("Il est servi en XML",
+             "xml" in (plan.headers.get("Content-Type") or ""))
+    plan_texte = plan.get_data(as_text=True)
+    verifier("Le plan liste les questions, pas seulement l'accueil",
+             f"/question/{id_q}-" in plan_texte)
+    verifier("Chaque question porte sa date de mise à jour",
+             "<lastmod>" in plan_texte)
+    verifier("L'adresse des pages contient le titre lisible",
+             "soudure" in plan_texte)
+
+    # Une adresse inventee ne doit pas repondre 200 : un moteur
+    # indexerait des pages vides a l'infini.
+    verifier("Une question inexistante répond 404",
+             robot.get("/question/999999").status_code == 404)
+    verifier("Une page de liste au-delà du dernier résultat répond 404",
+             robot.get("/questions?page=99").status_code == 404)
+
+    # Le reglage referme tout.
+    app.config["QUESTIONS_PUBLIQUES"] = False
+    verifier("Le réglage referme les pages publiques",
+             robot.get(f"/question/{id_q}").status_code == 404)
+    verifier("Le plan du site se réduit alors à l'accueil",
+             f"/question/{id_q}" not in robot.get("/sitemap.xml")
+             .get_data(as_text=True))
+    app.config["QUESTIONS_PUBLIQUES"] = True
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

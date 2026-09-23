@@ -168,6 +168,17 @@ class Config:
         and (os.getenv("EMAIL_MODE", "console") or "console").lower() == "smtp",
     )
 
+    # Les questions des membres sont-elles lisibles sans compte ?
+    #
+    # Le site entier vivait derriere une connexion : un moteur de
+    # recherche n'en voyait qu'une page, et aucune quantite de balises
+    # ne compense cela. Les pages publiques ne montrent que le prenom et
+    # l'initiale de l'auteur, jamais son adresse ni son etablissement.
+    #
+    # Mettre 0 referme tout. C'est une decision de la plateforme, pas du
+    # code, et elle doit figurer dans la politique de confidentialite.
+    QUESTIONS_PUBLIQUES = _booleen("QUESTIONS_PUBLIQUES", True)
+
     # ---- Bornes des requetes ---------------------------------------------
     # Une requete sans limite de taille permet d'immobiliser le serveur
     # en lui envoyant un corps enorme. Deux megaoctets couvrent

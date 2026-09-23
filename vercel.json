@@ -34,10 +34,6 @@
       "use": "@vercel/static"
     },
     {
-      "src": "sitemap.xml",
-      "use": "@vercel/static"
-    },
-    {
       "src": "assets/**",
       "use": "@vercel/static"
     }
@@ -56,6 +52,18 @@
     },
     {
       "src": "/api/(.*)",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/sitemap.xml",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/questions",
+      "dest": "/api/index.py"
+    },
+    {
+      "src": "/question/(.*)",
       "dest": "/api/index.py"
     },
     {

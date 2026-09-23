@@ -463,6 +463,42 @@ les prennent en charge, y répondent et les marquent traités.
 
 ---
 
+## Visibilité sur le net
+
+Le site entier vivait derrière une connexion. Un moteur de recherche
+n'en voyait qu'une page, l'accueil, et aucune quantité de balises ne
+compense cela : ce qui rend un site trouvable, ce sont des pages qui
+répondent à une question que quelqu'un a réellement tapée.
+
+Ces pages existent déjà sur la plateforme : ce sont les questions des
+membres et les réponses des référents. Elles sont donc servies en HTML
+complet, rendu par le serveur, sans qu'aucun JavaScript soit nécessaire
+pour les lire.
+
+| Adresse | Contenu |
+|---|---|
+| `/questions` | toutes les questions, paginées |
+| `/question/<id>-<titre>` | une question, ses réponses, données structurées `QAPage` |
+| `/sitemap.xml` | construit à partir des questions réellement publiées |
+
+**Ce que ces pages ne montrent pas** : le nom complet de l'auteur. Prénom
+et initiale, comme dans les notifications. Ni adresse, ni téléphone, ni
+établissement. Une question publique ne doit pas rendre publique la
+personne qui l'a posée.
+
+**Ce réglage se coupe.** `QUESTIONS_PUBLIQUES=0` referme tout : les pages
+répondent 404 et le plan du site se réduit à l'accueil. Rendre publiques
+les questions des membres est une décision qui appartient à la
+plateforme, pas au code, et **elle doit figurer dans la politique de
+confidentialité**.
+
+Le plan du site n'est plus un fichier : un plan qui ne change jamais
+n'apprend rien à un moteur de recherche. `vercel.json` route ces trois
+adresses vers la fonction, faute de quoi le gestionnaire de fichiers les
+renverrait toutes vers `index.html` et le serveur ne les verrait jamais.
+
+---
+
 ## Résumé périodique
 
 Une plateforme de questions et de réponses meurt du même silence des
