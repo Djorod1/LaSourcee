@@ -24,6 +24,7 @@ Utilisation :
 """
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -516,6 +517,45 @@ def executer():
     contenu = requis.read_text(encoding="utf-8") if requis.exists() else ""
     verifier("Pilote PostgreSQL déclaré", "psycopg2" in contenu)
     verifier("Flask déclaré", "Flask" in contenu)
+
+    titre("SYNTAXE DES FICHIERS SERVIS AU NAVIGATEUR")
+
+    # Une erreur de syntaxe dans script.js ne casse pas le serveur : la
+    # page se charge, et plus aucun bouton ne répond. Rien ne le
+    # signale côté serveur, et les tests d'intégration n'y touchent
+    # pas. Ce contrôle attrape la faute avant la mise en ligne.
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        verifier("Contrôle de syntaxe JavaScript (node absent, ignoré)", True)
+    else:
+        for fichier in ("script.js", "api.js"):
+            chemin = RACINE / fichier
+            if not chemin.exists():
+                verifier(f"{fichier} présent", False)
+                continue
+            sortie = subprocess.run([node, "--check", str(chemin)],
+                                    capture_output=True, text=True)
+            verifier(f"{fichier} est syntaxiquement valide",
+                     sortie.returncode == 0,
+                     " ".join((sortie.stderr or "").split())[:120])
+
+    # Un gestionnaire cité dans le HTML mais absent du script laisse un
+    # bouton qui ne fait rien, sans le moindre message.
+    html = (RACINE / "index.html").read_text(encoding="utf-8")
+    script = (RACINE / "script.js").read_text(encoding="utf-8")
+    appeles = set(re.findall(r'on\w+="\s*([a-zA-Z_$][\w$]*)\s*\(', html))
+    connus = set(re.findall(r'function\s+([a-zA-Z_$][\w$]*)\s*\(', script))
+    connus |= set(re.findall(
+        r'(?:const|let|var)\s+([a-zA-Z_$][\w$]*)\s*=\s*'
+        r'(?:async\s+)?(?:function|\()', script))
+    natifs = {"event", "this", "window", "document", "alert", "confirm",
+              "if", "return", "for", "while", "switch"}
+    manquants = sorted(appeles - connus - natifs)
+    verifier("Tous les gestionnaires cités dans la page existent",
+             not manquants, ", ".join(manquants[:6]))
 
 
 if __name__ == "__main__":

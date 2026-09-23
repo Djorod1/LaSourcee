@@ -132,21 +132,53 @@ def detail(id_q):
     evenements.depuis_requete("question_vue", type_cible="question",
                               id_cible=id_q)
 
+    # Les marquages et les notes de la personne connectee voyagent avec
+    # la reponse : sans eux l'interface reaffiche un pouce vide et des
+    # etoiles vides a chaque rechargement, comme si rien n'avait ete
+    # enregistre.
+    id_moi = g.utilisateur["id_utilisateur"]
     q["reponses"] = recuperer_tous(
-        """SELECT r.id_reponse, r.id_parent_reponse, r.contenu,
-                  r.note_etoiles, r.cree_le,
+        """SELECT r.id_reponse, r.id_parent_reponse, r.contenu, r.cree_le,
                   u.id_utilisateur, u.prenom, u.nom, u.photo_url, u.role,
-                  COALESCE(md.est_verifie, FALSE) AS verifie,
+                  -- 0 et non FALSE : la colonne est un entier sur les
+                  -- trois moteurs, et PostgreSQL refuse de mélanger un
+                  -- entier et un booléen dans un COALESCE. Cette route
+                  -- répondait donc par une erreur serveur en
+                  -- production, ce qui rendait toutes les réponses
+                  -- invisibles.
+                  COALESCE(md.est_verifie, 0) AS verifie,
                   (SELECT COUNT(*) FROM marquage_reponse m
                      WHERE m.id_reponse = r.id_reponse
-                       AND m.type_marquage = 'utile') AS nb_utiles
+                       AND m.type_marquage = 'utile') AS nb_utiles,
+                  (SELECT COUNT(*) FROM marquage_reponse m
+                     WHERE m.id_reponse = r.id_reponse
+                       AND m.type_marquage = 'utile'
+                       AND m.id_utilisateur = %s) AS mon_utile,
+                  (SELECT COUNT(*) FROM note_reponse n
+                     WHERE n.id_reponse = r.id_reponse) AS nb_notes,
+                  (SELECT AVG(n.valeur) FROM note_reponse n
+                     WHERE n.id_reponse = r.id_reponse) AS note_moyenne,
+                  (SELECT n.valeur FROM note_reponse n
+                     WHERE n.id_reponse = r.id_reponse
+                       AND n.id_utilisateur = %s) AS ma_note
              FROM reponse r
              JOIN utilisateur u ON u.id_utilisateur = r.id_auteur
         LEFT JOIN mentor_details md ON md.id_utilisateur = u.id_utilisateur
             WHERE r.id_question = %s
          ORDER BY r.cree_le ASC""",
-        (id_q,),
+        (id_moi, id_moi, id_q),
     )
+    for r in q["reponses"]:
+        r["mon_utile"] = bool(r.get("mon_utile"))
+        r["note_moyenne"] = round(float(r["note_moyenne"] or 0), 1)
+
+    q["mon_utile"] = bool(recuperer_un(
+        """SELECT 1 FROM marquage_question
+            WHERE id_question = %s AND id_utilisateur = %s
+              AND type_marquage = 'utile'""", (id_q, id_moi)))
+    q["sauvegardee"] = bool(recuperer_un(
+        "SELECT 1 FROM sauvegarde WHERE id_question = %s AND id_utilisateur = %s",
+        (id_q, id_moi)))
     return jsonify(q)
 
 

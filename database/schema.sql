@@ -223,6 +223,22 @@ CREATE TABLE sauvegarde (
         REFERENCES question(id_question) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+-- Notes attribuees aux reponses. Les etoiles existaient a l'ecran
+-- sans rien enregistrer : la moyenne d'un referent valait zero pour
+-- tout le monde.
+CREATE TABLE note_reponse (
+    id_reponse       INT UNSIGNED NOT NULL,
+    id_utilisateur   INT UNSIGNED NOT NULL,
+    valeur           TINYINT UNSIGNED NOT NULL,
+    cree_le          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id_reponse, id_utilisateur),
+    CONSTRAINT ck_note_valeur   CHECK (valeur BETWEEN 1 AND 5),
+    CONSTRAINT fk_note_reponse  FOREIGN KEY (id_reponse)
+        REFERENCES reponse(id_reponse) ON DELETE CASCADE,
+    CONSTRAINT fk_note_user     FOREIGN KEY (id_utilisateur)
+        REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE signalement (
     id_signalement   INT UNSIGNED NOT NULL AUTO_INCREMENT,
     id_signaleur     INT UNSIGNED NOT NULL,

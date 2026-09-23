@@ -2291,6 +2291,89 @@ def executer_tests():
              not jeton_sql("SELECT niveau_etudes FROM utilisateur "
                            "WHERE email = ?", ("kossi@test.io",)))
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  34. LES RÉPONSES SE LISENT ET LES NOTES S'ENREGISTRENT")
+    print("═" * 70)
+
+    # Le fil ne rapporte que le nombre de reponses. L'interface lisait
+    # une liste toujours vide : aucune reponse publiee n'a jamais ete
+    # lisible. Le detail doit donc porter les reponses, leur auteur, et
+    # l'etat propre a la personne connectee.
+    lecteur = app.test_client()
+    lecteur.post("/api/auth/inscription", json={
+        "prenom": "Ifè", "nom": "Akpaki", "email": "ife@test.io",
+        "mot_de_passe": "IfeTest2026!", "role": "etudiant",
+        "consentement": CONSENT_TESTS})
+    r = lecteur.post("/api/questions", json={
+        "titre": "Comment choisir entre deux ateliers de soudure ?",
+        "corps": "Premier point.\nDeuxième point.\n\nTroisième point.",
+        "id_secteur": 1})
+    id_q = (r.get_json() or {}).get("id_question")
+    verifier("La question est publiée", bool(id_q),
+             r.get_data(as_text=True)[:110])
+
+    id_ref = jeton_sql("SELECT id_utilisateur FROM utilisateur "
+                       "WHERE email = ?", ("odile@test.io",))
+    multiligne = ("Premier conseil.\n\nDeuxième conseil, sur une autre "
+                  "ligne.\n- un tiret\n- un autre")
+    r = cand.post("/api/reponses", json={"id_question": id_q,
+                                         "contenu": multiligne})
+    id_r = (r.get_json() or {}).get("id_reponse")
+    verifier("Un référent publie une réponse", bool(id_r),
+             r.get_data(as_text=True)[:110])
+
+    detail = lecteur.get(f"/api/questions/{id_q}").get_json() or {}
+    reponses = detail.get("reponses") or []
+    verifier("Le détail de la question porte ses réponses",
+             len(reponses) == 1, f"{len(reponses)} réponse(s)")
+    verifier("Les retours à la ligne sont conservés tels quels",
+             bool(reponses) and reponses[0].get("contenu") == multiligne)
+    verifier("Le corps de la question garde ses paragraphes",
+             detail.get("corps", "").count("\n") == 3)
+    verifier("La réponse porte son identifiant",
+             bool(reponses) and reponses[0].get("id_reponse") == id_r)
+    verifier("La réponse porte son auteur",
+             bool(reponses) and reponses[0].get("prenom") == "Odile")
+    verifier("La réponse dit si elle vient d'un référent vérifié",
+             bool(reponses) and reponses[0].get("verifie") in (1, True))
+
+    # Les etoiles existaient a l'ecran sans rien enregistrer : la
+    # moyenne d'un referent valait zero pour tout le monde.
+    r = lecteur.post(f"/api/reponses/{id_r}/note", json={"valeur": 5})
+    verifier("Une note est acceptée", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+    verifier("La note est relue sur le détail",
+             ((lecteur.get(f"/api/questions/{id_q}").get_json()
+               or {}).get("reponses") or [{}])[0].get("ma_note") == 5)
+    verifier("La moyenne du référent est recalculée",
+             float(jeton_sql("SELECT note_moyenne FROM mentor_details "
+                             "WHERE id_utilisateur = ?", (id_ref,)) or 0)
+             == 5.0)
+    r = lecteur.post(f"/api/reponses/{id_r}/note", json={"valeur": 3})
+    verifier("Une note se corrige sans se dupliquer",
+             r.status_code == 200
+             and jeton_sql("SELECT COUNT(*) FROM note_reponse "
+                           "WHERE id_reponse = ?", (id_r,)) == 1)
+    verifier("La moyenne suit la correction",
+             float(jeton_sql("SELECT note_moyenne FROM mentor_details "
+                             "WHERE id_utilisateur = ?", (id_ref,)) or 0)
+             == 3.0)
+    r = lecteur.post(f"/api/reponses/{id_r}/note", json={"valeur": 9})
+    verifier("Une note hors barème est refusée", r.status_code == 400)
+    r = cand.post(f"/api/reponses/{id_r}/note", json={"valeur": 5})
+    verifier("On ne note pas sa propre réponse", r.status_code == 400)
+
+    # Le pouce et la sauvegarde doivent survivre au rechargement : ils
+    # n'etaient renvoyes nulle part, et revenaient vides a chaque fois.
+    lecteur.post(f"/api/reponses/{id_r}/utile", json={})
+    lecteur.post(f"/api/questions/{id_q}/sauvegarder", json={})
+    relu = lecteur.get(f"/api/questions/{id_q}").get_json() or {}
+    verifier("Le pouce posé sur une réponse est relu",
+             (relu.get("reponses") or [{}])[0].get("mon_utile") is True)
+    verifier("La sauvegarde de la question est relue",
+             relu.get("sauvegardee") is True)
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

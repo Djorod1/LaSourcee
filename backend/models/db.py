@@ -429,6 +429,34 @@ TABLES_ATTENDUES = [
             "ON evenement(id_utilisateur, cree_le)",
         ],
     }),
+    # Notes attribuees aux reponses. Les etoiles existaient a l'ecran
+    # depuis l'origine sans rien enregistrer : la moyenne affichee sur
+    # les profils de referents valait zero pour tout le monde.
+    ("note_reponse", {
+        "sqlite": """CREATE TABLE note_reponse (
+            id_reponse      INTEGER NOT NULL,
+            id_utilisateur  INTEGER NOT NULL,
+            valeur          INTEGER NOT NULL CHECK (valeur BETWEEN 1 AND 5),
+            cree_le         TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id_reponse, id_utilisateur),
+            FOREIGN KEY (id_reponse)
+                REFERENCES reponse(id_reponse) ON DELETE CASCADE,
+            FOREIGN KEY (id_utilisateur)
+                REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE)""",
+        "postgres": """CREATE TABLE note_reponse (
+            id_reponse      INTEGER NOT NULL,
+            id_utilisateur  INTEGER NOT NULL,
+            valeur          INTEGER NOT NULL CHECK (valeur BETWEEN 1 AND 5),
+            cree_le         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id_reponse, id_utilisateur),
+            FOREIGN KEY (id_reponse)
+                REFERENCES reponse(id_reponse) ON DELETE CASCADE,
+            FOREIGN KEY (id_utilisateur)
+                REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE)""",
+        "index": [
+            "CREATE INDEX idx_note_reponse ON note_reponse(id_reponse)",
+        ],
+    }),
 ]
 
 

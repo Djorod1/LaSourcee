@@ -187,6 +187,19 @@ CREATE TABLE sauvegarde (
     FOREIGN KEY (id_question)    REFERENCES question(id_question)       ON DELETE CASCADE
 );
 
+-- Notes attribuees aux reponses. Les etoiles existaient a l'ecran
+-- sans rien enregistrer : la moyenne d'un referent valait zero pour
+-- tout le monde.
+CREATE TABLE note_reponse (
+    id_reponse      INTEGER NOT NULL,
+    id_utilisateur  INTEGER NOT NULL,
+    valeur          INTEGER NOT NULL CHECK (valeur BETWEEN 1 AND 5),
+    cree_le         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id_reponse, id_utilisateur),
+    FOREIGN KEY (id_reponse)     REFERENCES reponse(id_reponse)         ON DELETE CASCADE,
+    FOREIGN KEY (id_utilisateur) REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE
+);
+
 CREATE TABLE signalement (
     id_signalement  SERIAL PRIMARY KEY,
     id_signaleur    INTEGER NOT NULL,

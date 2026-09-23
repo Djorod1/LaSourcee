@@ -371,7 +371,7 @@ async function demanderReinitialisation() {
 /* Synchronise l'état UI avec l'utilisateur retourné par /api/profil/moi. */
 function appliquerUtilisateur(u) {
   if (!u) return;
-  const initiales = ((u.prenom || '?')[0] + (u.nom || '?')[0]).toUpperCase();
+  const initiales = initialesDe(u.prenom, u.nom);
   etat.utilisateur = {
     id: u.id_utilisateur,
     prenom: u.prenom || '',
@@ -619,7 +619,7 @@ function majEtapeOnboarding() {
   if (avOb && !etat.utilisateur.photo) {
     const p = (document.getElementById('prenom-ins')?.value || '').trim();
     const n = (document.getElementById('nom-ins')?.value || '').trim();
-    avOb.textContent = ((p[0] || '') + (n[0] || '')).toUpperCase();
+    avOb.textContent = initialesDe(p, n);
   }
 }
 
@@ -957,7 +957,7 @@ async function chargerFilDepuisApi() {
       corps: q.corps,
       secteur: q.secteur || 'Autre',
       auteur: `${q.prenom || ''} ${q.nom || ''}`.trim() || 'Anonyme',
-      initiales: ((q.prenom || '?')[0] + (q.nom || '?')[0]).toUpperCase(),
+      initiales: initialesDe(q.prenom, q.nom),
       idAuteur: q.id_utilisateur || q.id_auteur || null,
       photoAuteur: q.photo_url || null,
       pays: q.pays || '',
@@ -984,7 +984,7 @@ async function chargerMentorsDepuisApi() {
       id: m.id_utilisateur,
       prenom: m.prenom || '',
       nom: m.nom || '',
-      initiales: ((m.prenom || '?')[0] + (m.nom || '?')[0]).toUpperCase(),
+      initiales: initialesDe(m.prenom, m.nom),
       secteur: (m.secteurs && m.secteurs[0] && m.secteurs[0].libelle) || 'Autre',
       secteurs: (m.secteurs || []).map(s => s.libelle),
       pays: m.pays || '',
@@ -1026,6 +1026,22 @@ function _dateServeur(valeur) {
 
 /* Date et heure, dans le fuseau de la personne qui regarde. Une action
    d'administration sans heure ne se recoupe avec rien. */
+/* Une ou deux lettres pour l'avatar, calculées comme côté serveur.
+
+   L'ancienne formule prenait le premier caractère brut : un prénom
+   commençant par une apostrophe ou un accent décomposé donnait un
+   avatar illisible, et « ? » s'affichait pour un nom manquant. */
+function initialesDe(prenom, nom) {
+  const lettres = [];
+  for (const partie of [prenom || '', nom || '']) {
+    const propre = partie.normalize('NFC');
+    for (const c of propre) {
+      if (/\p{L}/u.test(c)) { lettres.push(c.toUpperCase()); break; }
+    }
+  }
+  return lettres.join('').slice(0, 2);
+}
+
 function formatHorodatage(valeur, avecSecondes = false) {
   const d = _dateServeur(valeur);
   if (!d) return '';
@@ -1162,7 +1178,14 @@ function rendreCourant() {
 }
 
 /* ----- Ouvrir une question en pleine vue ----- */
-function ouvrirQuestion(id) {
+/* Ouvre une question avec ses réponses.
+
+   Le fil ne rapporte que le nombre de réponses, jamais leur contenu :
+   la liste locale était donc toujours vide, et cette page annonçait
+   « 3 réponse(s) » au-dessus de « Aucune réponse pour le moment ».
+   Aucune réponse publiée n'a jamais été lisible. Le détail est
+   maintenant demandé au serveur à chaque ouverture. */
+async function ouvrirQuestion(id) {
   const q = questions.find(x => x.id === id); if (!q) return;
   document.querySelectorAll('.sous-vue').forEach(sv => sv.style.display = 'none');
   const sv = document.getElementById('sv-question');
@@ -1170,13 +1193,61 @@ function ouvrirQuestion(id) {
   sv.dataset.qid = id;
   etat.sectionActive = 'question';
   majNavActif();
+  window.scrollTo(0, 0);
+
+  if (MODE.api) {
+    const zone = document.getElementById('contenu-question');
+    if (zone && !q.reponses.length) {
+      zone.innerHTML = '<p class="note-param">Chargement de la question…</p>';
+    }
+    try {
+      const d = await API.get('/questions/' + id);
+      q.corps = d.corps ?? q.corps;
+      q.utile = d.nb_utiles ?? q.utile;
+      q.repCount = (d.reponses || []).length;
+      q.reponses = (d.reponses || []).map(r => ({
+        id: r.id_reponse,
+        idAuteur: r.id_utilisateur,
+        auteur: `${r.prenom || ''} ${r.nom || ''}`.trim() || 'Membre',
+        init: initialesDe(r.prenom, r.nom),
+        photo: r.photo_url || null,
+        mentor: r.role === 'mentor',
+        verifie: !!r.verifie,
+        contenu: r.contenu || '',
+        date: r.cree_le,
+        utile: r.nb_utiles || 0,
+        monUtile: !!r.mon_utile,
+        note: r.note_moyenne || 0,
+        nbNotes: r.nb_notes || 0,
+        maNote: r.ma_note || 0,
+        parent: r.id_parent_reponse || null,
+      }));
+      if (d.mon_utile) etat.utilesQ.add(id); else etat.utilesQ.delete(id);
+      if (d.sauvegardee) etat.sauvegardees.add(id);
+      else etat.sauvegardees.delete(id);
+    } catch (err) {
+      toast(err.message || "Cette question n'a pas pu être chargée.", 'erreur');
+    }
+    if (etat.sectionActive !== 'question'
+        || parseInt(sv.dataset.qid, 10) !== id) return;
+  }
+
   const utileActif = etat.utilesQ.has(q.id) ? ' actif' : '';
   const saveActif = etat.sauvegardees.has(q.id) ? ' actif' : '';
   const peutRepondre = estMentor();
+  // Une zone de texte, et non une ligne unique : une réponse utile
+  // tient en plusieurs paragraphes, et la touche Entrée y va à la
+  // ligne au lieu de publier une phrase à moitié écrite.
   const zoneRep = peutRepondre
-    ? `<div style="display:flex; gap:8px; margin-top:12px;">
-         <input type="text" placeholder="Écrire une réponse…" id="rep-input-${q.id}" />
-         <button class="btn btn-primaire btn-petit" onclick="ajouterReponse(${q.id})">Envoyer</button>
+    ? `<div class="composeur-reponse">
+         <textarea id="rep-input-${q.id}" rows="3" maxlength="4000"
+                   placeholder="Écrire une réponse… (Entrée pour aller à la ligne)"
+                   oninput="ajusterHauteur(this)"
+                   onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){event.preventDefault(); ajouterReponse(${q.id});}"></textarea>
+         <div class="composeur-pied">
+           <span class="aide-champ">Ctrl + Entrée pour publier.</span>
+           <button class="btn btn-primaire btn-petit" onclick="ajouterReponse(${q.id})">Publier ma réponse</button>
+         </div>
        </div>`
     : `<div class="carte" style="margin-top:12px; background:var(--fond); font-size:13px; color:var(--texte-doux); display:flex; gap:8px; align-items:center;">
          ${ic('marque','ic ic-s')} Seuls les référents peuvent répondre aux questions. Devenez référent pour partager votre expertise.
@@ -1190,7 +1261,7 @@ function ouvrirQuestion(id) {
           }>${echapper(q.auteur)}</strong> · <span>${echapper(q.pays)}</span><time>${echapper(q.temps)}</time></div>
       </div>
       <h2 class="q-titre">${echapper(q.titre)}</h2>
-      <p class="q-corps">${echapper(q.corps)}</p>
+      <p class="q-corps-entier texte-libre">${echapper(q.corps)}</p>
       <div class="q-tags"><span class="tag">${echapper(q.secteur)}</span></div>
       <div class="q-pied">
         <button class="btn-utile${utileActif}" onclick="basculerUtileQ(${q.id})" aria-label="En favoris" title="En favoris">${iconePouce(etat.utilesQ.has(q.id))}<span class="cnt">${q.utile}</span><span class="lbl">En favoris</span></button>
@@ -1202,7 +1273,13 @@ function ouvrirQuestion(id) {
         ${zoneRep}
       </div>
     </article>`;
-  window.scrollTo(0, 0);
+}
+
+/* Fait grandir une zone de texte avec son contenu, sans jamais faire
+   apparaître deux barres de défilement imbriquées. */
+function ajusterHauteur(champ) {
+  champ.style.height = 'auto';
+  champ.style.height = Math.min(champ.scrollHeight, 420) + 'px';
 }
 
 function reponseHTML(r) {
@@ -1210,24 +1287,56 @@ function reponseHTML(r) {
   const badge = r.verifie
     ? `<span class="badge-verifie">${ic('check','ic ic-s')} Référent vérifié</span>`
     : (r.mentor ? `<span class="badge-mentor badge-role">${ic('trophee','ic ic-s')} Référent</span>` : '');
-  const etoiles = r.mentor ? `<span class="etoiles" title="Notez cette réponse">
-    ${[1,2,3,4,5].map(i => `<span class="${i <= (r.etoiles||0) ? '' : 'vide'}" onclick="noter(this, ${i})">★</span>`).join('')}
+  // Les étoiles enregistrent désormais une note réelle. Personne ne
+  // note sa propre réponse, et la moyenne reçue s'affiche à côté.
+  const sienne = etat.utilisateur && r.idAuteur === etat.utilisateur.id;
+  const etoiles = r.mentor ? `<span class="etoiles"
+      title="${sienne ? 'Notes reçues' : 'Notez cette réponse'}"
+      data-rep="${r.id}">
+    ${[1,2,3,4,5].map(i => `<span class="${
+      i <= Math.round(r.maNote || r.note || 0) ? '' : 'vide'}"${
+      sienne ? '' : ` onclick="noterReponse(${r.id}, ${i}, this)"`}>★</span>`).join('')}
+    ${r.nbNotes ? `<span class="etoiles-bilan">${r.note} sur ${r.nbNotes} avis</span>`
+                : '<span class="etoiles-bilan">Aucun avis</span>'}
   </span>` : '';
-  const sous = (r.sousReponses||[]).map(sr => `
-    <div class="reponse-imbriquee">
-      <div class="r-entete">${avatarHTML(sr.init, 's')}<div class="info"><strong>${echapper(sr.auteur)}</strong></div></div>
-      <p>${echapper(sr.contenu)}</p>
-    </div>`).join('');
   return `
-    <div class="${cls}">
-      <div class="r-entete">${avatarHTML(r.init, 's')}<div class="info"><strong>${echapper(r.auteur)}</strong> ${badge}</div></div>
-      <p>${echapper(r.contenu)}</p>
+    <div class="${cls}" data-rep="${r.id}">
+      <div class="r-entete">
+        ${avatarLien(r.idAuteur, r.init, 's', r.photo, r.verifie, r.auteur)}
+        <div class="info"><strong class="nom-cliquable"${r.idAuteur
+          ? ` onclick="ouvrirProfilUtilisateur(${r.idAuteur})"` : ''
+          }>${echapper(r.auteur)}</strong> ${badge}
+          ${r.date ? `<time>${echapper(formatHorodatage(r.date))}</time>` : ''}</div>
+      </div>
+      <p class="texte-libre">${echapper(r.contenu)}</p>
       <div class="actions">
-        <button class="btn-utile" onclick="utileR(this)" aria-label="En favoris" title="En favoris">${iconePouce(false)}<span class="cnt">${r.utile}</span><span class="lbl">En favoris</span></button>
+        <button class="btn-utile${r.monUtile ? ' actif' : ''}"
+                onclick="utileR(this, ${r.id})"
+                aria-label="En favoris" title="En favoris">${
+          iconePouce(!!r.monUtile)}<span class="cnt">${r.utile}</span><span class="lbl">En favoris</span></button>
         ${etoiles}
       </div>
-      ${sous}
     </div>`;
+}
+
+/* Enregistre une note de un à cinq sur une réponse. */
+async function noterReponse(idReponse, valeur, etoile) {
+  if (!MODE.api) return toast('Serveur indisponible.', 'erreur');
+  const groupe = etoile.closest('.etoiles');
+  try {
+    const r = await API.post(`/reponses/${idReponse}/note`, { valeur });
+    [...groupe.querySelectorAll('span')].forEach((s, i) => {
+      if (s.classList.contains('etoiles-bilan')) return;
+      s.classList.toggle('vide', i >= valeur);
+    });
+    const bilan = groupe.querySelector('.etoiles-bilan');
+    if (bilan) {
+      bilan.textContent = `${r.note_moyenne} sur ${r.nb_notes} avis`;
+    }
+    toast(`Note enregistrée : ${valeur} sur 5.`);
+  } catch (err) {
+    toast(err.message || "La note n'a pas pu être enregistrée.", 'erreur');
+  }
 }
 
 async function utileR(btn, idReponse) {
@@ -1243,24 +1352,28 @@ async function utileR(btn, idReponse) {
   const n = parseInt(cnt.textContent, 10) || 0;
   cnt.textContent = actif ? n + 1 : Math.max(0, n - 1);
 
-  if (MODE.api && idReponse) {
-    try {
-      await API.post(`/reponses/${idReponse}/utile`, {});
-      toast(actif ? 'En favoris.' : 'Retiré des favoris.');
-    } catch (err) {
-      btn.classList.toggle('actif');
-      cnt.textContent = n;
-      toast(err.message || 'Action impossible.', 'erreur');
-    }
-  } else {
+  // Sans identifiant, l'appel ne pouvait pas partir : le bouton
+  // changeait d'état et annonçait « En favoris » sans rien enregistrer.
+  if (!idReponse) {
+    btn.classList.toggle('actif');
+    cnt.textContent = n;
+    return toast("Cette réponse n'a pas pu être identifiée.", 'erreur');
+  }
+  if (!MODE.api) {
+    btn.classList.toggle('actif');
+    cnt.textContent = n;
+    return toast('Serveur indisponible.', 'erreur');
+  }
+  try {
+    await API.post(`/reponses/${idReponse}/utile`, {});
     toast(actif ? 'En favoris.' : 'Retiré des favoris.');
+  } catch (err) {
+    btn.classList.toggle('actif');
+    cnt.textContent = n;
+    toast(err.message || 'Action impossible.', 'erreur');
   }
 }
-function noter(elem, n) {
-  const conteneur = elem.parentElement;
-  [...conteneur.children].forEach((c, i) => c.classList.toggle('vide', i >= n));
-  toast(`Note attribuée : ${n}/5.`);
-}
+
 async function signaler(id) {
   const motif = window.prompt('Motif du signalement (optionnel) :', '') || '';
   if (motif === null) return;  // annulé
@@ -1283,14 +1396,24 @@ async function ajouterReponse(id) {
   if (!contenu) return toast('Écrivez votre réponse.', 'erreur');
 
   if (MODE.api) {
+    const bouton = document.querySelector(
+      `#rep-input-${id} ~ .composeur-pied .btn-primaire`);
+    if (bouton) { bouton.disabled = true; bouton.textContent = 'Publication…'; }
     try {
       await API.post('/reponses', { id_question: id, contenu });
-      toast('Réponse publiée.');
+      // Le champ n'est vidé qu'une fois la publication acquise : le
+      // vider avant perdait le texte quand l'envoi échouait.
       inp.value = '';
+      ajusterHauteur(inp);
+      toast('Réponse publiée.');
       await chargerFilDepuisApi();
-      ouvrirQuestion(id);
+      await ouvrirQuestion(id);
       return;
     } catch (err) {
+      if (bouton) {
+        bouton.disabled = false;
+        bouton.textContent = 'Publier ma réponse';
+      }
       return toast(err.message || 'Publication impossible.', 'erreur');
     }
   }
@@ -1907,7 +2030,7 @@ async function _rechercherVraiment(terme) {
     html += '<h5>Référents</h5>';
     html += r.mentors.map(m => `<div class="res-item"
         onclick="ouvrirProfilUtilisateur(${m.id_utilisateur}); fermerRecherche();">
-        ${avatarHTML(((m.prenom||'?')[0] + (m.nom||'?')[0]).toUpperCase(), 's', m.photo_url)}
+        ${avatarHTML(initialesDe(m.prenom, m.nom), 's', m.photo_url)}
         <span>${echapper((m.prenom || '') + ' ' + (m.nom || ''))}</span>
       </div>`).join('');
   }
@@ -2799,7 +2922,7 @@ async function adminMentors() {
        aucun badge. Vérifiez le parcours annoncé avant de valider.</p>
     <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap:14px;">
       ${att.map(m => {
-        const init = ((m.prenom||'?')[0] + (m.nom||'?')[0]).toUpperCase();
+        const init = initialesDe(m.prenom, m.nom);
         const poste = [m.profession, m.organisation].filter(Boolean).join(', ');
         const parcours = [m.niveau_etudes, m.domaine, m.etablissement]
           .filter(Boolean).map(echapper).join(' · ');
@@ -4565,7 +4688,7 @@ function iconeRole(role) {
    un profil consulté par quelqu'un d'autre. */
 function rendreProfilAutre(u) {
   const nomComplet = `${u.prenom || ''} ${u.nom || ''}`.trim();
-  const initiales = ((u.prenom || '?')[0] + (u.nom || '?')[0]).toUpperCase();
+  const initiales = initialesDe(u.prenom, u.nom);
   const verifie = !!u.est_verifie;
 
   const entete = document.getElementById('entete-profil');
@@ -4623,7 +4746,7 @@ function retourFil() {
   naviguerApp('fil');
 }
 
-s. Au-delà de quatre, le profil ne
+/* Plusieurs objectifs, mais pas tous. Au-delà de quatre, le profil ne
    dit plus rien : quelqu'un qui coche tout n'a rien précisé. La limite
    se voit avant d'être atteinte, plutôt que d'être opposée après coup
    par le serveur. */
@@ -4682,7 +4805,7 @@ async function rendreMessagerie() {
     <button class="conversation ${c.id_conversation === _conversationOuverte ? 'active' : ''}"
             onclick="ouvrirConversation(${c.id_conversation}, '${echapper((c.prenom || '') + ' ' + (c.nom || ''))}')">
       <span class="avatar-presence">
-        ${avatarHTML(((c.prenom||'?')[0] + (c.nom||'?')[0]).toUpperCase(), 's', c.photo_url)}
+        ${avatarHTML(initialesDe(c.prenom, c.nom), 's', c.photo_url)}
         ${pastillePresence(c.en_ligne, c.derniere_activite)}
       </span>
       <span class="conversation-texte">
