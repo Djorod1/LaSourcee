@@ -1706,7 +1706,6 @@ function rendreProfil() {
         ${u.secteurs.map(s => `<span class="tag">${echapper(s)}</span>`).join('')}
       </div>
       ${u.bio ? `<p class="bio-profil">${echapper(u.bio)}</p>` : ''}
-      ${blocParcoursProfil(u)}
     </div>
     <div class="col-actions">
       <button class="btn btn-secondaire" onclick="televerserPhotoCompte()">${ic('appareil')} Photo</button>
@@ -1719,27 +1718,84 @@ function rendreProfil() {
   const chiffres = statistiquesProfil(u);
   stats.style.display = chiffres ? '' : 'none';
   stats.innerHTML = chiffres;
-  document.getElementById('tabs-profil').innerHTML = `
-    <div class="tab-profil actif" onclick="ongletProfil(this, 'questions')">Mes questions</div>
+  const onglets = document.getElementById('tabs-profil');
+  onglets.style.display = '';
+  onglets.innerHTML = `
+    <div class="tab-profil actif" onclick="ongletProfil(this, 'activite')">Mon activité</div>
+    <div class="tab-profil" onclick="ongletProfil(this, 'apropos')">À propos</div>
     <div class="tab-profil" onclick="ongletProfil(this, 'sauvees')">Questions sauvegardées</div>`;
-  ongletProfil(document.querySelector('.tab-profil.actif'), 'questions');
+  ongletProfil(onglets.querySelector('.tab-profil.actif'), 'activite');
 }
+
 function ongletProfil(elem, t) {
   document.querySelectorAll('.tab-profil').forEach(o => o.classList.remove('actif'));
   elem.classList.add('actif');
   const c = document.getElementById('contenu-profil');
-  if (t === 'questions') {
-    // La complétion précède les publications : c'est ce qui manque au
-    // profil qui décide de l'accueil réservé à ce qu'on y publie.
-    c.innerHTML = carteCompletionProfil()
-      + detailsProfil(etat.utilisateur)
-      + questions.slice(0,3).map(q => carteQuestionHTML(q)).join('');
+  const u = MODE.utilisateur || etat.utilisateur;
+  if (t === 'activite') {
+    // La complétion précède l'activité : c'est ce qui manque au profil
+    // qui décide de l'accueil réservé à ce qu'on y publie.
+    c.innerHTML = carteCompletionProfil() + blocActivite(u, true);
+  } else if (t === 'apropos') {
+    c.innerHTML = blocParcoursProfil(MODE.utilisateur || etat.utilisateur)
+      || '<div class="carte"><p class="desc">Renseignez votre parcours depuis vos paramètres : c\'est lui qui décide des référents qu\'on vous propose.</p></div>';
   } else {
     const liste = questions.filter(q => etat.sauvegardees.has(q.id));
     c.innerHTML = liste.length
       ? liste.map(q => carteQuestionHTML(q)).join('')
       : `<div class="etat-vide carte"><div class="illu">${ic('marque','ic ic-l')}</div><h3>Aucune question sauvegardée</h3><p>Sauvegardez les questions intéressantes pour les retrouver ici.</p></div>`;
   }
+}
+
+/* Activité récente : ce qui a été demandé, ce qui a été répondu.
+
+   Un profil qui n'annonce que des chiffres ne dit rien de la personne :
+   on ne sait ni ce qu'elle cherche ni ce qu'elle sait. Ces deux listes
+   sont ce qui permet de décider si l'on s'adresse à elle. */
+function blocActivite(u, moi = false) {
+  if (!u) return '';
+  const questionsRecentes = u.dernieres_questions || [];
+  const reponsesRecentes = u.dernieres_reponses || [];
+
+  const blocQuestions = questionsRecentes.length ? `
+    <div class="carte bloc-activite">
+      <div class="carte-titre">${moi ? 'Mes questions' : 'Ses questions'}</div>
+      ${questionsRecentes.map(q => `
+        <div class="ligne-activite" onclick="ouvrirQuestion(${q.id_question})">
+          <strong>${echapper(q.titre)}</strong>
+          <span class="meta-activite">
+            ${echapper(q.secteur || 'Sans secteur')} ·
+            ${baliseTemps(q.publiee_le)} ·
+            ${q.nb_reponses} réponse${q.nb_reponses > 1 ? 's' : ''}
+            ${q.statut === 'resolue' ? '· <span class="tag tag-vert">résolue</span>' : ''}
+          </span>
+        </div>`).join('')}
+    </div>` : '';
+
+  const blocReponses = reponsesRecentes.length ? `
+    <div class="carte bloc-activite">
+      <div class="carte-titre">${moi ? 'Mes réponses' : 'Ses réponses'}</div>
+      ${reponsesRecentes.map(r => `
+        <div class="ligne-activite" onclick="ouvrirQuestion(${r.id_question})">
+          <strong>${echapper(r.titre)}</strong>
+          <p class="extrait-activite">${echapper(r.extrait || '')}</p>
+          <span class="meta-activite">
+            ${baliseTemps(r.cree_le)} ·
+            ${r.nb_utiles} en favoris
+            ${r.retenue ? '· <span class="tag tag-vert">retenue par l\'auteur</span>' : ''}
+          </span>
+        </div>`).join('')}
+    </div>` : '';
+
+  if (!blocQuestions && !blocReponses) {
+    return `<div class="etat-vide carte">
+      <div class="illu">${ic('bulle','ic ic-l')}</div>
+      <h3>${moi ? "Vous n'avez encore rien publié" : "Rien de publié pour le moment"}</h3>
+      <p>${moi ? 'Votre première question trouve souvent sa réponse dans la journée.'
+               : 'Cette personne n\'a pas encore posé de question ni répondu.'}</p>
+    </div>`;
+  }
+  return blocQuestions + blocReponses;
 }
 
 function rendreProfilMentor(m) {
@@ -4533,31 +4589,6 @@ function ligneIdentiteProfil(u) {
   return `<div class="profil-identite">${morceaux.join(' · ')}</div>`;
 }
 
-function detailsProfil(u) {
-  const lignes = [];
-  if (u.objectif) {
-    lignes.push(['Recherche', echapper(u.objectif)]);
-  }
-  if (u.niveau_etudes) {
-    lignes.push(['Niveau d\'études', echapper(u.niveau_etudes)]);
-  }
-  if (u.etablissement) {
-    lignes.push(['Formation', echapper(u.etablissement)]);
-  }
-  if (u.langues) {
-    lignes.push(['Langues', echapper(u.langues)]);
-  }
-  if (u.profil_pro) {
-    lignes.push(['Profil professionnel',
-      `<a href="${echapper(u.profil_pro)}" target="_blank" rel="noopener noreferrer">Consulter</a>`]);
-  }
-  if (!lignes.length) return '';
-  return `<div class="carte profil-details">
-    ${lignes.map(([cle, val]) =>
-      `<div class="profil-detail"><span>${cle}</span><strong>${val}</strong></div>`).join('')}
-  </div>`;
-}
-
 /* ============================================================
    ADMINISTRATEURS, DROITS ET EXPORTS
    ============================================================ */
@@ -5022,7 +5053,6 @@ function rendreProfilAutre(u) {
           `<span class="tag">${echapper(s.libelle || s)}</span>`).join('')}
       </div>
       ${u.bio ? `<p class="bio-profil">${echapper(u.bio)}</p>` : ''}
-      ${blocParcoursProfil(u)}
     </div>
     <div class="col-actions">
       <span id="zone-ecrire"></span>
@@ -5039,10 +5069,33 @@ function rendreProfilAutre(u) {
   // qui repondra par un refus fait passer une regle pour une panne.
   majBoutonEcrire(u.id_utilisateur, nomComplet);
 
-  const onglets = document.getElementById('onglets-profil');
-  if (onglets) onglets.style.display = 'none';
-  const contenu = document.getElementById('contenu-profil');
-  if (contenu) contenu.innerHTML = '';
+  // L'identifiant cherché ici n'existait pas dans la page : les
+  // onglets du profil précédent restaient affichés, et cliquer dessus
+  // montrait MES questions sur le profil de quelqu'un d'autre.
+  const onglets = document.getElementById('tabs-profil');
+  if (onglets) {
+    onglets.style.display = '';
+    onglets.innerHTML = `
+      <div class="tab-profil actif" onclick="ongletProfilAutre(this, 'activite')">Activité</div>
+      <div class="tab-profil" onclick="ongletProfilAutre(this, 'apropos')">À propos</div>`;
+    _profilAffiche = u;
+    ongletProfilAutre(onglets.querySelector('.tab-profil.actif'), 'activite');
+  }
+}
+
+/* Le profil affiché en ce moment, pour que ses onglets sachent de qui
+   ils parlent sans le redemander au serveur. */
+let _profilAffiche = null;
+
+function ongletProfilAutre(elem, t) {
+  document.querySelectorAll('.tab-profil').forEach(o => o.classList.remove('actif'));
+  elem.classList.add('actif');
+  const c = document.getElementById('contenu-profil');
+  if (!c) return;
+  c.innerHTML = (t === 'apropos')
+    ? (blocParcoursProfil(_profilAffiche || {})
+       || '<div class="carte"><p class="desc">Cette personne n\'a pas encore renseigné son parcours.</p></div>')
+    : blocActivite(_profilAffiche, false);
 }
 
 function retourFil() {

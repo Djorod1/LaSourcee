@@ -2913,6 +2913,42 @@ def executer_tests():
     verifier("Un membre n'accède pas à la liste des comptes",
              lecteur.get("/api/admin/utilisateurs").status_code == 403)
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  41. LE PROFIL MONTRE UNE ACTIVITÉ, PAS SEULEMENT DES CHIFFRES")
+    print("═" * 70)
+
+    mien = lecteur.get("/api/profil/moi").get_json() or {}
+    verifier("Le profil porte les dernières questions",
+             isinstance(mien.get("dernieres_questions"), list)
+             and len(mien["dernieres_questions"]) >= 1,
+             str(len(mien.get("dernieres_questions") or [])))
+    verifier("Chaque question porte son titre, sa date et son compte",
+             all(c in (mien.get("dernieres_questions") or [{}])[0]
+                 for c in ("titre", "publiee_le", "nb_reponses", "statut")))
+
+    sien = lecteur.get("/api/profil/%d" % id_ref).get_json() or {}
+    verifier("Le profil d'un référent porte ses dernières réponses",
+             isinstance(sien.get("dernieres_reponses"), list)
+             and len(sien["dernieres_reponses"]) >= 1)
+    premiere = (sien.get("dernieres_reponses") or [{}])[0]
+    verifier("La réponse est résumée, pas recopiée en entier",
+             "extrait" in premiere and "contenu" not in premiere)
+    verifier("L'extrait renvoie à sa question",
+             bool(premiere.get("id_question")) and bool(premiere.get("titre")))
+    verifier("Le profil compte les réponses retenues",
+             isinstance(sien.get("nb_reponses_retenues"), int))
+
+    # Un profil consulte ne doit rien laisser filtrer de plus qu'avant.
+    verifier("L'adresse e-mail reste absente d'un profil consulté",
+             "email" not in sien)
+    verifier("Le téléphone reste absent d'un profil consulté",
+             "telephone" not in sien)
+
+    verifier("L'activité est bornée",
+             len(sien.get("dernieres_reponses") or []) <= 5
+             and len(sien.get("dernieres_questions") or []) <= 5)
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

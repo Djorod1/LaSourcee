@@ -254,6 +254,11 @@ LONGUEUR_FILIERE = 120
 # dessous ; au-delà, c'est qu'elle n'a pas été réduite.
 LONGUEUR_PHOTO = 400_000
 
+# Ce qu'un profil montre de l'activite recente. Au-dela, la page
+# devient un journal qu'on ne lit pas, et la requete s'alourdit
+# pour rien.
+LIMITE_ACTIVITE = 5
+
 
 def _sans_accent(texte):
     """Version comparable d'un libelle : sans accent, en minuscules."""
@@ -764,6 +769,45 @@ def _charger_profil(id_user, public=False):
          ORDER BY ordre, id_experience""",
         (id_user,),
     )
+
+    # L'activite recente. Un profil qui n'annonce que des chiffres ne
+    # dit rien de la personne : on ne sait pas ce qu'elle demande ni ce
+    # qu'elle sait. Ces deux listes sont ce qui permet de decider si
+    # l'on s'adresse a elle.
+    base["dernieres_questions"] = recuperer_tous(
+        """SELECT q.id_question, q.titre, q.publiee_le, q.statut,
+                  s.libelle AS secteur,
+                  (SELECT COUNT(*) FROM reponse r
+                    WHERE r.id_question = q.id_question) AS nb_reponses
+             FROM question q
+        LEFT JOIN secteur s ON s.id_secteur = q.id_secteur
+            WHERE q.id_auteur = %s
+         ORDER BY q.publiee_le DESC
+            LIMIT %s""",
+        (id_user, LIMITE_ACTIVITE))
+    base["dernieres_reponses"] = recuperer_tous(
+        """SELECT r.id_reponse, r.contenu, r.cree_le,
+                  q.id_question, q.titre,
+                  (q.id_reponse_retenue = r.id_reponse) AS retenue,
+                  (SELECT COUNT(*) FROM marquage_reponse m
+                    WHERE m.id_reponse = r.id_reponse
+                      AND m.type_marquage = 'utile') AS nb_utiles
+             FROM reponse r
+             JOIN question q ON q.id_question = r.id_question
+            WHERE r.id_auteur = %s
+         ORDER BY r.cree_le DESC
+            LIMIT %s""",
+        (id_user, LIMITE_ACTIVITE))
+    for r in base["dernieres_reponses"]:
+        r["retenue"] = bool(r.get("retenue"))
+        # Un extrait suffit : le profil montre ce qui a ete dit, la page
+        # de la question porte le texte entier.
+        r["extrait"] = " ".join(str(r.pop("contenu") or "").split())[:200]
+
+    base["nb_reponses_retenues"] = (recuperer_un(
+        """SELECT COUNT(*) AS n FROM question q
+             JOIN reponse r ON r.id_reponse = q.id_reponse_retenue
+            WHERE r.id_auteur = %s""", (id_user,)) or {}).get("n", 0)
     return base
 
 

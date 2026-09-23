@@ -3236,3 +3236,23 @@ time[title] { cursor: help; }
   gap: 14px; margin-top: 14px; font-size: 13px; color: var(--texte-doux);
 }
 .pagination-admin button[disabled] { opacity: .45; cursor: not-allowed; }
+
+/* Activité récente sur un profil. Un profil qui n'annonce que des
+   chiffres ne dit rien de la personne : ces lignes sont ce qui permet
+   de décider si l'on s'adresse à elle. */
+.bloc-activite { margin-bottom: 14px; }
+.ligne-activite {
+  padding: 10px 0; border-top: 1px solid var(--bordure); cursor: pointer;
+}
+.ligne-activite:first-of-type { border-top: none; }
+.ligne-activite:hover strong { color: var(--primaire); }
+.ligne-activite strong { display: block; font-size: 14px; line-height: 1.4; }
+.extrait-activite {
+  color: var(--texte-doux); font-size: 13px; margin: 4px 0 2px;
+  overflow: hidden; display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.meta-activite {
+  display: block; color: var(--texte-doux); font-size: 12px; margin-top: 3px;
+}
+.meta-activite time { color: inherit; }
