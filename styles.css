@@ -3062,3 +3062,91 @@ img, svg, video { max-width: 100%; height: auto; }
   border-radius: 4px;
   user-select: all;
 }
+
+/* ============================================================
+   BOURSES ET OPPORTUNITÉS
+   ------------------------------------------------------------
+   L'échéance est ce qu'on lit en premier : elle décide si l'on
+   continue de lire. Elle passe donc en haut de la carte, et change de
+   couleur quand elle approche, plutôt que d'être une date perdue en
+   bas de paragraphe.
+   ============================================================ */
+.entete-section {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 16px;
+}
+.entete-section h2 { font-size: 1.35rem; margin-bottom: 4px; }
+.entete-section .desc { max-width: 52ch; }
+
+.filtres-opportunites {
+  display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;
+}
+
+.carte-opportunite { margin-bottom: 14px; }
+.carte-opportunite h3 { font-size: 1.05rem; margin: 8px 0 4px; }
+.opp-entete {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap;
+}
+.opp-echeance {
+  font-size: 12px; font-weight: 600; color: var(--texte-doux);
+  border: 1px solid var(--bordure); border-radius: 999px; padding: 2px 10px;
+}
+.opp-echeance.proche { color: var(--accent-fonce); border-color: var(--accent); }
+.opp-echeance.urgent { color: var(--rouge-fonce); border-color: var(--rouge-fonce); }
+.opp-echeance.passee { color: var(--texte-doux); }
+.opp-organisme { color: var(--texte-doux); font-size: 13px; margin-bottom: 8px; }
+.opp-description { font-size: 14px; margin-bottom: 10px; }
+.opp-criteres {
+  display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px;
+  color: var(--texte-doux); margin-bottom: 12px;
+}
+.opp-criteres span { display: inline-flex; align-items: center; gap: 5px; }
+.opp-pied {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; border-top: 1px solid var(--bordure);
+  padding-top: 10px;
+}
+.opp-source { font-size: 12px; color: var(--texte-doux); }
+/* Une annonce dont la date est passée reste lisible, mais ne se
+   confond pas avec les autres : la plupart de ces programmes
+   reviennent chaque année, et savoir qu'ils existent a de la valeur. */
+.carte-opportunite.close { opacity: .72; }
+
+/* Pastille du menu, pour signaler des annonces récentes. */
+.pastille-nouveau {
+  position: absolute; top: 6px; right: 6px; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--accent);
+}
+
+/* ============================================================
+   MESSAGES À L'ÉQUIPE (administration)
+   ============================================================ */
+.message-equipe {
+  border: 1px solid var(--bordure); border-radius: var(--rayon-s);
+  padding: 14px; margin-bottom: 12px; background: var(--surface);
+}
+.message-equipe.nouveau { border-left: 3px solid var(--accent); }
+.message-equipe.traite { opacity: .75; }
+.msg-entete {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap; margin-bottom: 8px;
+}
+.msg-meta { font-size: 12px; color: var(--texte-doux); }
+.msg-corps { font-size: 14px; margin-bottom: 10px; }
+.msg-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.msg-actions textarea { flex: 1 1 240px; min-height: 60px; font-family: inherit; }
+
+/* Objectifs proposés pendant l'accueil guidé. */
+.chips-objectifs { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip-objectif {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  border: 1px solid var(--bordure); border-radius: 999px;
+  padding: 6px 12px; font-size: 13px; background: var(--surface);
+}
+.chip-objectif:hover { border-color: var(--primaire); }
+.chip-objectif.coche {
+  border-color: var(--primaire); background: rgba(31,58,95,.06);
+  font-weight: 600;
+}
+.chip-objectif input { margin: 0; }

@@ -153,6 +153,7 @@ function naviguerApp(panneau) {
     window.history.replaceState({}, '', window.location.pathname + vise);
   }
   if (panneau === 'fil') rendreFil();
+  if (panneau === 'opportunites') rendreOpportunites();
   if (panneau === 'profil') rendreProfil();
   if (panneau === 'mentor') rendreEspaceMentor();
   if (panneau === 'messages') rendreMessagerie();
@@ -2742,6 +2743,8 @@ async function changerPanAdmin(elem, p) {
     else if (p === 'mentors')  c.innerHTML = await adminMentors();
     else if (p === 'signalements') c.innerHTML = await adminSignalements();
     else if (p === 'categories')   c.innerHTML = await adminCategories();
+    else if (p === 'opportunites') c.innerHTML = await adminOpportunites();
+    else if (p === 'assistance')   c.innerHTML = await adminAssistance();
     else if (p === 'audit')        c.innerHTML = await adminAudit();
     else if (p === 'diagnostic')   c.innerHTML = await adminDiagnostic();
     else if (p === 'administrateurs') c.innerHTML = await adminAdministrateurs();
@@ -4280,6 +4283,7 @@ async function ajusterMenuAdmin() {
     // Le tableau de bord reste ouvert : il ne montre que des totaux.
     const requis = { users: 'utilisateurs', mentors: 'referents',
                      signalements: 'signalements', categories: 'categories',
+                     opportunites: 'opportunites', assistance: 'assistance',
                      audit: 'audit', diagnostic: 'diagnostic',
                      administrateurs: 'administrateurs', export: 'export' }[p];
     b.hidden = !!requis && !droits.includes(requis);
@@ -5158,4 +5162,399 @@ async function majBoutonEcrire(id, nom) {
       zone.innerHTML = '';
     }
   } catch (_) { zone.innerHTML = ''; }
+}
+
+/* ============================================================
+   BOURSES ET OPPORTUNITÉS
+   ------------------------------------------------------------
+   Le fil de questions vit au rythme de qui ose demander. Une bourse a
+   une date limite : c'est ce qui fait revenir sur le site sans avoir
+   rien à publier soi-même, et ce qui donne une raison de s'inscrire à
+   qui n'a pas encore de question à poser.
+
+   L'équipe publie directement ; un référent propose et l'équipe relit.
+   Une date limite fausse coûte plus cher qu'une annonce tardive, parce
+   que quelqu'un aura construit un projet dessus.
+   ============================================================ */
+
+let _opportunites = { liste: [], categories: {}, filtre: '', closes: false };
+
+async function rendreOpportunites() {
+  const zone = document.getElementById('liste-opportunites');
+  if (!zone) return;
+  if (!MODE.api) {
+    zone.innerHTML = etatVideOpportunites('Serveur indisponible.',
+      'Les annonces reviendront dès que la connexion sera rétablie.');
+    return;
+  }
+  zone.innerHTML = '<p class="note-param">Chargement des annonces…</p>';
+  try {
+    const params = new URLSearchParams();
+    if (_opportunites.filtre) params.set('categorie', _opportunites.filtre);
+    if (_opportunites.closes) params.set('closes', '1');
+    const r = await API.get('/opportunites?' + params.toString());
+    _opportunites.liste = r.opportunites || [];
+    _opportunites.categories = r.categories || {};
+    _opportunites.nbCloses = r.nb_closes || 0;
+    _opportunites.peutProposer = !!r.peut_proposer;
+    _opportunites.publieDirectement = !!r.publie_directement;
+  } catch (err) {
+    zone.innerHTML = etatVideOpportunites("Les annonces n'ont pas pu être chargées.",
+      echapper(err.message || 'Réessayez dans un instant.'));
+    return;
+  }
+
+  const bouton = document.getElementById('btn-proposer-opportunite');
+  if (bouton) bouton.hidden = !_opportunites.peutProposer;
+  rendreFiltresOpportunites();
+
+  if (!_opportunites.liste.length) {
+    zone.innerHTML = etatVideOpportunites('Aucune annonce pour le moment.',
+      _opportunites.peutProposer
+        ? "Vous connaissez une bourse, un concours ou un stage ? Proposez-le."
+        : "Vous en connaissez une ? Écrivez à l'équipe, elle la reprendra.");
+    return;
+  }
+  zone.innerHTML = _opportunites.liste.map(carteOpportunite).join('')
+    + (!_opportunites.closes && _opportunites.nbCloses
+        ? `<button class="btn btn-secondaire btn-bloc"
+                   onclick="_opportunites.closes = true; rendreOpportunites();">
+             Voir les ${_opportunites.nbCloses} annonce(s) dont la date est passée
+           </button>`
+        : '');
+}
+
+function etatVideOpportunites(titre, texte) {
+  return `<div class="etat-vide carte">
+    <div class="illu">${ic('etincelle','ic ic-l')}</div>
+    <h3>${echapper(titre)}</h3><p>${texte}</p></div>`;
+}
+
+function rendreFiltresOpportunites() {
+  const zone = document.getElementById('filtres-opportunites');
+  if (!zone) return;
+  const entrees = Object.entries(_opportunites.categories);
+  zone.innerHTML = `<button class="onglet${_opportunites.filtre ? '' : ' actif'}"
+      onclick="filtrerOpportunites('')">Toutes</button>`
+    + entrees.map(([cle, libelle]) => `<button class="onglet${
+        _opportunites.filtre === cle ? ' actif' : ''}"
+        onclick="filtrerOpportunites('${echapper(cle)}')">${echapper(libelle)}</button>`).join('');
+}
+
+function filtrerOpportunites(categorie) {
+  _opportunites.filtre = categorie;
+  _opportunites.closes = false;
+  rendreOpportunites();
+}
+
+/* Nombre de jours restants, dit en français plutôt qu'en date brute :
+   « dans 5 jours » se comprend d'un coup d'œil, « 2026-10-14 » non. */
+function echeance(dateLimite) {
+  if (!dateLimite) return { texte: 'Sans date limite annoncée', urgence: '' };
+  const jour = String(dateLimite).slice(0, 10);
+  const reste = Math.round(
+    (new Date(jour + 'T12:00:00') - new Date()) / 86400000);
+  if (reste < 0) return { texte: 'Date passée', urgence: 'passee' };
+  if (reste === 0) return { texte: "Dernier jour", urgence: 'urgent' };
+  if (reste === 1) return { texte: 'Demain', urgence: 'urgent' };
+  if (reste <= 7) return { texte: `Dans ${reste} jours`, urgence: 'urgent' };
+  if (reste <= 30) return { texte: `Dans ${reste} jours`, urgence: 'proche' };
+  return { texte: 'Le ' + formatDate(jour), urgence: '' };
+}
+
+function carteOpportunite(o) {
+  const e = echeance(o.date_limite);
+  const auteur = `${o.prenom || ''} ${o.nom || ''}`.trim();
+  const officiel = o.role === 'admin' || o.role === 'super_admin';
+  return `<article class="carte carte-opportunite${o.cloturee ? ' close' : ''}">
+    <div class="opp-entete">
+      <span class="tag tag-ambre">${echapper(o.categorie_libelle || '')}</span>
+      <span class="opp-echeance ${e.urgence}">${echapper(e.texte)}</span>
+    </div>
+    <h3>${echapper(o.titre)}</h3>
+    ${o.organisme ? `<p class="opp-organisme">${echapper(o.organisme)}</p>` : ''}
+    <p class="texte-libre opp-description">${echapper(o.description)}</p>
+    <div class="opp-criteres">
+      ${o.pays ? `<span>${ic('position','ic ic-s')} ${echapper(o.pays)}</span>` : ''}
+      ${o.niveau ? `<span>${ic('diplome','ic ic-s')} ${echapper(o.niveau)}</span>` : ''}
+      ${o.domaine ? `<span>${ic('marque','ic ic-s')} ${echapper(o.domaine)}</span>` : ''}
+    </div>
+    <div class="opp-pied">
+      <span class="opp-source">${officiel
+        ? 'Publiée par LaSourcee'
+        : (auteur ? 'Proposée par ' + echapper(auteur) : 'Publiée par LaSourcee')}</span>
+      ${o.lien ? `<a class="btn btn-primaire btn-petit" href="${echapper(o.lien)}"
+         target="_blank" rel="noopener noreferrer nofollow">Voir l'offre</a>` : ''}
+    </div>
+  </article>`;
+}
+
+async function ouvrirFormulaireOpportunite() {
+  const select = document.getElementById('opp-categorie');
+  if (select && !select.options.length) {
+    try {
+      const r = await API.get('/opportunites/referentiels');
+      select.innerHTML = (r.categories || []).map(c =>
+        `<option value="${echapper(c.cle)}">${echapper(c.libelle)}</option>`).join('');
+    } catch (_) { /* la liste par défaut du serveur s'appliquera */ }
+  }
+  const avert = document.getElementById('opp-avertissement');
+  if (avert) {
+    avert.textContent = _opportunites.publieDirectement
+      ? "Votre annonce paraîtra aussitôt : vous engagez la parole de LaSourcee."
+      : "L'équipe relit votre proposition avant sa mise en ligne. Vérifiez "
+        + "la date limite et le lien : c'est là que les erreurs coûtent le plus.";
+  }
+  ouvrirModal('modalOpportunite');
+}
+
+async function envoyerOpportunite(bouton) {
+  const val = id => (document.getElementById(id)?.value || '').trim();
+  const corps = {
+    titre: val('opp-titre'),
+    categorie: val('opp-categorie'),
+    organisme: val('opp-organisme'),
+    description: val('opp-description'),
+    pays: val('opp-pays'),
+    niveau: val('opp-niveau'),
+    domaine: val('opp-domaine'),
+    date_limite: val('opp-limite'),
+    lien: val('opp-lien'),
+  };
+  const libelle = bouton.textContent;
+  bouton.disabled = true; bouton.textContent = 'Envoi…';
+  try {
+    const r = await API.post('/opportunites', corps);
+    toast(r.message || 'Annonce envoyée.');
+    fermerModal('modalOpportunite');
+    ['opp-titre','opp-organisme','opp-description','opp-pays','opp-niveau',
+     'opp-domaine','opp-limite','opp-lien'].forEach(id => {
+      const champ = document.getElementById(id);
+      if (champ) champ.value = '';
+    });
+    rendreOpportunites();
+  } catch (err) {
+    toast(err.message || "L'annonce n'a pas pu être envoyée.", 'erreur');
+  } finally {
+    bouton.disabled = false; bouton.textContent = libelle;
+  }
+}
+
+/* ============================================================
+   CONTACTER L'ÉQUIPE
+   ------------------------------------------------------------
+   Un problème qu'on ne peut pas signaler ne disparaît pas : il fait
+   partir la personne, et l'équipe ne sait jamais pourquoi. La page
+   d'où l'on écrit part avec le message, ce qui évite l'aller-retour
+   « sur quelle page ? » qui décourage la moitié des signalements.
+   ============================================================ */
+
+async function ouvrirContactEquipe(categorie) {
+  document.getElementById('menuProfil')?.classList.remove('ouvert');
+  const select = document.getElementById('eq-categorie');
+  if (select && !select.options.length) {
+    try {
+      const r = await API.get('/equipe/categories');
+      select.innerHTML = (r.categories || []).map(c =>
+        `<option value="${echapper(c.cle)}">${echapper(c.libelle)}</option>`).join('');
+    } catch (_) { /* le serveur retiendra « autre » */ }
+  }
+  if (select && categorie) select.value = categorie;
+
+  // Sans compte, on demande une adresse : quelqu'un qui n'arrive pas à
+  // se connecter est précisément celui qui a le plus besoin d'écrire.
+  const identite = document.getElementById('eq-identite');
+  if (identite) identite.hidden = !!(etat.utilisateur && etat.utilisateur.email);
+
+  const contexte = document.getElementById('eq-contexte');
+  if (contexte) {
+    contexte.textContent = 'Nous joindrons à votre message la page où vous '
+      + 'êtes (« ' + (etat.sectionActive || 'accueil') + ' ») et votre '
+      + 'navigateur, pour retrouver le problème plus vite.';
+  }
+  ouvrirModal('modalEquipe');
+}
+
+async function envoyerMessageEquipe(bouton) {
+  const message = (document.getElementById('eq-message')?.value || '').trim();
+  if (message.length < 10) {
+    return toast('Décrivez ce que vous avez constaté en quelques mots.',
+                 'erreur');
+  }
+  const corps = {
+    categorie: document.getElementById('eq-categorie')?.value || 'autre',
+    message,
+    page: etat.sectionActive || 'accueil',
+  };
+  if (!(etat.utilisateur && etat.utilisateur.email)) {
+    corps.nom = (document.getElementById('eq-nom')?.value || '').trim();
+    corps.email = (document.getElementById('eq-email')?.value || '').trim();
+  }
+  const libelle = bouton.textContent;
+  bouton.disabled = true; bouton.textContent = 'Envoi…';
+  try {
+    const r = await API.post('/equipe/message', corps);
+    toast(r.message || 'Message envoyé.');
+    fermerModal('modalEquipe');
+    const champ = document.getElementById('eq-message');
+    if (champ) champ.value = '';
+  } catch (err) {
+    toast(err.message || "Le message n'a pas pu partir.", 'erreur');
+  } finally {
+    bouton.disabled = false; bouton.textContent = libelle;
+  }
+}
+
+/* ============================================================
+   ADMINISTRATION — RELECTURE DES ANNONCES
+   ------------------------------------------------------------
+   Une annonce proposée par un référent passe par ici avant d'être
+   visible. Ce n'est pas de la défiance : une bourse annoncée avec une
+   mauvaise date limite coûte plus cher qu'une bourse non annoncée,
+   parce que quelqu'un aura construit un projet dessus.
+   ============================================================ */
+
+async function adminOpportunites() {
+  const liste = await API.get('/opportunites/a-relire');
+  majCompteurAdmin('compteur-opportunites', liste.length);
+
+  const enTete = `<div class="carte">
+    <div class="carte-titre">Bourses et opportunités</div>
+    <p class="desc">Les annonces que vous publiez paraissent aussitôt.
+       Celles proposées par les référents attendent ici votre relecture.</p>
+    <button class="btn btn-primaire btn-petit"
+            onclick="ouvrirFormulaireOpportunite()">Publier une annonce</button>
+  </div>`;
+
+  if (!liste.length) {
+    return enTete + `<div class="etat-vide carte">
+      <div class="illu">${ic('check','ic ic-l')}</div>
+      <h3>Rien à relire</h3>
+      <p>Aucune proposition en attente.</p></div>`;
+  }
+
+  return enTete + liste.map(o => {
+    const e = echeance(o.date_limite);
+    const auteur = `${o.prenom || ''} ${o.nom || ''}`.trim() || 'Un référent';
+    return `<div class="message-equipe nouveau" data-opp="${o.id_opportunite}">
+      <div class="msg-entete">
+        <strong>${echapper(o.titre)}</strong>
+        <span class="opp-echeance ${e.urgence}">${echapper(e.texte)}</span>
+      </div>
+      <div class="msg-meta">Proposée par ${echapper(auteur)} ·
+        ${echapper(formatHorodatage(o.cree_le))}
+        ${o.organisme ? ' · ' + echapper(o.organisme) : ''}</div>
+      <p class="msg-corps texte-libre">${echapper(o.description)}</p>
+      ${o.lien ? `<p class="msg-meta"><a href="${echapper(o.lien)}"
+         target="_blank" rel="noopener noreferrer nofollow">Vérifier le lien officiel</a></p>` : ''}
+      <div class="msg-actions">
+        <button class="btn btn-primaire btn-petit"
+                onclick="deciderOpportunite(${o.id_opportunite}, 'publiee', this)">Publier</button>
+        <button class="btn btn-secondaire btn-petit"
+                onclick="deciderOpportunite(${o.id_opportunite}, 'refusee', this)">Refuser</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function deciderOpportunite(id, statut, bouton) {
+  let motif = '';
+  if (statut === 'refusee') {
+    motif = (window.prompt(
+      "Pourquoi cette annonce n'est-elle pas retenue ? Le référent verra "
+      + 'ce motif et pourra corriger.', '') || '').trim();
+    if (!motif) return toast('Un refus sans motif ne permet pas de corriger.',
+                             'erreur');
+  }
+  bouton.disabled = true;
+  try {
+    await API.post(`/opportunites/${id}/decision`, { statut, motif });
+    toast(statut === 'publiee' ? 'Annonce publiée.' : 'Annonce refusée.');
+    const panneau = document.querySelector('.menu-admin button.actif');
+    if (panneau) changerPanAdmin(panneau, 'opportunites');
+  } catch (err) {
+    bouton.disabled = false;
+    toast(err.message || 'Décision impossible.', 'erreur');
+  }
+}
+
+/* ============================================================
+   ADMINISTRATION — MESSAGES À L'ÉQUIPE
+   ============================================================ */
+
+const LIBELLES_STATUT_MESSAGE = {
+  nouveau: 'Nouveau', en_cours: 'En cours', traite: 'Traité',
+};
+
+async function adminAssistance() {
+  const r = await API.get('/equipe/messages');
+  const messages = r.messages || [];
+  majCompteurAdmin('compteur-assistance', r.nouveaux || 0);
+
+  const enTete = `<div class="carte">
+    <div class="carte-titre">Messages à l'équipe</div>
+    <p class="desc">Ce que les membres signalent : pannes, informations
+       fausses, idées. ${r.nouveaux || 0} message(s) non traité(s).</p>
+  </div>`;
+
+  if (!messages.length) {
+    return enTete + `<div class="etat-vide carte">
+      <div class="illu">${ic('bulle','ic ic-l')}</div>
+      <h3>Aucun message</h3>
+      <p>Personne n'a encore écrit à l'équipe.</p></div>`;
+  }
+
+  return enTete + messages.map(m => {
+    const qui = `${m.prenom || ''} ${m.nom_compte || ''}`.trim()
+      || m.nom || 'Personne non connectée';
+    return `<div class="message-equipe ${m.statut}">
+      <div class="msg-entete">
+        <strong>${echapper(m.categorie_libelle || 'Autre chose')}</strong>
+        <span class="tag">${echapper(LIBELLES_STATUT_MESSAGE[m.statut] || m.statut)}</span>
+      </div>
+      <div class="msg-meta">
+        ${m.id_utilisateur
+          ? `<a href="#" onclick="event.preventDefault(); ouvrirProfilUtilisateur(${m.id_utilisateur})">${echapper(qui)}</a>`
+          : echapper(qui)}
+        ${m.email ? ' · ' + echapper(m.email) : ''}
+        · ${echapper(formatHorodatage(m.cree_le))}
+        ${m.page ? ' · depuis « ' + echapper(m.page) + ' »' : ''}
+      </div>
+      <p class="msg-corps texte-libre">${echapper(m.message)}</p>
+      ${m.reponse ? `<p class="msg-meta">Réponse envoyée : ${echapper(m.reponse)}
+        ${m.traite_prenom ? ', par ' + echapper(m.traite_prenom) : ''}</p>` : ''}
+      ${m.statut === 'traite' ? '' : `<div class="msg-actions">
+        <textarea id="rep-eq-${m.id_message}" rows="2"
+                  placeholder="Réponse envoyée à la personne (facultatif)"></textarea>
+        <button class="btn btn-secondaire btn-petit"
+                onclick="traiterMessageEquipe(${m.id_message}, 'en_cours', this)">Je m'en occupe</button>
+        <button class="btn btn-primaire btn-petit"
+                onclick="traiterMessageEquipe(${m.id_message}, 'traite', this)">Marquer traité</button>
+      </div>`}
+    </div>`;
+  }).join('');
+}
+
+async function traiterMessageEquipe(id, statut, bouton) {
+  const champ = document.getElementById('rep-eq-' + id);
+  bouton.disabled = true;
+  try {
+    await API.post(`/equipe/messages/${id}/traiter`,
+                   { statut, reponse: (champ?.value || '').trim() });
+    toast(statut === 'traite' ? 'Message traité.' : 'Message pris en charge.');
+    const panneau = document.querySelector('.menu-admin button.actif');
+    if (panneau) changerPanAdmin(panneau, 'assistance');
+  } catch (err) {
+    bouton.disabled = false;
+    toast(err.message || 'Action impossible.', 'erreur');
+  }
+}
+
+/* Petit compteur sur un onglet d'administration, masqué à zéro : un
+   « 0 » permanent finit par ne plus être lu du tout. */
+function majCompteurAdmin(id, nombre) {
+  const pastille = document.getElementById(id);
+  if (!pastille) return;
+  pastille.textContent = nombre;
+  pastille.hidden = !nombre;
 }

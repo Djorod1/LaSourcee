@@ -436,3 +436,51 @@ CREATE TABLE evenement (
     CONSTRAINT fk_evt_user FOREIGN KEY (id_utilisateur)
         REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE
 ) ENGINE=InnoDB;
+
+-- Messages adresses a l'equipe. Les membres n'avaient aucun endroit ou
+-- dire qu'une page ne marchait pas ou qu'un libelle pretait a confusion.
+CREATE TABLE message_equipe (
+    id_message       INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    id_utilisateur   INT UNSIGNED NULL,
+    nom              VARCHAR(120) NULL,
+    email            VARCHAR(160) NULL,
+    categorie        VARCHAR(30)  NOT NULL DEFAULT 'autre',
+    message          TEXT         NOT NULL,
+    page             VARCHAR(200) NULL,
+    navigateur       VARCHAR(200) NULL,
+    statut           VARCHAR(20)  NOT NULL DEFAULT 'nouveau',
+    reponse          TEXT         NULL,
+    traite_par       INT UNSIGNED NULL,
+    traite_le        DATETIME     NULL,
+    cree_le          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id_message),
+    KEY idx_message_equipe_statut (statut, cree_le),
+    CONSTRAINT fk_msg_equipe_user FOREIGN KEY (id_utilisateur)
+        REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- Bourses, concours, stages. Une annonce a une date limite : c'est ce
+-- qui fait revenir sans qu'on ait rien a publier soi-meme.
+CREATE TABLE opportunite (
+    id_opportunite   INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    id_auteur        INT UNSIGNED NULL,
+    titre            VARCHAR(160) NOT NULL,
+    categorie        VARCHAR(30)  NOT NULL DEFAULT 'bourse',
+    organisme        VARCHAR(120) NULL,
+    description      TEXT         NOT NULL,
+    pays             VARCHAR(120) NULL,
+    niveau           VARCHAR(120) NULL,
+    domaine          VARCHAR(120) NULL,
+    date_limite      DATE         NULL,
+    lien             VARCHAR(400) NULL,
+    statut           VARCHAR(20)  NOT NULL DEFAULT 'en_attente',
+    motif_refus      VARCHAR(400) NULL,
+    decide_par       INT UNSIGNED NULL,
+    decide_le        DATETIME     NULL,
+    vues             INT UNSIGNED NOT NULL DEFAULT 0,
+    cree_le          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id_opportunite),
+    KEY idx_opportunite_statut (statut, date_limite),
+    CONSTRAINT fk_opp_auteur FOREIGN KEY (id_auteur)
+        REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL
+) ENGINE=InnoDB;

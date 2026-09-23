@@ -62,6 +62,19 @@ PERMISSIONS_DETAIL = {
                        "proposés aux membres.",
         "portee": "animation",
     },
+    "opportunites": {
+        "nom": "Bourses et opportunités",
+        "description": "Publier des annonces de bourses, concours et "
+                       "stages, et relire celles proposées par les "
+                       "référents avant leur mise en ligne.",
+        "portee": "animation",
+    },
+    "assistance": {
+        "nom": "Messages à l'équipe",
+        "description": "Lire les observations et les problèmes signalés "
+                       "par les membres, et y répondre.",
+        "portee": "animation",
+    },
     "utilisateurs": {
         "nom": "Comptes des membres",
         "description": "Consulter l'annuaire complet, les adresses "

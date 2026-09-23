@@ -2374,6 +2374,141 @@ def executer_tests():
     verifier("La sauvegarde de la question est relue",
              relu.get("sauvegardee") is True)
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  35. BOURSES, OPPORTUNITÉS ET MESSAGES À L'ÉQUIPE")
+    print("═" * 70)
+
+    # --- Qui publie quoi ---
+    r = lecteur.post("/api/opportunites", json={
+        "titre": "Bourse que personne ne devrait pouvoir publier",
+        "description": "Un bénéficiaire ne publie pas d'annonce, il la "
+                       "signale à l'équipe qui la reprend.",
+        "organisme": "Inconnu"})
+    verifier("Un bénéficiaire ne publie pas d'annonce", r.status_code == 403)
+
+    r = cand.post("/api/opportunites", json={
+        "titre": "Bourse de master en agronomie",
+        "categorie": "bourse",
+        "organisme": "Ambassade du Japon",
+        "description": "Bourse complète pour un master en agronomie, "
+                       "ouverte aux titulaires d'une licence.",
+        "pays": "Japon", "niveau": "Licence",
+        "date_limite": "2027-03-15",
+        "lien": "https://exemple.org/bourse"})
+    id_opp = (r.get_json() or {}).get("id_opportunite")
+    verifier("Un référent propose une annonce", r.status_code in (200, 201),
+             r.get_data(as_text=True)[:110])
+    verifier("La proposition d'un référent attend une relecture",
+             (r.get_json() or {}).get("statut") == "en_attente")
+    verifier("Elle n'apparaît pas encore dans le fil",
+             not any(o["id_opportunite"] == id_opp for o in
+                     (lecteur.get("/api/opportunites").get_json()
+                      or {}).get("opportunites", [])))
+
+    r = cand.post("/api/opportunites", json={
+        "titre": "Annonce sans moyen de vérifier",
+        "description": "Une annonce sans organisme ni lien ne se vérifie "
+                       "pas, et personne ne peut la recouper."})
+    verifier("Une annonce sans organisme ni lien est refusée",
+             r.status_code == 400)
+    r = cand.post("/api/opportunites", json={
+        "titre": "Annonce avec une date impossible",
+        "description": "La date limite doit être lisible par la machine "
+                       "autant que par la personne.",
+        "organisme": "Un organisme", "date_limite": "15 mars"})
+    verifier("Une date limite mal écrite est refusée", r.status_code == 400)
+
+    # --- Relecture ---
+    a_relire = adm.get("/api/opportunites/a-relire").get_json() or []
+    verifier("L'annonce attend dans la file de relecture",
+             any(o["id_opportunite"] == id_opp for o in a_relire))
+    r = adm.post(f"/api/opportunites/{id_opp}/decision",
+                 json={"statut": "refusee"})
+    verifier("Un refus sans motif est refusé", r.status_code == 400)
+    r = adm.post(f"/api/opportunites/{id_opp}/decision",
+                 json={"statut": "publiee"})
+    verifier("La relecture publie l'annonce", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+
+    fil = (lecteur.get("/api/opportunites").get_json() or {})
+    publiees = fil.get("opportunites", [])
+    verifier("L'annonce paraît dans le fil",
+             any(o["id_opportunite"] == id_opp for o in publiees))
+    verifier("Le référent est prévenu de la mise en ligne",
+             jeton_sql("SELECT COUNT(*) FROM notification "
+                       "WHERE id_destinataire = ? AND texte LIKE ?",
+                       (id_ref, "%est en ligne%")) >= 1)
+    verifier("Un bénéficiaire ne voit pas la file de relecture",
+             lecteur.get("/api/opportunites/a-relire").status_code == 403)
+
+    # Une annonce dont la date est passee ne se melange pas aux autres.
+    adm.post("/api/opportunites", json={
+        "titre": "Concours dont la date est passée",
+        "categorie": "concours", "organisme": "Un ministère",
+        "description": "Cette annonce est close, mais elle revient chaque "
+                       "année : savoir qu'elle existe a de la valeur.",
+        "date_limite": "2020-01-31"})
+    fil = lecteur.get("/api/opportunites").get_json() or {}
+    verifier("Une annonce close est comptée à part",
+             fil.get("nb_closes") == 1, str(fil.get("nb_closes")))
+    verifier("Elle est écartée du fil par défaut",
+             not any(o.get("cloturee") for o in fil.get("opportunites", [])))
+    avec = lecteur.get("/api/opportunites?closes=1").get_json() or {}
+    verifier("Elle reste consultable sur demande",
+             any(o.get("cloturee") for o in avec.get("opportunites", [])))
+
+    # --- Messages a l'equipe ---
+    anonyme = app.test_client()
+    r = anonyme.post("/api/equipe/message", json={
+        "message": "Le bouton de connexion ne répond pas sur mon téléphone.",
+        "categorie": "panne"})
+    verifier("Sans compte, une adresse est demandée", r.status_code == 400)
+    r = anonyme.post("/api/equipe/message", json={
+        "message": "Le bouton de connexion ne répond pas sur mon téléphone.",
+        "categorie": "panne", "email": "passant@test.io", "nom": "un passant"})
+    verifier("Une personne non connectée peut écrire",
+             r.status_code in (200, 201), r.get_data(as_text=True)[:110])
+    verifier("Le nom donné sans compte est mis en forme",
+             jeton_sql("SELECT nom FROM message_equipe WHERE email = ?",
+                       ("passant@test.io",)) == "Un Passant")
+
+    r = lecteur.post("/api/equipe/message", json={"message": "bug"})
+    verifier("Un message trop court est refusé", r.status_code == 400)
+    r = lecteur.post("/api/equipe/message", json={
+        "categorie": "suggestion",
+        "message": "Il manque un moyen de filtrer les questions par pays.",
+        "page": "fil"})
+    id_msg = (r.get_json() or {}).get("id_message")
+    verifier("Un membre connecté écrit à l'équipe", bool(id_msg),
+             r.get_data(as_text=True)[:110])
+    verifier("La page d'où l'on écrit est conservée",
+             jeton_sql("SELECT page FROM message_equipe WHERE id_message = ?",
+                       (id_msg,)) == "fil")
+    verifier("L'auteur connecté est rattaché au message",
+             jeton_sql("SELECT id_utilisateur FROM message_equipe "
+                       "WHERE id_message = ?", (id_msg,)) is not None)
+
+    verifier("Un membre ne lit pas les messages des autres",
+             lecteur.get("/api/equipe/messages").status_code == 403)
+    boite = adm.get("/api/equipe/messages").get_json() or {}
+    verifier("L'administration voit les messages reçus",
+             len(boite.get("messages") or []) >= 2)
+    verifier("Les non traités sont comptés", boite.get("nouveaux", 0) >= 2)
+
+    r = adm.post(f"/api/equipe/messages/{id_msg}/traiter",
+                 json={"statut": "inconnu"})
+    verifier("Un statut inconnu est refusé", r.status_code == 400)
+    r = adm.post(f"/api/equipe/messages/{id_msg}/traiter",
+                 json={"statut": "traite", "reponse": "C'est noté, merci."})
+    verifier("Un message se marque traité", r.status_code == 200)
+    verifier("La personne est prévenue de la réponse",
+             jeton_sql("SELECT COUNT(*) FROM notification n "
+                       "JOIN utilisateur u "
+                       "  ON u.id_utilisateur = n.id_destinataire "
+                       "WHERE u.email = ? AND n.texte LIKE ?",
+                       ("ife@test.io", "%a répondu à votre message%")) >= 1)
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

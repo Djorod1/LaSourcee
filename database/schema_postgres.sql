@@ -425,3 +425,49 @@ INSERT INTO pays (libelle, code_iso) VALUES
  ('Cameroun','CM'),('Algérie','DZ'),('Tunisie','TN'),('Mali','ML'),
  ('Burkina Faso','BF'),('Togo','TG'),('Niger','NE'),('Madagascar','MG'),
  ('Guinée','GN'),('Autre',NULL);
+
+-- Messages adresses a l'equipe. Les membres n'avaient aucun endroit ou
+-- dire qu'une page ne marchait pas ou qu'un libelle pretait a confusion.
+CREATE TABLE message_equipe (
+    id_message      SERIAL PRIMARY KEY,
+    id_utilisateur  INTEGER,
+    nom             TEXT,
+    email           TEXT,
+    categorie       TEXT    NOT NULL DEFAULT 'autre',
+    message         TEXT    NOT NULL,
+    page            TEXT,
+    navigateur      TEXT,
+    statut          TEXT    NOT NULL DEFAULT 'nouveau',
+    reponse         TEXT,
+    traite_par      INTEGER,
+    traite_le       TEXT,
+    cree_le         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_utilisateur) REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL
+);
+
+CREATE INDEX idx_message_equipe_statut ON message_equipe(statut, cree_le);
+
+-- Bourses, concours, stages. Une annonce a une date limite : c'est ce
+-- qui fait revenir sans qu'on ait rien a publier soi-meme.
+CREATE TABLE opportunite (
+    id_opportunite  SERIAL PRIMARY KEY,
+    id_auteur       INTEGER,
+    titre           TEXT    NOT NULL,
+    categorie       TEXT    NOT NULL DEFAULT 'bourse',
+    organisme       TEXT,
+    description     TEXT    NOT NULL,
+    pays            TEXT,
+    niveau          TEXT,
+    domaine         TEXT,
+    date_limite     TEXT,
+    lien            TEXT,
+    statut          TEXT    NOT NULL DEFAULT 'en_attente',
+    motif_refus     TEXT,
+    decide_par      INTEGER,
+    decide_le       TEXT,
+    vues            INTEGER NOT NULL DEFAULT 0,
+    cree_le         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_auteur) REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL
+);
+
+CREATE INDEX idx_opportunite_statut ON opportunite(statut, date_limite);
