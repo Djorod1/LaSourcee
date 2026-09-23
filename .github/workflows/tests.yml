@@ -47,8 +47,31 @@ jobs:
       - name: Contrôler la syntaxe de la configuration
         run: |
           python -c "import json; json.load(open('vercel.json'))"
-          python -c "import xml.dom.minidom; xml.dom.minidom.parse('sitemap.xml')"
           bash -n demarrer.sh
+
+      # Le plan du site n'est plus un fichier : il est construit à
+      # partir des questions réellement publiées. On contrôle donc ce
+      # que le serveur produit, ce qui vaut mieux que de relire un
+      # fichier que plus personne ne sert.
+      - name: Contrôler le plan du site produit par le serveur
+        working-directory: backend
+        env:
+          DB_TYPE: sqlite
+          DB_PATH: /tmp/plan_du_site.db
+          SECRET_KEY: cle-de-controle-du-plan-du-site-suffisamment-longue
+          EMAIL_MODE: console
+          URL_PLATEFORME: https://lasourcee.org
+        run: |
+          python - <<'CONTROLE'
+          import sys, xml.dom.minidom
+          sys.path.insert(0, '.')
+          from app import creer_application
+
+          reponse = creer_application().test_client().get('/sitemap.xml')
+          assert reponse.status_code == 200, reponse.status_code
+          xml.dom.minidom.parseString(reponse.get_data())
+          print('Plan du site valide :', len(reponse.get_data()), 'octets')
+          CONTROLE
 
       - name: Contrôler la rédaction des textes visibles
         working-directory: backend
