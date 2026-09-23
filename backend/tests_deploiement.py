@@ -557,6 +557,36 @@ def executer():
     verifier("Tous les gestionnaires cités dans la page existent",
              not manquants, ", ".join(manquants[:6]))
 
+    # Un appel vers une route disparue ne casse rien au chargement : il
+    # echoue au moment ou quelqu'un clique, et le message d'erreur parle
+    # du serveur alors que la faute est dans la page.
+    regles = [(sorted(r.methods - {"HEAD", "OPTIONS"}), str(r))
+              for r in application.url_map.iter_rules()]
+
+    def _correspond(chemin, regle):
+        return re.fullmatch(re.sub(r"<[^>]+>", "SEG", regle), chemin) is not None
+
+    orphelins, examines = [], 0
+    for verbe, brut in re.findall(
+            r"API\.(get|post|put|delete)\(\s*([`'\"][^)]*?)[,)]", script):
+        examines += 1
+        chemin = re.sub(r"\$\{[^}]*\}", "SEG", brut)
+        chemin = re.sub(r"['\"`]\s*\+[^+]*?\+\s*['\"`]", "SEG", chemin)
+        chemin = re.sub(r"['\"`]\s*\+.*$", "/SEG", chemin)
+        chemin = "/api" + re.sub(
+            r"/+", "/", chemin.strip("`'\"").split("?")[0]).rstrip("/")
+        # Un segment variable qui porte un verbe, comme
+        # /admin/mentors/<id>/<action> : on essaie les valeurs connues.
+        candidats = [chemin] + [chemin[:-3] + mot
+                                for mot in ("verifier", "refuser")
+                                if chemin.endswith("/SEG")]
+        if not any(verbe.upper() in m and _correspond(c, r)
+                   for c in candidats for m, r in regles):
+            orphelins.append(f"{verbe.upper()} {chemin}")
+
+    verifier(f"Les {examines} appels du navigateur visent une route existante",
+             not orphelins, ", ".join(sorted(set(orphelins))[:4]))
+
 
 if __name__ == "__main__":
     print("\n" + "═" * 70)
