@@ -475,13 +475,35 @@ async function naviguerEtape(delta) {
    trompaient de champ des qu'on en ajoutait un, sans rien signaler. */
 function infosEtape1() {
   const val = id => (document.getElementById(id)?.value || '').trim();
+  // « Autre domaine » ouvre une saisie libre : aucune liste ne
+  // contiendra tous les métiers, et le choix « Autre » sans nulle part
+  // où préciser revenait à perdre l'information.
+  const domaine = val('ob-domaine') === AUTRE_DOMAINE
+    ? (val('ob-domaine-libre') || AUTRE_DOMAINE)
+    : val('ob-domaine');
   return {
     pays: val('select-pays'),
     niveau_etudes: val('ob-niveau'),
-    domaine: val('ob-domaine'),
+    domaine,
     etablissement: val('ob-etablissement'),
+    situation: val('ob-situation'),
+    objectifs: [...document.querySelectorAll('#ob-objectifs input:checked')]
+      .map(c => c.value),
     bio: val('ob-bio'),
   };
+}
+
+/* Intitulé exact de l'option qui ouvre la saisie libre du domaine. Il
+   vient du serveur avec le reste de la liste ; la valeur est répétée
+   ici parce que la page doit savoir la reconnaître avant tout appel. */
+const AUTRE_DOMAINE = 'Autre domaine';
+
+function basculerDomaineLibre() {
+  const champ = document.getElementById('champ-domaine-libre');
+  if (!champ) return;
+  const libre = document.getElementById('ob-domaine')?.value === AUTRE_DOMAINE;
+  champ.style.display = libre ? 'block' : 'none';
+  if (libre) document.getElementById('ob-domaine-libre')?.focus();
 }
 
 /* Vérifie que les informations obligatoires d'une étape sont remplies. */
@@ -491,6 +513,9 @@ function validerEtapeOnboarding(etape) {
     if (!d.pays) { toast('Le pays est obligatoire.', 'erreur'); return false; }
     if (!d.niveau_etudes) { toast('Indiquez votre diplôme le plus élevé.', 'erreur'); return false; }
     if (!d.domaine) { toast('Indiquez votre domaine ou votre métier.', 'erreur'); return false; }
+    if (d.domaine === AUTRE_DOMAINE) {
+      toast('Précisez votre domaine ou votre métier.', 'erreur'); return false;
+    }
   }
   if (etape === 2) {
     const n = document.querySelectorAll('#etape-2 .chip-select.actif').length;
@@ -499,19 +524,18 @@ function validerEtapeOnboarding(etape) {
   return true;
 }
 
-/* Crée le compte, puis conduit à la confirmation ou à l'application.
+/* Crée le compte, avec tout ce que l'accueil guidé a recueilli.
 
-   Le parcours dépend d'un réglage du serveur. Quand la confirmation est
-   obligatoire, l'inscription n'ouvre pas de session : demander le
-   profil dans la foulée recevait un refus, et l'interface renvoyait au
-   formulaire en annonçant un échec, alors que le compte était créé et
-   le code parti. C'est ce qui empêchait de trouver où saisir le code.
+   Ces informations étaient auparavant gardées dans une variable de la
+   page et envoyées seulement après la saisie du code de confirmation.
+   Or ce code arrive par e-mail : on le lit dans une autre application,
+   parfois sur un autre appareil, et l'onglet se ferme entre-temps. La
+   saisie disparaissait alors entièrement, et la personne retrouvait un
+   profil vide qui lui redemandait ce qu'elle venait de remplir.
 
-   Les informations recueillies pendant l'accueil guidé sont donc mises
-   de côté et envoyées après l'ouverture de session, quel que soit le
-   moment où elle survient. */
-let _profilEnAttente = null;
-
+   Tout part donc en une seule requête, écrite en base dans la même
+   transaction que le compte. Il n'y a plus de moment où les données
+   existent quelque part sans être enregistrées. */
 async function finaliserInscription() {
   const prenom = (document.getElementById('prenom-ins')?.value || '').trim();
   const nom = (document.getElementById('nom-ins')?.value || '').trim();
@@ -523,11 +547,27 @@ async function finaliserInscription() {
   const d = infosEtape1();
   const telephone = (document.getElementById('tel-ins')?.value || '').trim();
 
+  // Le serveur reconnaît les pays et les secteurs à leur libellé : la
+  // page n'a plus à retrouver elle-même des identifiants dans un
+  // référentiel chargé à part, dont l'échec passait inaperçu.
+  const profil = {
+    pays: d.pays,
+    niveau_etudes: d.niveau_etudes,
+    domaine: d.domaine,
+    etablissement: d.etablissement,
+    situation: d.situation,
+    objectifs: d.objectifs,
+    bio: d.bio,
+    secteurs: secteursChoisis,
+    ...(telephone ? { telephone } : {}),
+  };
+
   try {
     const photoOnboarding = etat.utilisateur && etat.utilisateur.photo;
     const creation = await API.post('/auth/inscription', {
       prenom, nom, email, mot_de_passe: mdp,
       role: etat.roleChoisi || 'etudiant',
+      profil,
       consentement: {
         conditions: !!document.getElementById('cons-conditions')?.checked,
         donnees: !!document.getElementById('cons-donnees')?.checked,
@@ -535,21 +575,9 @@ async function finaliserInscription() {
       },
     });
 
-    // Mis de côté, envoyé dès qu'une session existe. Le pays et les
-    // secteurs étaient auparavant recueillis puis perdus.
-    _profilEnAttente = {
-      bio: d.bio,
-      ...(telephone ? { telephone } : {}),
-      niveau_etudes: d.niveau_etudes,
-      domaine: d.domaine,
-      etablissement: d.etablissement,
-      _pays: d.pays,
-      _secteurs: secteursChoisis,
-      _photo: photoOnboarding,
-    };
-
     // Confirmation obligatoire : aucune session n'a été ouverte. On
-    // conduit directement à la saisie du code, sans toucher au profil.
+    // conduit directement à la saisie du code. Le profil, lui, est
+    // déjà enregistré.
     if (creation && creation.verification_requise) {
       if (creation.email_envoye === false) {
         toast("Compte créé, mais le code n'a pas pu être envoyé. "
@@ -561,9 +589,8 @@ async function finaliserInscription() {
 
     // Mode souple : la session est déjà ouverte.
     MODE.utilisateur = await API.get('/profil/moi');
-    await envoyerProfilEnAttente();
     appliquerUtilisateur(MODE.utilisateur);
-    if (photoOnboarding) etat.utilisateur.photo = photoOnboarding;
+    if (photoOnboarding) await enregistrerPhoto(photoOnboarding);
 
     if (creation && creation.email_envoye === false) {
       toast("Compte créé. Le code de confirmation n'a pas pu partir : "
@@ -575,32 +602,6 @@ async function finaliserInscription() {
   } catch (err) {
     toast(err.message || 'Inscription impossible.', 'erreur');
     afficherVue('vue-inscription'); return false;
-  }
-}
-
-/* Envoie au serveur ce que l'accueil guidé avait recueilli. Appelée dès
-   qu'une session existe, c'est-à-dire après la saisie du code quand la
-   confirmation est obligatoire. */
-async function envoyerProfilEnAttente() {
-  if (!_profilEnAttente) return;
-  const p = _profilEnAttente;
-  _profilEnAttente = null;
-  try {
-    const corps = { ...p };
-    delete corps._pays; delete corps._secteurs; delete corps._photo;
-    const id_pays = p._pays ? await _idPaysDepuisLibelle(p._pays) : null;
-    const secteurs = await _idsSecteursDepuisLibelles(p._secteurs || []);
-    if (id_pays) corps.id_pays = id_pays;
-    if (secteurs.length) corps.secteurs = secteurs;
-    if (Object.values(corps).some(Boolean)) {
-      await API.put('/profil/moi', corps);
-      MODE.utilisateur = await API.get('/profil/moi');
-      appliquerUtilisateur(MODE.utilisateur);
-    }
-    if (p._photo) etat.utilisateur.photo = p._photo;
-  } catch (_) {
-    // Le profil se complète depuis les paramètres : mieux vaut laisser
-    // entrer que bloquer sur une information secondaire.
   }
 }
 
@@ -624,20 +625,22 @@ function majEtapeOnboarding() {
     const n = (document.getElementById('nom-ins')?.value || '').trim();
     avOb.textContent = ((p[0] || '') + (n[0] || '')).toUpperCase();
   }
-  // Brancher le bouton photo de l'étape 3
-  const etape3 = document.getElementById('etape-3');
-  if (etape3 && !etape3.dataset.cable) {
-    etape3.dataset.cable = '1';
-    const btn = etape3.querySelector('button');
-    if (btn) {
-      btn.onclick = () => declencherSelectionPhoto((dataUrl) => {
-        etat.utilisateur.photo = dataUrl;
-        const av = etape3.querySelector('.avatar');
-        av.innerHTML = `<img src="${dataUrl}" class="photo-avatar" alt="">`;
-        toast('Photo de profil ajoutée.');
-      });
-    }
-  }
+}
+
+/* Photo choisie pendant l'accueil guidé.
+
+   Elle n'était gardée que dans la page : au premier rechargement elle
+   disparaissait, et le profil réclamait de nouveau une photo qui avait
+   pourtant été fournie. Elle est désormais réduite puis envoyée au
+   serveur dès qu'une session existe. */
+function choisirPhotoOnboarding() {
+  declencherSelectionPhoto(async (dataUrl) => {
+    const reduite = await reduireImage(dataUrl);
+    etat.utilisateur.photo = reduite;
+    const av = document.getElementById('avatar-onboarding');
+    if (av) av.innerHTML = `<img src="${reduite}" class="photo-avatar" alt="">`;
+    toast('Photo de profil ajoutée.');
+  });
 }
 function toggleChip(elem) { elem.classList.toggle('actif'); }
 
@@ -727,6 +730,26 @@ async function remplirListesParcours() {
   if (niveau) niveau.innerHTML = options(r.niveaux_etudes, niveau.value);
   const domaine = document.getElementById('ob-domaine');
   if (domaine) domaine.innerHTML = options(r.domaines, domaine.value);
+  const situation = document.getElementById('ob-situation');
+  if (situation) situation.innerHTML = options(r.situations, situation.value);
+
+  // Ce que la personne cherche se demande ici plutôt qu'après coup :
+  // c'est le champ qui rapproche les deux côtés de la plateforme, et
+  // le redemander une fois le compte créé revenait à faire remplir
+  // deux fois le même formulaire.
+  const objectifs = document.getElementById('ob-objectifs');
+  if (objectifs) {
+    const coches = [...objectifs.querySelectorAll('input:checked')]
+      .map(c => c.value);
+    objectifs.innerHTML = (r.objectifs || []).map(o => `
+      <label class="chip-objectif">
+        <input type="checkbox" value="${echapper(o)}"
+               ${coches.includes(o) ? 'checked' : ''}
+               onchange="limiterObjectifsOnboarding()" />
+        <span>${echapper(o)}</span>
+      </label>`).join('');
+    limiterObjectifsOnboarding();
+  }
 
   // Suggestions, pas contrainte : le champ reste libre pour qui apprend
   // son metier dans un atelier qu'aucune liste ne contiendra.
@@ -734,6 +757,24 @@ async function remplirListesParcours() {
   if (liste) {
     liste.innerHTML = (r.etablissements || [])
       .map(e => `<option value="${echapper(e)}"></option>`).join('');
+  }
+  basculerDomaineLibre();
+}
+
+/* Au-delà de quatre objectifs, un profil ne dit plus rien de précis :
+   les cases restantes se désactivent au lieu de refuser à l'envoi. */
+function limiterObjectifsOnboarding() {
+  const cases = [...document.querySelectorAll('#ob-objectifs input')];
+  const coches = cases.filter(c => c.checked);
+  cases.forEach(c => {
+    c.disabled = !c.checked && coches.length >= LIMITE_OBJECTIFS;
+    c.closest('.chip-objectif')?.classList.toggle('coche', c.checked);
+  });
+  const aide = document.getElementById('ob-objectifs-aide');
+  if (aide) {
+    aide.textContent = coches.length >= LIMITE_OBJECTIFS
+      ? `${coches.length} sur ${LIMITE_OBJECTIFS}, le maximum.`
+      : `${coches.length} choix sur ${LIMITE_OBJECTIFS} possibles. Facultatif.`;
   }
 }
 async function seDeconnecter() {
@@ -762,19 +803,64 @@ function declencherSelectionPhoto(callback) {
   };
   inp.click();
 }
-function televerserPhotoCompte() {
-  declencherSelectionPhoto((dataUrl) => {
-    etat.utilisateur.photo = dataUrl;
+/* Ramène une image à la taille d'un avatar.
+
+   Une photo de téléphone pèse plusieurs méga-octets ; convertie en
+   texte pour être stockée, elle en pèse un tiers de plus. Réduite à
+   320 pixels de côté, elle tient en quelques dizaines de kilo-octets,
+   ce qui la rend enregistrable et rend l'affichage instantané. La
+   partie centrale est conservée : un portrait cadré au milieu reste
+   reconnaissable, un portrait déformé ne l'est plus. */
+const COTE_AVATAR = 320;
+
+function reduireImage(dataUrl) {
+  return new Promise((resoudre) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const cote = Math.min(img.width, img.height);
+        const toile = document.createElement('canvas');
+        toile.width = toile.height = COTE_AVATAR;
+        const ctx = toile.getContext('2d');
+        ctx.drawImage(img,
+          (img.width - cote) / 2, (img.height - cote) / 2, cote, cote,
+          0, 0, COTE_AVATAR, COTE_AVATAR);
+        resoudre(toile.toDataURL('image/jpeg', 0.82));
+      } catch (_) {
+        resoudre(dataUrl);   // navigateur sans canvas : on garde l'original
+      }
+    };
+    img.onerror = () => resoudre(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+/* Enregistre la photo côté serveur et rafraîchit tous les endroits où
+   elle apparaît. */
+async function enregistrerPhoto(dataUrl) {
+  etat.utilisateur.photo = dataUrl;
+  const navAv = document.getElementById('avatar-nav');
+  const filAv = document.getElementById('avatar-fil');
+  if (navAv) navAv.innerHTML = `<img src="${dataUrl}" class="photo-avatar" alt="">`;
+  if (filAv) filAv.innerHTML = `<img src="${dataUrl}" class="photo-avatar" alt="">`;
+  rendreSidebarProfil();
+  if (etat.sectionActive === 'profil') { profilCible = null; rendreProfil(); }
+
+  if (!MODE.api) return;
+  try {
+    await API.put('/profil/moi', { photo_url: dataUrl });
+    if (MODE.utilisateur) MODE.utilisateur.photo_url = dataUrl;
     toast('Photo mise à jour.');
+  } catch (err) {
+    toast(err.message || "La photo n'a pas pu être enregistrée.", 'erreur');
+  }
+}
+
+function televerserPhotoCompte() {
+  declencherSelectionPhoto(async (dataUrl) => {
+    await enregistrerPhoto(await reduireImage(dataUrl));
     const panParam = document.querySelector('#menu-param button.actif');
     if (panParam) changerPanParam(panParam, 'compte');
-    const navAv = document.getElementById('avatar-nav');
-    const filAv = document.getElementById('avatar-fil');
-    if (navAv) navAv.innerHTML = `<img src="${dataUrl}" class="photo-avatar" alt="">`;
-    if (filAv) filAv.innerHTML = `<img src="${dataUrl}" class="photo-avatar" alt="">`;
-    rendreSidebarProfil();
-    // Mettre à jour la page profil (cercle au-dessus du nom) si on y est
-    if (etat.sectionActive === 'profil') { profilCible = null; rendreProfil(); }
   });
 }
 
@@ -4828,9 +4914,12 @@ async function validerCodeInscription(bouton) {
     if (r && r.session_ouverte) {
       MODE.utilisateur = await API.get('/profil/moi').catch(() => null);
       if (MODE.utilisateur) appliquerUtilisateur(MODE.utilisateur);
-      // Ce que l'accueil guidé avait recueilli part maintenant : il n'y
-      // avait pas de session au moment de l'inscription.
-      await envoyerProfilEnAttente();
+      // La photo choisie à l'accueil n'a pas pu partir plus tôt : il
+      // n'y avait pas encore de session.
+      const enAttente = etat.utilisateur && etat.utilisateur.photo;
+      if (enAttente && !enAttente.startsWith('http')) {
+        await enregistrerPhoto(enAttente);
+      }
     }
     if (etat.utilisateur) etat.utilisateur.email_verifie = true;
     majRappelConfirmation();

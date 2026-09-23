@@ -295,7 +295,7 @@ def executer_tests():
     annuaire = etu.get("/api/mentors").get_json()
     verifier("Présente dans l'annuaire des mentors",
              isinstance(annuaire, list)
-             and any(m.get("nom") == "TRAORE" for m in annuaire),
+             and any(m.get("nom") == "Traore" for m in annuaire),
              f"réponse inattendue : {str(annuaire)[:110]}")
 
     restants = adm.get("/api/admin/mentors-a-verifier").get_json()
@@ -1054,8 +1054,17 @@ def executer_tests():
 
     r = etu.put("/api/profil/moi", json={"niveau_etudes": "Bac+42"})
     verifier("Un niveau inventé est refusé", r.status_code == 400)
-    r = etu.put("/api/profil/moi", json={"domaine": "Sorcellerie appliquée"})
-    verifier("Un domaine inventé est refusé", r.status_code == 400)
+    # Le domaine, lui, reste ouvert : aucune liste ne contient tous les
+    # metiers, et « Autre domaine » sans nulle part ou preciser lequel
+    # faisait disparaitre l'information.
+    r = etu.put("/api/profil/moi", json={"domaine": "Sérigraphie"})
+    verifier("Un domaine hors liste est accepté", r.status_code == 200)
+    verifier("Le domaine libre est relu tel quel",
+             etu.get("/api/profil/moi").get_json().get("domaine")
+             == "Sérigraphie")
+    r = etu.put("/api/profil/moi", json={"domaine": "  ???  "})
+    verifier("Un domaine sans lettre est refusé", r.status_code == 400)
+    etu.put("/api/profil/moi", json={"domaine": "Soudure et métallerie"})
 
     # Les listes s'ecrivaient sans accent a l'origine ; les comptes
     # crees a ce moment la ont ces valeurs en base. Les refuser
@@ -1291,7 +1300,7 @@ def executer_tests():
     apres = cand.get("/api/mentors").get_json() or []
     liste = apres if isinstance(apres, list) else apres.get("mentors", [])
     verifier("Une fois validée, elle entre dans l'annuaire",
-             any("HOUNKPATIN" in str(m.get("nom", "")) for m in liste),
+             any("Hounkpatin" in str(m.get("nom", "")) for m in liste),
              f"{len(liste)} référent(s) listé(s)")
 
     # ---------------------------------------------------------------
@@ -2150,6 +2159,137 @@ def executer_tests():
              isinstance(prof_ben.get("nb_questions"), int))
     verifier("Le nombre de réponses reçues comme utiles est compté",
              "nb_utiles_recus" in prof_ben)
+
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  32. NOMS ÉCRITS PROPREMENT")
+    print("═" * 70)
+
+    from utils.noms import normaliser_nom, initiales, depuis_adresse
+
+    verifier("Une saisie tout en majuscules est remise en forme",
+             normaliser_nom("DJOSSOU") == "Djossou")
+    verifier("Une saisie tout en minuscules prend sa majuscule",
+             normaliser_nom("rodrigue") == "Rodrigue")
+    verifier("Une casse volontaire est laissée intacte",
+             normaliser_nom("McDonald") == "McDonald")
+    verifier("Les espaces en trop disparaissent",
+             normaliser_nom("  Chabi   Marc ") == "Chabi Marc")
+    verifier("L'espace insécable devient un espace ordinaire",
+             normaliser_nom("Rodrigue Djossou") == "Rodrigue Djossou")
+    verifier("Les caractères invisibles sont retirés",
+             normaliser_nom("ma​rie") == "Marie")
+    verifier("Un accent décomposé est recomposé",
+             normaliser_nom("élodie") == "Élodie"
+             and len(normaliser_nom("élodie")) == 6)
+    verifier("Un nom composé garde ses deux majuscules",
+             normaliser_nom("MARIE-CLAIRE") == "Marie-Claire")
+    verifier("L'apostrophe ouvre une nouvelle majuscule",
+             normaliser_nom("d'almeida") == "D'Almeida")
+    verifier("Les particules restent en minuscules",
+             normaliser_nom("van der berg") == "Van der Berg")
+    verifier("Une suite de chiffres n'est pas un nom",
+             normaliser_nom("12345") is None)
+    verifier("Les initiales sautent l'apostrophe",
+             initiales("'yves", "-ko") == "YK")
+    verifier("Les initiales d'un accent décomposé tiennent en une lettre",
+             initiales("élodie") == "É")
+    verifier("Un prénom de secours ne garde pas les chiffres",
+             depuis_adresse("rodriguedjossou93@gmail.com")
+             == "Rodriguedjossou")
+
+    propre = app.test_client()
+    r = propre.post("/api/auth/inscription", json={
+        "prenom": "  hounsou ", "nom": "AGOSSOU", "email": "propre@test.io",
+        "mot_de_passe": "PropreTest2026!", "role": "etudiant",
+        "consentement": CONSENT_TESTS})
+    verifier("L'inscription accepte un nom mal saisi",
+             r.status_code in (200, 201), r.get_data(as_text=True)[:110])
+    verifier("Le nom est écrit proprement en base",
+             jeton_sql("SELECT prenom || ' ' || nom FROM utilisateur "
+                       "WHERE email = ?", ("propre@test.io",))
+             == "Hounsou Agossou")
+    r = propre.post("/api/auth/inscription", json={
+        "prenom": "4242", "nom": "9999", "email": "robot@test.io",
+        "mot_de_passe": "RobotTest2026!", "role": "etudiant",
+        "consentement": CONSENT_TESTS})
+    verifier("Un nom sans aucune lettre est refusé", r.status_code == 400)
+
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  33. L'INSCRIPTION ENREGISTRE TOUT DU PREMIER COUP")
+    print("═" * 70)
+
+    # Le scenario exact signale : tout est rempli pendant l'accueil
+    # guide, puis l'onglet se ferme pour aller lire le code recu par
+    # e-mail. Plus rien ne doit dependre de la survie de la page.
+    id_secteur = jeton_sql("SELECT id_secteur FROM secteur "
+                           "ORDER BY id_secteur LIMIT 1")
+    libelle_pays = jeton_sql("SELECT libelle FROM pays "
+                             "ORDER BY id_pays LIMIT 1")
+    inscrit = app.test_client()
+    r = inscrit.post("/api/auth/inscription", json={
+        "prenom": "Sèdo", "nom": "Ahouandjinou",
+        "email": "sedo@test.io", "mot_de_passe": "SedoTest2026!",
+        "role": "etudiant", "consentement": CONSENT_TESTS,
+        "profil": {
+            "pays": libelle_pays,
+            "niveau_etudes": "Baccalauréat",
+            "domaine": "Sérigraphie sur textile",
+            "etablissement": "Atelier de maître imprimeur, Bohicon",
+            "situation": "En apprentissage",
+            "objectifs": ["Apprendre un métier", "Gérer mon argent"],
+            "bio": "J'apprends la sérigraphie et je cherche à m'installer.",
+            "telephone": "+229 01 55 04 04 32",
+            "secteurs": [id_secteur],
+        }})
+    verifier("L'inscription accepte le profil complet",
+             r.status_code in (200, 201), r.get_data(as_text=True)[:140])
+
+    ligne = str(jeton_sql(
+        "SELECT niveau_etudes || '|' || domaine || '|' || etablissement "
+        "|| '|' || situation || '|' || objectif || '|' || telephone "
+        "FROM utilisateur WHERE email = ?", ("sedo@test.io",)))
+    verifier("Le niveau d'études est écrit dès la création",
+             ligne.startswith("Baccalauréat|"), ligne[:90])
+    verifier("Le domaine libre est écrit dès la création",
+             "|Sérigraphie sur textile|" in ligne)
+    verifier("L'établissement libre est écrit dès la création",
+             "Atelier de maître imprimeur, Bohicon" in ligne)
+    verifier("La situation est écrite dès la création",
+             "|En apprentissage|" in ligne)
+    verifier("Les objectifs multiples sont écrits dès la création",
+             "Apprendre un métier, Gérer mon argent" in ligne)
+    verifier("Le téléphone est normalisé dès la création",
+             ligne.endswith("|+2290155040432"), ligne[-20:])
+    verifier("Le pays est reconnu à son libellé",
+             jeton_sql("SELECT id_pays FROM utilisateur WHERE email = ?",
+                       ("sedo@test.io",)) is not None)
+    verifier("Les secteurs sont rattachés dès la création",
+             jeton_sql("SELECT COUNT(*) FROM utilisateur_secteur us "
+                       "JOIN utilisateur u USING (id_utilisateur) "
+                       "WHERE u.email = ?", ("sedo@test.io",)) == 1)
+    verifier("La présentation est écrite dès la création",
+             bool(jeton_sql("SELECT bio FROM utilisateur WHERE email = ?",
+                            ("sedo@test.io",))))
+
+    # Une valeur refusee ne doit pas faire perdre le compte : le reste
+    # est enregistre, et la personne corrigera depuis ses parametres.
+    bancal = app.test_client()
+    r = bancal.post("/api/auth/inscription", json={
+        "prenom": "Kossi", "nom": "Zinsou", "email": "kossi@test.io",
+        "mot_de_passe": "KossiTest2026!", "role": "etudiant",
+        "consentement": CONSENT_TESTS,
+        "profil": {"niveau_etudes": "Bac+42", "domaine": "Menuiserie",
+                   "telephone": "12"}})
+    verifier("Une valeur invalide ne fait pas perdre le compte",
+             r.status_code in (200, 201))
+    verifier("Le champ valide est quand même enregistré",
+             jeton_sql("SELECT domaine FROM utilisateur WHERE email = ?",
+                       ("kossi@test.io",)) == "Menuiserie")
+    verifier("Le champ invalide est laissé vide, pas inventé",
+             not jeton_sql("SELECT niveau_etudes FROM utilisateur "
+                           "WHERE email = ?", ("kossi@test.io",)))
 
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)

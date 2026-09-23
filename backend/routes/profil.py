@@ -6,6 +6,7 @@ from flask import Blueprint, g, jsonify, request
 
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from utils.auth_helpers import connexion_requise
+from utils.noms import normaliser_nom
 
 bp_profil = Blueprint("profil", __name__, url_prefix="/api/profil")
 
@@ -147,6 +148,10 @@ ETABLISSEMENTS_SUGGERES = [
 
 LONGUEUR_ETABLISSEMENT = 120
 
+# Une image de 320 pixels de côté encodée en JPEG tient largement
+# dessous ; au-delà, c'est qu'elle n'a pas été réduite.
+LONGUEUR_PHOTO = 400_000
+
 
 def _sans_accent(texte):
     """Version comparable d'un libelle : sans accent, en minuscules."""
@@ -174,6 +179,153 @@ def _canoniser(valeur, liste):
         if _sans_accent(officiel) == cible:
             return officiel
     return None
+
+
+LONGUEUR_DOMAINE = 80
+
+
+def domaine_retenu(valeur):
+    """Domaine a enregistrer, ou None si la valeur ne convient pas.
+
+    La liste ne contiendra jamais tous les metiers. « Autre domaine »
+    existait donc en dernier choix, mais sans nulle part ou dire
+    lequel : la personne cochait la case et son metier disparaissait.
+    Une valeur absente de la liste est desormais acceptee telle quelle,
+    apres nettoyage. C'est aussi ce qui permet aux comptes deja crees
+    avec un domaine libre de continuer a enregistrer leur profil.
+    """
+    if valeur is None:
+        return None
+    brut = " ".join(str(valeur).split())
+    if not brut:
+        return ""
+    officiel = _canoniser(brut, DOMAINES)
+    if officiel:
+        return officiel
+    if len(brut) < 2 or not any(c.isalpha() for c in brut):
+        return None
+    return brut[:LONGUEUR_DOMAINE]
+
+
+def id_pays_depuis(valeur):
+    """Identifiant du pays a partir d'un identifiant ou d'un libelle.
+
+    Le client envoyait un identifiant qu'il devait retrouver lui-meme
+    dans un referentiel charge a part. Quand ce chargement echouait, le
+    pays partait vide sans que rien ne le signale.
+    """
+    if valeur in (None, ""):
+        return None
+    try:
+        return int(valeur)
+    except (TypeError, ValueError):
+        pass
+    cible = _sans_accent(valeur)
+    for ligne in recuperer_tous("SELECT id_pays, libelle FROM pays"):
+        if _sans_accent(ligne["libelle"]) == cible:
+            return ligne["id_pays"]
+    return None
+
+
+def ids_secteurs_depuis(valeurs):
+    """Identifiants de secteurs a partir d'identifiants ou de libelles."""
+    if not valeurs:
+        return []
+    connus = recuperer_tous("SELECT id_secteur, libelle FROM secteur")
+    par_libelle = {_sans_accent(s["libelle"]): s["id_secteur"] for s in connus}
+    existants = {s["id_secteur"] for s in connus}
+    retenus = []
+    for brut in valeurs:
+        trouve = None
+        try:
+            entier = int(brut)
+            trouve = entier if entier in existants else None
+        except (TypeError, ValueError):
+            trouve = par_libelle.get(_sans_accent(brut))
+        if trouve is not None and trouve not in retenus:
+            retenus.append(trouve)
+    return retenus
+
+
+# Champs du profil que l'inscription peut deja renseigner. Ils etaient
+# recueillis pendant l'accueil guide, gardes dans une variable de la
+# page, puis envoyes seulement apres la saisie du code de confirmation.
+# Toute personne qui fermait l'onglet pour aller lire son e-mail
+# perdait la totalite de sa saisie et trouvait un profil vide.
+CHAMPS_INSCRIPTION = ("bio", "niveau_etudes", "domaine", "etablissement",
+                      "situation", "telephone", "ville")
+
+
+def profil_initial(bloc):
+    """Colonnes a ecrire a la creation du compte, depuis le bloc recu.
+
+    Renvoie ``(colonnes, secteurs, erreur)``. Une valeur refusee ne fait
+    pas echouer l'inscription : le compte se crée, le champ reste vide,
+    et la personne le corrigera depuis ses parametres. Perdre un compte
+    pour un etablissement trop long serait hors de proportion.
+    """
+    if not isinstance(bloc, dict):
+        return {}, [], None
+
+    colonnes = {}
+    for cle in CHAMPS_INSCRIPTION:
+        valeur = bloc.get(cle)
+        if valeur in (None, ""):
+            continue
+        colonnes[cle] = valeur
+
+    if "niveau_etudes" in colonnes:
+        retenu = _canoniser(colonnes["niveau_etudes"], NIVEAUX_ETUDES)
+        if retenu:
+            colonnes["niveau_etudes"] = retenu
+        else:
+            colonnes.pop("niveau_etudes")
+
+    if "situation" in colonnes:
+        retenu = _canoniser(colonnes["situation"], SITUATIONS)
+        if retenu:
+            colonnes["situation"] = retenu
+        else:
+            colonnes.pop("situation")
+
+    if "domaine" in colonnes:
+        retenu = domaine_retenu(colonnes["domaine"])
+        if retenu:
+            colonnes["domaine"] = retenu
+        else:
+            colonnes.pop("domaine")
+
+    if "telephone" in colonnes:
+        numero = normaliser_telephone(colonnes["telephone"])
+        if numero:
+            colonnes["telephone"] = numero
+        else:
+            colonnes.pop("telephone")
+
+    if "etablissement" in colonnes:
+        colonnes["etablissement"] = \
+            str(colonnes["etablissement"]).strip()[:LONGUEUR_ETABLISSEMENT]
+    if "bio" in colonnes:
+        colonnes["bio"] = str(colonnes["bio"]).strip()[:2000]
+    if "ville" in colonnes:
+        colonnes["ville"] = str(colonnes["ville"]).strip()[:120]
+
+    objectifs = bloc.get("objectifs")
+    if isinstance(objectifs, (list, tuple)):
+        retenus = []
+        for brut in list(objectifs)[:LIMITE_OBJECTIFS]:
+            officiel = _canoniser(brut, OBJECTIFS)
+            if officiel and officiel not in retenus:
+                retenus.append(officiel)
+        if retenus:
+            colonnes["objectif"] = \
+                SEPARATEUR_OBJECTIFS.join(retenus)[:LONGUEUR_OBJECTIFS]
+
+    id_pays = id_pays_depuis(bloc.get("id_pays") or bloc.get("pays"))
+    if id_pays:
+        colonnes["id_pays"] = id_pays
+
+    return colonnes, ids_secteurs_depuis(bloc.get("secteurs")), None
 
 
 @bp_profil.get("/referentiels-profil")
@@ -253,7 +405,6 @@ def modifier_profil():
     A_CHOIX_FERME = (
         ("situation", SITUATIONS, "Situation inconnue."),
         ("niveau_etudes", NIVEAUX_ETUDES, "Niveau d'études inconnu."),
-        ("domaine", DOMAINES, "Domaine inconnu."),
     )
     for cle, liste, message in A_CHOIX_FERME:
         if cle not in champs:
@@ -262,6 +413,26 @@ def modifier_profil():
         if retenu is None:
             return jsonify({"erreur": message}), 400
         champs[cle] = retenu
+
+    # Le domaine, lui, reste ouvert : voir domaine_retenu.
+    if "domaine" in champs:
+        retenu = domaine_retenu(champs["domaine"])
+        if retenu is None:
+            return jsonify({"erreur": "Précisez votre domaine ou métier "
+                                      "en toutes lettres."}), 400
+        champs["domaine"] = retenu
+
+    # Les noms passent par la même mise en forme qu'à l'inscription :
+    # une modification de profil ne doit pas rouvrir la porte que
+    # l'inscription vient de fermer.
+    for cle in ("prenom", "nom"):
+        if cle not in champs:
+            continue
+        propre = normaliser_nom(champs[cle])
+        if not propre:
+            return jsonify({"erreur":
+                "Le prénom et le nom doivent contenir des lettres."}), 400
+        champs[cle] = propre
 
     # Plusieurs objectifs a la fois. Personne ne cherche une seule chose
     # : on prepare un depart a l'etranger tout en cherchant un stage, on
@@ -294,6 +465,20 @@ def modifier_profil():
                 f"{LONGUEUR_TEL_MIN} et {LONGUEUR_TEL_MAX} chiffres, "
                 "avec ou sans indicatif."}), 400
         champs["telephone"] = numero
+
+    # La photo est stockée dans la base, faute de disque persistant sur
+    # l'hébergement. La page la réduit avant de l'envoyer ; cette borne
+    # est le garde-fou, pour qu'un client modifié ne puisse pas y loger
+    # une image entière.
+    if "photo_url" in champs:
+        photo = str(champs["photo_url"]).strip()
+        if len(photo) > LONGUEUR_PHOTO:
+            return jsonify({"erreur":
+                "Image trop lourde. Choisissez une photo plus légère."}), 400
+        if photo and not photo.startswith(("data:image/", "http://",
+                                           "https://")):
+            return jsonify({"erreur": "Format d'image non reconnu."}), 400
+        champs["photo_url"] = photo
 
     if "etablissement" in champs:
         champs["etablissement"] = \

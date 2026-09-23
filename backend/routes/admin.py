@@ -6,6 +6,7 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request, g
 
+from utils.noms import normaliser_nom
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from utils.auth_helpers import admin_requis
 from utils.permissions import (PERMISSIONS, PERMISSIONS_PAR_DEFAUT,
@@ -789,8 +790,8 @@ def creer_administrateur():
             "Seul un super administrateur crée des administrateurs."}), 403
 
     d = request.get_json(silent=True) or {}
-    prenom = (d.get("prenom") or "").strip()
-    nom = (d.get("nom") or "").strip()
+    prenom = normaliser_nom(d.get("prenom")) or ""
+    nom = normaliser_nom(d.get("nom")) or ""
     email = (d.get("email") or "").strip().lower()
     droits = normaliser(d.get("permissions") or PERMISSIONS_PAR_DEFAUT)
     super_admin = bool(d.get("super_admin"))

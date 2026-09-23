@@ -19,6 +19,7 @@ Vercel, Neon, Supabase et Render) suffit : elle contient l'hôte, le
 port, l'utilisateur, le mot de passe et la base.
 """
 
+import logging
 import os
 import re
 import sqlite3
@@ -26,6 +27,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from flask import g, current_app
+
+logger = logging.getLogger("lasourcee.db")
 
 
 # ----- Détection du moteur ------------------------------------------------
@@ -157,6 +160,11 @@ def _ouvrir_connexion():
         chemin.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(chemin), isolation_level="DEFERRED")
         conn.row_factory = sqlite3.Row
+        # Une base écrite par un autre outil peut contenir des octets
+        # qui ne sont pas de l'UTF-8 valide. Par défaut la lecture de
+        # la ligne entière échoue en erreur serveur ; ici le caractère
+        # fautif est remplacé et la page continue de s'afficher.
+        conn.text_factory = lambda octets: octets.decode("utf-8", "replace")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
         return conn, "sqlite"
@@ -186,6 +194,17 @@ def _ouvrir_connexion():
                     dbname=cfg["DB_NAME"], row_factory=extras,
                 )
         conn.autocommit = False
+        # L'encodage client était laissé au réglage du serveur. Sur un
+        # hébergement dont la locale est « C », il vaut SQL_ASCII : les
+        # accents partent alors en base comme des octets bruts et
+        # reviennent en caractères illisibles. On le fixe.
+        try:
+            if version == 2:
+                conn.set_client_encoding("UTF8")
+            else:
+                conn.execute("SET client_encoding TO 'UTF8'")
+        except Exception as exc:       # pragma: no cover - dépend du serveur
+            logger.warning("Encodage client PostgreSQL inchangé : %s", exc)
         return conn, "postgres"
 
     # ---- MySQL ----------------------------------------------------------

@@ -19,6 +19,8 @@ from utils.auth_helpers import (
     supprimer_cookie_session,
 )
 from utils.urls import url_publique
+from utils.noms import normaliser_nom
+from routes.profil import profil_initial
 from utils.securite import (
     mot_de_passe_valide,
     est_bloque,
@@ -59,11 +61,19 @@ def inscription():
             f"Réessayez dans environ {max(1, reste // 60)} minute(s).", 429)
 
     d = request.get_json(silent=True) or {}
-    prenom = (d.get("prenom") or "").strip()
-    nom    = (d.get("nom") or "").strip()
+    # Les noms sont remis en forme avant d'être écrits : accents
+    # recomposés, espaces en trop et caractères invisibles retirés,
+    # casse rétablie quand tout est saisi en majuscules ou en
+    # minuscules. Sans cela la base garde plusieurs écritures du même
+    # nom, dont certaines s'affichent de travers.
+    prenom = normaliser_nom(d.get("prenom"))
+    nom    = normaliser_nom(d.get("nom"))
     email  = (d.get("email") or "").strip().lower()
     mdp    = d.get("mot_de_passe") or ""
     role   = d.get("role") or "etudiant"
+
+    if prenom is None or nom is None:
+        return _erreur("Le prénom et le nom doivent contenir des lettres.")
 
     # Le consentement est exigé, puis enregistré daté et versionné. Un
     # accord dont on ne sait ni quand il a été donné ni à quel texte il
@@ -88,19 +98,38 @@ def inscription():
                     (email,)):
         return _erreur("Cette adresse e-mail est déjà utilisée.", 409)
 
+    # Ce que l'accueil guidé a recueilli est écrit dans la même
+    # transaction que le compte. Auparavant, l'interface gardait ces
+    # informations en mémoire et ne les envoyait qu'après la saisie du
+    # code de confirmation : quiconque fermait l'onglet pour aller lire
+    # son e-mail perdait tout, et retrouvait un profil vide qui lui
+    # redemandait ce qu'il venait de saisir.
+    colonnes, secteurs, _ = profil_initial(d.get("profil"))
+
     hache = hacher_mot_de_passe(mdp)
     with curseur(commit=True) as cur:
+        noms_sup = list(colonnes)
         cur.execute(
             """INSERT INTO utilisateur
                   (prenom, nom, email, mot_de_passe, role, email_verifie,
-                   consentement_le, consentement_version, accepte_notifs)
-               VALUES (%s, %s, %s, %s, %s, 0, %s, %s, %s)""",
+                   consentement_le, consentement_version, accepte_notifs"""
+            + "".join(f", {c}" for c in noms_sup)
+            + """)
+               VALUES (%s, %s, %s, %s, %s, 0, %s, %s, %s"""
+            + ", %s" * len(noms_sup) + ")",
             (prenom, nom, email, hache, role,
              datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
              VERSION_CONSENTEMENT,
-             1 if consent.get("notifications") else 0),
+             1 if consent.get("notifications") else 0)
+            + tuple(colonnes[c] for c in noms_sup),
         )
         id_user = cur.lastrowid
+        for id_secteur in secteurs:
+            cur.execute(
+                """INSERT INTO utilisateur_secteur
+                      (id_utilisateur, id_secteur) VALUES (%s, %s)""",
+                (id_user, id_secteur),
+            )
         # Les mentors ont une ligne associée pour leurs détails publics.
         if role == "mentor":
             cur.execute(

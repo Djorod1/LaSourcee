@@ -17,6 +17,7 @@ from urllib.parse import urlencode
 
 from flask import Blueprint, current_app, jsonify, redirect, request, session
 
+from utils.noms import normaliser_nom, depuis_adresse
 from models.db import recuperer_un, executer, curseur
 from utils.auth_helpers import creer_session, poser_cookie_session
 
@@ -78,8 +79,8 @@ def connexion_google():
     sub = info.get("sub")
     email = (info.get("email") or "").lower()
     email_verifie = bool(info.get("email_verified"))
-    prenom = info.get("given_name") or email.split("@")[0]
-    nom = info.get("family_name") or ""
+    prenom = normaliser_nom(info.get("given_name")) or depuis_adresse(email)
+    nom = normaliser_nom(info.get("family_name")) or ""
     photo = info.get("picture")
 
     if not sub or not email:
@@ -208,8 +209,8 @@ def retour_linkedin():
     sub = info.get("sub")
     email = (info.get("email") or "").lower()
     email_verifie = bool(info.get("email_verified"))
-    prenom = info.get("given_name") or email.split("@")[0]
-    nom = info.get("family_name") or ""
+    prenom = normaliser_nom(info.get("given_name")) or depuis_adresse(email)
+    nom = normaliser_nom(info.get("family_name")) or ""
     photo = info.get("picture")
 
     if not sub or not email:
