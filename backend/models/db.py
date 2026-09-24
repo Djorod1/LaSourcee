@@ -588,51 +588,83 @@ def _colonnes_existantes(cur, moteur, table):
     return {l["column_name"] for l in cur.fetchall()}
 
 
+def _plan_colonnes(cur, moteur):
+    """Colonnes déjà présentes, par table, en une lecture par table.
+
+    L'ancienne version interrogeait ``information_schema`` une fois par
+    colonne attendue : dix-neuf requêtes identiques pour la seule table
+    ``utilisateur``, trente-sept en tout, à chaque démarrage à froid.
+    Sur une plateforme sans serveur, un démarrage à froid arrive à
+    n'importe quelle visite, et ces requêtes s'ajoutent au temps
+    d'attente de quelqu'un qui ouvre simplement la page.
+    """
+    tables = {t for t, _, _ in COLONNES_ATTENDUES}
+    return {t: _colonnes_existantes(cur, moteur, t) for t in tables}
+
+
 def completer_colonnes(app):
     """Ajoute les colonnes manquantes à une base déjà en service.
 
     Ne lève jamais : une base momentanément injoignable ou un droit
     insuffisant ne doivent pas empêcher le site de répondre. L'anomalie
     est journalisée, et la route concernée signalera l'absence.
+
+    Chaque instruction a sa propre transaction. Elles partageaient la
+    même, et PostgreSQL refuse tout ce qui suit une erreur dans une
+    transaction : « current transaction is aborted ». Une seule entrée
+    fautive suffisait donc à faire échouer toutes les suivantes, et même
+    à annuler celles déjà passées — le journal annonçait « colonne
+    ajoutée » pour une colonne qui ne l'était plus au moment du
+    rollback. Une base restait indéfiniment en retard sur le code,
+    pendant que les traces affirmaient le contraire.
     """
     import logging
     logger = logging.getLogger("lasource")
+
+    def _isoler(libelle, action):
+        """Exécute une instruction seule, et dit si elle a tenu."""
+        try:
+            with curseur(commit=True) as cur:
+                action(cur)
+            return True
+        except Exception as exc:
+            logger.warning("%s : %s", libelle, exc)
+            return False
 
     try:
         with app.app_context():
             moteur = app.config.get("DB_TYPE", _type_db())
             if moteur == "mysql":
                 return          # migrations appliquées à la main
-            with curseur(commit=True) as cur:
-                # Les tables d'abord : une colonne ne s'ajoute pas à une
-                # table qui n'existe pas.
-                for table, formes in TABLES_ATTENDUES:
-                    try:
-                        if _table_existe(cur, moteur, table):
-                            continue
-                        cur.execute(formes.get(moteur) or formes["sqlite"])
-                        for index in formes.get("index", []):
-                            try:
-                                cur.execute(index)
-                            except Exception:
-                                pass    # index déjà là : sans conséquence
-                        logger.info("Table %s créée sur la base en service",
-                                    table)
-                    except Exception as exc:
-                        logger.warning("Table %s non créée : %s", table, exc)
 
-                for table, colonne, definition in COLONNES_ATTENDUES:
-                    try:
-                        if colonne in _colonnes_existantes(cur, moteur, table):
-                            continue
-                        cur.execute(
-                            f"ALTER TABLE {table} ADD COLUMN {colonne} {definition}")
-                        logger.info(
-                            "Colonne %s.%s ajoutée à une base existante.",
-                            table, colonne)
-                    except Exception as exc:
-                        logger.warning(
-                            "Ajout de %s.%s impossible : %s",
-                            table, colonne, exc)
+            # Les tables d'abord : une colonne ne s'ajoute pas à une
+            # table qui n'existe pas.
+            with curseur() as cur:
+                manquantes = [(t, f) for t, f in TABLES_ATTENDUES
+                              if not _table_existe(cur, moteur, t)]
+            for table, formes in manquantes:
+                if _isoler(f"Table {table} non créée",
+                           lambda c, f=formes: c.execute(
+                               f.get(moteur) or f["sqlite"])):
+                    logger.info("Table %s créée sur la base en service", table)
+                    for index in formes.get("index", []):
+                        # Un index déjà présent est sans conséquence, mais
+                        # il doit rester dans son coin : sur PostgreSQL,
+                        # son échec emporterait la suite.
+                        _isoler(f"Index de {table} non créé",
+                                lambda c, i=index: c.execute(i))
+
+            with curseur() as cur:
+                presentes = _plan_colonnes(cur, moteur)
+            for table, colonne, definition in COLONNES_ATTENDUES:
+                if colonne in presentes.get(table, set()):
+                    continue
+                if _isoler(
+                        f"Ajout de {table}.{colonne} impossible",
+                        lambda c, t=table, n=colonne, d=definition: c.execute(
+                            f"ALTER TABLE {t} ADD COLUMN {n} {d}")):
+                    logger.info(
+                        "Colonne %s.%s ajoutée à une base existante.",
+                        table, colonne)
     except Exception as exc:
         logger.warning("Contrôle des colonnes ignoré : %s", exc)

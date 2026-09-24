@@ -1061,7 +1061,8 @@ function rendreSidebarProfil() {
   const proches = mentors.filter(m => miens.has(m.secteur));
   document.getElementById('mentors-suivis').innerHTML =
     (proches.length ? proches : mentors).slice(0, 4).map(m => `
-      <div class="suivi-item" onclick="ouvrirProfilMentor(${m.id})">
+      <div class="suivi-item" role="button" tabindex="0"
+           onclick="ouvrirProfilMentor(${m.id})">
         ${avatarHTML(m.initiales, 's')}
         <div class="info"><strong>${echapper(m.prenom + ' ' + m.nom)}</strong><span>${echapper(m.secteur)}</span></div>
       </div>`).join('')
@@ -1510,7 +1511,8 @@ function reponseHTML(r, qid, imbriquee = false) {
       data-rep="${r.id}">
     ${[1,2,3,4,5].map(i => `<span class="${
       i <= Math.round(r.maNote || r.note || 0) ? '' : 'vide'}"${
-      sienne ? '' : ` onclick="noterReponse(${r.id}, ${i}, this)"`}>★</span>`).join('')}
+      sienne ? '' : ` role="button" tabindex="0" aria-label="Noter ${i} sur 5"`
+        + ` onclick="noterReponse(${r.id}, ${i}, this)"`}>★</span>`).join('')}
     ${r.nbNotes ? `<span class="etoiles-bilan">${r.note} sur ${r.nbNotes} avis</span>`
                 : '<span class="etoiles-bilan">Aucun avis</span>'}
   </span>` : '';
@@ -1879,9 +1881,12 @@ function rendreProfil() {
   const onglets = document.getElementById('tabs-profil');
   onglets.style.display = '';
   onglets.innerHTML = `
-    <div class="tab-profil actif" onclick="ongletProfil(this, 'activite')">Mon activité</div>
-    <div class="tab-profil" onclick="ongletProfil(this, 'apropos')">À propos</div>
-    <div class="tab-profil" onclick="ongletProfil(this, 'sauvees')">Questions sauvegardées</div>`;
+    <button type="button" class="tab-profil actif" role="tab" aria-selected="true"
+            onclick="ongletProfil(this, 'activite')">Mon activité</button>
+    <button type="button" class="tab-profil" role="tab" aria-selected="false"
+            onclick="ongletProfil(this, 'apropos')">À propos</button>
+    <button type="button" class="tab-profil" role="tab" aria-selected="false"
+            onclick="ongletProfil(this, 'sauvees')">Questions sauvegardées</button>`;
   ongletProfil(onglets.querySelector('.tab-profil.actif'), 'activite');
 }
 
@@ -1919,7 +1924,7 @@ function blocActivite(u, moi = false) {
     <div class="carte bloc-activite">
       <div class="carte-titre">${moi ? 'Mes questions' : 'Ses questions'}</div>
       ${questionsRecentes.map(q => `
-        <div class="ligne-activite" onclick="ouvrirQuestion(${q.id_question})">
+        <div class="ligne-activite" role="button" tabindex="0" onclick="ouvrirQuestion(${q.id_question})">
           <strong>${echapper(q.titre)}</strong>
           <span class="meta-activite">
             ${echapper(q.secteur || 'Sans secteur')} ·
@@ -1934,7 +1939,7 @@ function blocActivite(u, moi = false) {
     <div class="carte bloc-activite">
       <div class="carte-titre">${moi ? 'Mes réponses' : 'Ses réponses'}</div>
       ${reponsesRecentes.map(r => `
-        <div class="ligne-activite" onclick="ouvrirQuestion(${r.id_question})">
+        <div class="ligne-activite" role="button" tabindex="0" onclick="ouvrirQuestion(${r.id_question})">
           <strong>${echapper(r.titre)}</strong>
           <p class="extrait-activite">${echapper(r.extrait || '')}</p>
           <span class="meta-activite">
@@ -1996,8 +2001,10 @@ function rendreProfilMentor(m) {
       <span class="stat-label">Sur LaSourcee</span>
     </div>`;
   document.getElementById('tabs-profil').innerHTML = `
-    <div class="tab-profil actif" onclick="ongletMentor(this, 'apropos')">À propos</div>
-    <div class="tab-profil" onclick="ongletMentor(this, 'reponses')">Réponses récentes</div>`;
+    <button type="button" class="tab-profil actif" role="tab" aria-selected="true"
+            onclick="ongletMentor(this, 'apropos')">À propos</button>
+    <button type="button" class="tab-profil" role="tab" aria-selected="false"
+            onclick="ongletMentor(this, 'reponses')">Réponses récentes</button>`;
   ongletMentor(document.querySelector('.tab-profil.actif'), 'apropos');
 }
 function ongletMentor(elem, t) {
@@ -2011,7 +2018,7 @@ function ongletMentor(elem, t) {
       <div style="margin-top:14px;"><button class="btn btn-fantome btn-petit" onclick="profilCible = null; rendreProfil()">← Retour à mon profil</button></div>`;
   } else {
     const reps = questions.flatMap(q => q.reponses.filter(r => r.auteur.includes(m.prenom)).map(r => ({...r, question: q.titre, qid: q.id})));
-    c.innerHTML = reps.length ? reps.map(r => `<div class="carte" style="margin-bottom:12px; cursor:pointer;" onclick="ouvrirQuestion(${r.qid})"><strong>Sur :</strong> ${echapper(r.question)}<p style="margin-top:8px; color:var(--texte-doux);">${echapper(r.contenu)}</p></div>`).join('')
+    c.innerHTML = reps.length ? reps.map(r => `<div class="carte" style="margin-bottom:12px; cursor:pointer;" role="button" tabindex="0" onclick="ouvrirQuestion(${r.qid})"><strong>Sur :</strong> ${echapper(r.question)}<p style="margin-top:8px; color:var(--texte-doux);">${echapper(r.contenu)}</p></div>`).join('')
       : `<div class="etat-vide carte"><div class="illu">${ic('bulle','ic ic-l')}</div><h3>Pas de réponse récente</h3></div>`;
   }
 }
@@ -2301,7 +2308,8 @@ function basculerNotifs() {
 }
 function rendreNotifications() {
   document.getElementById('liste-notifs').innerHTML = notifications.map((n, i) => `
-    <div class="notif-item ${n.nonLu?'non-lu':''} ${n.questionId ? 'cliquable' : ''}" onclick="cliquerNotif(${i})">
+    <div class="notif-item ${n.nonLu?'non-lu':''} ${n.questionId ? 'cliquable' : ''}"
+         role="button" tabindex="0" onclick="cliquerNotif(${i})">
       <div class="notif-icone">${ic('cloche','ic ic-s')}</div>
       <div><p>${echapper(n.texte)}</p>${baliseTemps(n.cree_le)}</div>
     </div>`).join('');
@@ -2418,7 +2426,7 @@ async function _rechercherVraiment(terme) {
   let html = '';
   if ((r.mentors || []).length) {
     html += '<h5>Référents</h5>';
-    html += r.mentors.map(m => `<div class="res-item"
+    html += r.mentors.map(m => `<div class="res-item" role="button" tabindex="0"
         onclick="ouvrirProfilUtilisateur(${m.id_utilisateur}); fermerRecherche();">
         ${avatarHTML(initialesDe(m.prenom, m.nom), 's', m.photo_url)}
         <span>${echapper((m.prenom || '') + ' ' + (m.nom || ''))}</span>
@@ -2426,14 +2434,14 @@ async function _rechercherVraiment(terme) {
   }
   if ((r.questions || []).length) {
     html += '<h5>Questions</h5>';
-    html += r.questions.map(q => `<div class="res-item"
+    html += r.questions.map(q => `<div class="res-item" role="button" tabindex="0"
         onclick="ouvrirQuestion(${q.id_question}); fermerRecherche();">
         <span>${echapper(q.titre)}</span>
       </div>`).join('');
   }
   if ((r.secteurs || []).length) {
     html += '<h5>Secteurs</h5>';
-    html += r.secteurs.map(s => `<div class="res-item"
+    html += r.secteurs.map(s => `<div class="res-item" role="button" tabindex="0"
         onclick="filtrerParSecteur(${chaineJS(s.libelle)}); fermerRecherche();">
         <span class="tag">${echapper(s.libelle)}</span>
       </div>`).join('');
@@ -3613,7 +3621,9 @@ async function adminCategories() {
         ${liste.map(s => `
           <span class="tag" style="display:inline-flex; align-items:center; gap:6px;">
             ${echapper(s.libelle)}
-            <span style="cursor:pointer; font-weight:700;" onclick="supprimerCat(${s.id_secteur},${chaineJS(s.libelle)})">×</span>
+            <button type="button" class="tag-sup"
+                    aria-label="Supprimer ${echapper(s.libelle)}"
+                    onclick="supprimerCat(${s.id_secteur},${chaineJS(s.libelle)})">×</button>
           </span>`).join('')}
       </div>
       <div style="display:flex; gap:8px;">
@@ -3692,7 +3702,7 @@ async function adminAudit() {
       <thead><tr><th>Date et heure</th><th>Acteur</th><th>Action</th><th>Cible</th><th>Détails</th><th>Adresse IP</th></tr></thead>
       <tbody>${entrees.map(a => `<tr>
         <td class="horodatage">${baliseTemps(a.cree_le, { relatif: false })}</td>
-        <td><span class="nom-cliquable" onclick="filtrerAudit('acteur', ${a.id_acteur})">${echapper((a.prenom || '') + ' ' + (a.nom || ''))}</span></td>
+        <td><span class="nom-cliquable" role="button" tabindex="0" onclick="filtrerAudit('acteur', ${a.id_acteur})">${echapper((a.prenom || '') + ' ' + (a.nom || ''))}</span></td>
         <td><span class="tag">${echapper(a.action)}</span></td>
         <td>${a.type_cible ? echapper(a.type_cible) + ' n° ' + a.id_cible : '·'}</td>
         <td style="font-size:12px; color:var(--texte-doux);">${echapper(a.details || '')}</td>
@@ -5124,6 +5134,28 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') fermerPhoto();
 });
 
+/* Tout ce qui se dit bouton se comporte comme un bouton.
+
+   Plusieurs éléments portaient role="button" et tabindex="0" sans le
+   gestionnaire de clavier qui va avec : ils prenaient le focus, se
+   présentaient comme des boutons à un lecteur d'écran, et ne faisaient
+   rien quand on appuyait sur Entrée. Promettre puis ne pas tenir est
+   pire que ne rien promettre. D'autres, cliquables, n'étaient pas
+   annonçables du tout : onglets de profil, résultats de recherche,
+   notifications, lignes d'activité.
+
+   Un seul écouteur délégué vaut mieux qu'un onkeydown recopié à chaque
+   endroit : celui qui ajoute un élément demain n'a plus à y penser. */
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+  const cible = e.target;
+  if (!cible || cible.getAttribute('role') !== 'button') return;
+  if (cible.tagName === 'BUTTON' || cible.tagName === 'A') return;
+  if (cible.getAttribute('aria-disabled') === 'true') return;
+  e.preventDefault();          // la barre d'espace ferait défiler la page
+  cible.click();
+});
+
 /* Avatar cliquable : il ouvre le profil de la personne, et la photo en
    grand si l'on clique dessus alors que le profil est déjà ouvert. */
 function avatarLien(id, initiales, taille, photo, verifie, nom) {
@@ -5289,8 +5321,10 @@ function rendreProfilAutre(u) {
   if (onglets) {
     onglets.style.display = '';
     onglets.innerHTML = `
-      <div class="tab-profil actif" onclick="ongletProfilAutre(this, 'activite')">Activité</div>
-      <div class="tab-profil" onclick="ongletProfilAutre(this, 'apropos')">À propos</div>`;
+      <button type="button" class="tab-profil actif" role="tab" aria-selected="true"
+              onclick="ongletProfilAutre(this, 'activite')">Activité</button>
+      <button type="button" class="tab-profil" role="tab" aria-selected="false"
+              onclick="ongletProfilAutre(this, 'apropos')">À propos</button>`;
     _profilAffiche = u;
     ongletProfilAutre(onglets.querySelector('.tab-profil.actif'), 'activite');
   }

@@ -152,6 +152,12 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   font-size: 12px; font-weight: 500; background: var(--primaire-clair); color: var(--primaire);
 }
 .tag-ambre { background: var(--accent-clair); color: #7A1A1A; }
+/* Croix de suppression d'une étiquette : un bouton, pas un <span> muet
+   sur lequel on ne pouvait ni tabuler ni appuyer sur Entrée. */
+.tag-sup {
+  color: inherit; font-weight: 700; line-height: 1;
+  padding: 0 2px; border-radius: 4px;
+}
 /* Le vert subsiste pour ce qui est valide ou confirme : c'est une
    convention universelle, pas une couleur de marque. Le rendre bleu
    le confondrait avec le reste de l'interface. */
@@ -728,7 +734,7 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   padding: 0 8px;
 }
 .tab-profil {
-  flex: 1; text-align: center;
+  flex: 1; text-align: center; background: none; border: none;
   padding: 14px 16px; font-size: 14px; color: var(--texte-doux);
   cursor: pointer; border-bottom: 2px solid transparent; font-weight: 500;
   transition: color .15s ease, border-color .15s ease;
@@ -1026,9 +1032,6 @@ img, svg, video { max-width: 100%; height: auto; }
   .modal { max-width: 92vw; }
   .messagerie { grid-template-columns: 1fr; height: auto; margin: 12px; }
   .liste-conv { max-height: 280px; border-right: none; border-bottom: 1px solid var(--bordure); }
-  .entete-profil { flex-direction: column; padding-top: 70px; }
-  .entete-profil .infos { margin-left: 0; width: 100%; }
-  .entete-profil .actions { width: 100%; flex-wrap: wrap; }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
   .contenu-admin { padding: 16px; }
   .barre-graphique .label { width: 100px; font-size: 12px; }
@@ -1110,13 +1113,11 @@ img, svg, video { max-width: 100%; height: auto; }
   .messagerie { margin: 8px; border-radius: var(--rayon-s); }
 
   .banniere { height: 130px; margin-bottom: -50px; border-radius: var(--rayon-m); }
-  .entete-profil { padding: 60px 16px 18px; border-radius: var(--rayon-m); }
-  .entete-profil h2 { font-size: 1.35rem; }
-  .entete-profil .avatar-xl { width: 96px; height: 96px; font-size: 32px; top: -48px; left: 50%; transform: translateX(-50%); }
-  .entete-profil .infos { text-align: center; }
-  .entete-profil .ligne-meta { justify-content: center; }
-  .entete-profil .actions { justify-content: center; }
-  .entete-profil .actions .btn { flex: 1 1 auto; }
+  .entete-profil { padding: 20px 16px; }
+  .entete-profil .col-infos h2 { font-size: 1.35rem; }
+  .entete-profil .col-avatar .avatar-xl { width: 96px; height: 96px; font-size: 32px; }
+  .entete-profil .col-actions { flex-direction: column; }
+  .entete-profil .col-actions .btn { width: 100%; }
 
   .tab-profil { padding: 8px 12px; font-size: 13px; }
 
@@ -1404,27 +1405,14 @@ img, svg, video { max-width: 100%; height: auto; }
   border-radius: inherit;
 }
 
-.entete-profil {
-  background: var(--surface);
-  border: 1px solid var(--bordure);
-  border-radius: 0 0 var(--rayon-m) var(--rayon-m);
-  padding: 24px;
-  display: flex; gap: 20px; align-items: flex-start;
-  position: relative;
-}
-.entete-profil .avatar-xl {
-  border: 4px solid var(--surface);
-  margin-top: -36px;
-  box-shadow: var(--ombre-m);
-}
-.entete-profil .infos { flex: 1; min-width: 0; padding-top: 4px; }
-.entete-profil .infos h2 { font-size: 1.6rem; margin-bottom: 6px; display: flex; align-items: center; gap: 10px; }
-.entete-profil .actions { display: flex; flex-direction: column; gap: 8px; }
-.entete-profil .ligne-meta {
-  display: flex; flex-wrap: wrap; gap: 14px;
-  color: var(--texte-doux); font-size: 14px; margin: 8px 0;
-}
-.entete-profil .ligne-meta > span { display: inline-flex; align-items: center; gap: 6px; }
+/* L'en-tete du profil etait declaree deux fois. Celle-ci, ecrite pour un
+   balisage qui n'existe plus (.infos, .actions, un avatar en debord
+   negatif), venait apres et gagnait donc la cascade : le profil
+   s'affichait en flex, avec les bords d'une carte accolee a une
+   banniere, alors que le balisage genere est une grille a trois colonnes
+   (.col-avatar, .col-infos, .col-actions). Les regles mobiles prevues
+   pour cette grille etaient neutralisees du meme coup, d'ou l'avatar qui
+   debordait sur telephone. Une seule declaration, plus haut. */
 
 /* ============================================================
    DISTINCTION MENTOR (innovation visuelle)

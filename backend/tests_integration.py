@@ -3632,6 +3632,76 @@ def executer_tests():
              (r.get_json() or {}).get("reponse_remise") == "notification",
              str(r.get_json())[:110])
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  48. LA MISE À NIVEAU DU SCHÉMA VA JUSQU'AU BOUT")
+    print("═" * 70)
+
+    import models.db as _db
+    from models.db import recuperer_tous as _lire
+
+    # Toutes les instructions partageaient une transaction. PostgreSQL
+    # refuse tout ce qui suit une erreur dans une transaction : une seule
+    # entree fautive faisait echouer les suivantes, et annulait meme
+    # celles deja passees. Le journal annoncait « colonne ajoutee » pour
+    # une colonne qui ne l'etait plus au moment du rollback.
+    with app.app_context():
+        _maj("DROP TABLE IF EXISTS essai_migration", (), commit=True)
+        _maj("CREATE TABLE essai_migration (id INTEGER)", (), commit=True)
+
+    _avant_colonnes = _db.COLONNES_ATTENDUES
+    _db.COLONNES_ATTENDUES = [
+        ("essai_migration", "premiere", "TEXT"),
+        ("table_qui_nexiste_pas", "peu_importe", "TEXT"),   # échoue
+        ("essai_migration", "apres_lechec", "TEXT"),
+    ]
+    _lectures = {"n": 0}
+    _vraie_lecture = _db._colonnes_existantes
+
+    def _compter_lectures(cur, moteur, table):
+        _lectures["n"] += 1
+        return _vraie_lecture(cur, moteur, table)
+
+    _db._colonnes_existantes = _compter_lectures
+    try:
+        _db.completer_colonnes(app)
+    finally:
+        _db._colonnes_existantes = _vraie_lecture
+        _db.COLONNES_ATTENDUES = _avant_colonnes
+
+    with app.app_context():
+        if os.environ["DB_TYPE"] == "postgres":
+            _cols = {c["column_name"] for c in _lire(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'essai_migration'")}
+        else:
+            _cols = {c["name"] for c in _lire(
+                "PRAGMA table_info(essai_migration)")}
+
+    verifier("Une colonne ajoutée avant l'erreur est conservée",
+             "premiere" in _cols, str(sorted(_cols)))
+    verifier("Et celle qui suit l'erreur est ajoutée quand même",
+             "apres_lechec" in _cols, str(sorted(_cols)))
+
+    # Le schema etait relu une fois par colonne attendue : trente-trois
+    # requetes identiques a chaque demarrage a froid, la ou cinq
+    # suffisent. Sur une plateforme sans serveur, un demarrage a froid
+    # arrive a n'importe quelle visite.
+    _lectures["n"] = 0
+    _db._colonnes_existantes = _compter_lectures
+    try:
+        _db.completer_colonnes(app)
+    finally:
+        _db._colonnes_existantes = _vraie_lecture
+    _tables = len({t for t, _, _ in _db.COLONNES_ATTENDUES})
+    verifier("Le schéma est lu une fois par table, pas une fois par colonne",
+             _lectures["n"] == _tables,
+             f"{_lectures['n']} lectures pour {_tables} tables et "
+             f"{len(_db.COLONNES_ATTENDUES)} colonnes attendues")
+
+    with app.app_context():
+        _maj("DROP TABLE IF EXISTS essai_migration", (), commit=True)
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

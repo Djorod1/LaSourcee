@@ -682,6 +682,30 @@ def executer():
     verifier("Les pastilles de secteur restent des boutons",
              not pastilles_div, f"{len(pastilles_div)} pastille(s) en <div>")
 
+    # Le contrôle de la page ne voit pas le HTML que le script fabrique,
+    # et c'est là que se cachaient les onglets de profil, les résultats
+    # de recherche, les notifications et les lignes d'activité : tous
+    # cliquables, aucun atteignable au clavier. On relit donc aussi les
+    # balises ouvrantes écrites dans les gabarits du script.
+    muets = []
+    for ouvrante in re.finditer(r"<(div|span|li|td|tr)\b[^>]*?\bonclick=",
+                                script):
+        fin = script.find(">", ouvrante.start())
+        balise = script[ouvrante.start():fin if fin > 0 else ouvrante.end()]
+        if "tabindex" in balise:
+            continue
+        muets.append(f"l.{script.count(chr(10), 0, ouvrante.start()) + 1}")
+    verifier("Le HTML fabriqué par le script est lui aussi utilisable au clavier",
+             not muets, ", ".join(muets[:6]))
+
+    # Un élément qui se dit bouton doit se comporter comme un bouton.
+    # Plusieurs portaient role="button" sans que rien n'écoute Entrée :
+    # ils prenaient le focus, s'annonçaient comme des boutons, et ne
+    # faisaient rien.
+    verifier("Un écouteur clavier dessert les éléments role=\"button\"",
+             "getAttribute('role') !== 'button'" in script
+             and "cible.click()" in script)
+
 
 if __name__ == "__main__":
     print("\n" + "═" * 70)
