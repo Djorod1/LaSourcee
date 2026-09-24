@@ -28,13 +28,21 @@ def _autorise():
     Vercel envoie ``Authorization: Bearer $CRON_SECRET``. On accepte
     aussi un en-tête dédié, pour un ordonnanceur externe qui n'aurait
     pas la même convention.
+
+    Les deux côtés sont débarrassés de leurs espaces de bordure. Coller
+    une valeur dans un tableau de bord y laisse très facilement un
+    retour à la ligne ou une espace : la valeur configurée et celle
+    reçue cessent alors d'être égales, la comparaison échoue, et la
+    tâche répond 403 tous les deux jours sans que rien n'explique
+    pourquoi. On ne va pas laisser une espace invisible faire taire le
+    résumé.
     """
-    attendu = os.getenv("CRON_SECRET") or ""
+    attendu = (os.getenv("CRON_SECRET") or "").strip()
     if not attendu:
         return False
-    entete = request.headers.get("Authorization", "")
+    entete = request.headers.get("Authorization", "").strip()
     recu = entete[7:] if entete.startswith("Bearer ") else ""
-    recu = recu or request.headers.get("X-Cron-Secret", "")
+    recu = (recu or request.headers.get("X-Cron-Secret", "")).strip()
     return bool(recu) and hmac.compare_digest(recu, attendu)
 
 
