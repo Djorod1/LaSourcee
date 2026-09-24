@@ -218,10 +218,19 @@ def appliquer_entetes_securite(reponse):
         reponse.headers["Strict-Transport-Security"] = (
             "max-age=31536000; includeSubDomains")
 
-    # Isole la page des fenetres qu'elle ouvre et de celles qui
-    # l'ouvrent : sans cela, un site tiers gardant une reference sur
-    # notre onglet peut le rediriger.
-    reponse.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    # Isole la page des fenetres qui l'ouvrent : sans cela, un site tiers
+    # gardant une reference sur notre onglet peut le rediriger.
+    #
+    # « same-origin » coupait aussi le lien avec les fenetres que la page
+    # ouvre elle-meme. Or la connexion Google passe par One Tap
+    # (google.accounts.id.prompt), qui dialogue avec sa propre fenetre par
+    # postMessage : le lien coupe, le bouton « Continuer avec Google »
+    # s'affichait et ne menait nulle part. Rien ne l'aurait signale ici,
+    # l'echec se produisant dans le navigateur du visiteur. Google demande
+    # explicitement « same-origin-allow-popups » pour ce cas ; la
+    # protection contre le site tiers qui nous ouvre reste entiere, seule
+    # la fenetre que nous ouvrons nous-memes garde son lien.
+    reponse.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
     reponse.headers["X-Permitted-Cross-Domain-Policies"] = "none"
 
     # Les reponses de l'API ne doivent jamais etre mises en cache par un

@@ -302,6 +302,47 @@ def executer():
     verifier("En-tête X-Frame-Options",
              r.headers.get("X-Frame-Options") == "DENY")
 
+    # La connexion Google passe par One Tap, qui dialogue avec sa propre
+    # fenêtre par postMessage. « same-origin » coupe ce lien : le bouton
+    # s'affichait et ne menait nulle part, sans le moindre message. Rien
+    # ne le signalerait ici, l'échec se produisant dans le navigateur du
+    # visiteur. La protection contre le site tiers qui nous ouvre reste
+    # entière, seule la fenêtre que nous ouvrons garde son lien.
+    coop = r.headers.get("Cross-Origin-Opener-Policy", "")
+    verifier("La fenêtre de connexion Google reste jointe à la page",
+             coop == "same-origin-allow-popups", f"reçu « {coop} »")
+
+    titre("HEURE DE LA BASE DE DONNÉES")
+
+    # Toutes les dates sont écrites depuis Python en temps universel, et
+    # les colonnes dont la valeur par défaut est CURRENT_TIMESTAMP la
+    # reçoivent du serveur de base. Si celui-ci n'est pas réglé sur UTC,
+    # les deux sources divergent de l'écart du fuseau : un code de
+    # confirmation paraît expiré à l'avance, une personne connectée à
+    # l'instant semble absente depuis une heure, le résumé périodique
+    # part au mauvais moment. Rien ne lève, rien ne se voit dans les
+    # traces, et l'écart est constant donc invisible à l'œil.
+    #
+    # Les échéances de session ne dépendent plus du fuseau, elles se
+    # comparent à une heure universelle explicite. Les valeurs par défaut
+    # des colonnes, elles, ne peuvent se corriger qu'en migrant le
+    # schéma : ce contrôle les rend visibles plutôt que silencieuses.
+    with application.app_context():
+        from models.db import recuperer_un as _lire_un
+        from datetime import datetime as _dt
+        ligne = _lire_un("SELECT CURRENT_TIMESTAMP AS base") or {}
+        base = ligne.get("base")
+        ecart = None
+        if base is not None:
+            valeur = base.replace(tzinfo=None) if hasattr(base, "replace") \
+                else None
+            if valeur is not None:
+                ecart = abs((valeur - _dt.utcnow()).total_seconds())
+    verifier("L'heure de la base est la même que celle du serveur, en UTC",
+             ecart is not None and ecart < 120,
+             f"écart de {int(ecart)} s" if ecart is not None
+             else "heure illisible")
+
     # -----------------------------------------------------------------
     titre("7. CODE SOURCE NON EXPOSÉ")
     # -----------------------------------------------------------------

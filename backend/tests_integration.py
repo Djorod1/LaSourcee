@@ -928,8 +928,15 @@ def executer_tests():
     verifier("HSTS absent hors HTTPS",
              "Strict-Transport-Security" not in r.headers,
              "l'annoncer en clair rendrait le site inaccessible en local")
-    verifier("Isolation des fenêtres",
-             r.headers.get("Cross-Origin-Opener-Policy") == "same-origin")
+    # « same-origin » isolait aussi les fenetres que la page ouvre
+    # elle-meme, dont celle de la connexion Google, qui dialogue avec la
+    # page par postMessage : le bouton s'affichait et ne menait nulle
+    # part. La protection contre le site tiers qui nous ouvre reste
+    # entiere, seule la fenetre que nous ouvrons garde son lien.
+    verifier("Isolation des fenêtres qui nous ouvrent, sans couper les nôtres",
+             r.headers.get("Cross-Origin-Opener-Policy")
+             == "same-origin-allow-popups",
+             r.headers.get("Cross-Origin-Opener-Policy", "absent"))
     verifier("Les réponses de l'API ne sont pas mises en cache",
              r.headers.get("Cache-Control") == "no-store",
              r.headers.get("Cache-Control", "absent"))
@@ -3871,6 +3878,28 @@ def executer_tests():
              jeton_sql("SELECT COUNT(*) FROM evenement "
                        "WHERE contexte LIKE ?",
                        ("%a ne pas recopier%",)) == 0)
+
+    # L'echeance d'une session se comparait a CURRENT_TIMESTAMP, qui suit
+    # le fuseau du serveur de base, alors qu'elle est ecrite depuis Python
+    # en temps universel. Sur un serveur regle en UTC+1, une session
+    # valable encore trente minutes se lisait comme expiree.
+    from datetime import datetime, timedelta
+    from utils.auth_helpers import utilisateur_depuis_jeton as _lire_jeton
+    with app.app_context():
+        _maj("""INSERT INTO session_web (id_token, id_utilisateur, expire_le)
+                VALUES (%s, %s, %s)""",
+             ("jeton-echeance-proche", id_lecteur,
+              datetime.utcnow() + timedelta(minutes=30)), commit=True)
+        _maj("""INSERT INTO session_web (id_token, id_utilisateur, expire_le)
+                VALUES (%s, %s, %s)""",
+             ("jeton-deja-echu", id_lecteur,
+              datetime.utcnow() - timedelta(minutes=30)), commit=True)
+        vivante = _lire_jeton("jeton-echeance-proche")
+        morte = _lire_jeton("jeton-deja-echu")
+    verifier("Une session qui expire dans trente minutes reste valide",
+             vivante is not None)
+    verifier("Une session échue depuis trente minutes est refusée",
+             morte is None)
 
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
