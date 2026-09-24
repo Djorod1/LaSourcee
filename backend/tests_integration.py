@@ -3807,6 +3807,71 @@ def executer_tests():
     verifier("Un joker saisi dans l'annuaire n'est pas interprété",
              not tout, str([m.get("prenom") for m in tout]))
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  50. LE JOURNAL D'ACTIVITÉ ENREGISTRE CE QU'IL ANNONCE")
+    print("═" * 70)
+
+    import re as _re
+    import services.evenements as _ev
+
+    # Le module dit en tete que son vocabulaire doit rester stable, « un
+    # type invente au fil de l'eau produit des series impossibles a
+    # comparer ». Il avait derive dans les deux sens : cinq types emis
+    # sans y figurer, et onze declares sans etre emis nulle part, dont
+    # l'inscription, la connexion et la recherche. Le journal annoncait
+    # donc un vocabulaire qu'il n'employait pas, et n'enregistrait pas ce
+    # pour quoi il avait ete ecrit.
+    _emis = set()
+    for _racine, _, _fichiers in os.walk(os.path.dirname(__file__) or "."):
+        if "__pycache__" in _racine:
+            continue
+        for _f in _fichiers:
+            if not _f.endswith(".py") or _f.startswith("tests_"):
+                continue
+            _texte = open(os.path.join(_racine, _f), encoding="utf-8").read()
+            _emis |= set(_re.findall(
+                r"(?:depuis_requete|enregistrer)\(\s*\n?\s*\"([a-z_]+)\"",
+                _texte))
+    _inconnus = sorted(_emis - set(_ev.TYPES))
+    _orphelins = sorted(set(_ev.TYPES) - _emis)
+    verifier("Aucun type d'évènement n'est émis hors du vocabulaire",
+             not _inconnus, ", ".join(_inconnus))
+    verifier("Aucun type déclaré ne reste sans emploi",
+             not _orphelins, ", ".join(_orphelins))
+
+    # Et les evenements arrivent reellement en base.
+    def _compter_ev(type_ev):
+        return jeton_sql("SELECT COUNT(*) FROM evenement WHERE type_evenement = ?",
+                         (type_ev,))
+
+    verifier("Une inscription laisse une trace",
+             _compter_ev("inscription") >= 1)
+    verifier("Une connexion aussi", _compter_ev("connexion") >= 1)
+    verifier("Une recherche aussi", _compter_ev("recherche") >= 1)
+
+    # Le contenu ecrit par un membre ne doit jamais entrer ici : un export
+    # d'evenements deviendrait un export de contenus, et les lignes
+    # seraient ineffacables.
+    _avant = _compter_ev("recherche")
+    chercheur.get("/api/recherche?q=motsecretdelutilisateur")
+    verifier("La recherche suivante est comptée",
+             _compter_ev("recherche") == _avant + 1)
+    verifier("Mais le terme saisi n'est pas conservé",
+             jeton_sql("SELECT COUNT(*) FROM evenement "
+                       "WHERE contexte LIKE ?",
+                       ("%motsecretdelutilisateur%",)) == 0)
+
+    _avant_sig = _compter_ev("signalement")
+    chercheur.post(f"/api/questions/{id_q}/signaler",
+                   json={"motif": "motif prive a ne pas recopier"})
+    verifier("Un signalement laisse une trace",
+             _compter_ev("signalement") == _avant_sig + 1)
+    verifier("Sans recopier le motif écrit par la personne",
+             jeton_sql("SELECT COUNT(*) FROM evenement "
+                       "WHERE contexte LIKE ?",
+                       ("%a ne pas recopier%",)) == 0)
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

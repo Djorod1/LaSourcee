@@ -13,6 +13,7 @@ from utils.permissions import (PERMISSIONS, PERMISSIONS_PAR_DEFAUT,
                                permission_requise, permissions_de,
                                normaliser)
 from utils.audit import journaliser
+from services import evenements
 from services.notifications import notifier
 
 bp_admin = Blueprint("admin", __name__, url_prefix="/api/admin")
@@ -340,6 +341,12 @@ def supprimer_utilisateur(id_user):
     journaliser(g.utilisateur["id_utilisateur"], "supprimer_utilisateur",
                 "utilisateur", id_user,
                 f"{cible.get('email')}")
+    # Les lignes d'evenement de ce compte partent avec lui : celle-ci
+    # n'en porte pas l'identifiant, seulement le fait qu'un depart a eu
+    # lieu. Sans quoi la courbe des inscrits ne se lit plus, les departs
+    # etant invisibles.
+    evenements.depuis_requete("compte_supprime", type_cible="utilisateur",
+                              contexte={"par": "administration"})
     return jsonify({"ok": True})
 
 
@@ -573,6 +580,9 @@ def verifier_mentor(id_mentor):
 
     from routes.candidature_mentor import notifier_decision
     prevenu = notifier_decision(id_mentor, acceptee=True)
+    evenements.depuis_requete("candidature_tranchee", type_cible="utilisateur",
+                              id_cible=id_mentor,
+                              contexte={"acceptee": True})
     return jsonify({"ok": True, "email_envoye": prevenu})
 
 
@@ -597,6 +607,9 @@ def refuser_mentor(id_mentor):
              (id_mentor,), commit=True)
     journaliser(g.utilisateur["id_utilisateur"], "refuser_mentor",
                 "utilisateur", id_mentor, motif[:200] if motif else None)
+    evenements.depuis_requete("candidature_tranchee", type_cible="utilisateur",
+                              id_cible=id_mentor,
+                              contexte={"acceptee": False})
     return jsonify({"ok": True, "email_envoye": prevenu})
 
 
@@ -785,6 +798,12 @@ def traiter_signalement(id_sig):
     )
     journaliser(moi, "traiter_signalement", "signalement", id_sig,
                 libelle + (f" ({note})" if note else ""))
+    # Le journal d'audit dit qui a tranche ; le journal d'activite dit
+    # combien de decisions et lesquelles. Les deux servent, et ce second
+    # figurait au vocabulaire sans jamais rien recevoir.
+    evenements.depuis_requete("moderation", type_cible="signalement",
+                              id_cible=id_sig,
+                              contexte={"action": action, "statut": statut})
     return jsonify({"ok": True, "libelle": libelle})
 
 

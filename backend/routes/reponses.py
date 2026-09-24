@@ -217,4 +217,9 @@ def basculer_utile(id_r):
            VALUES (%s, %s, 'utile')""",
         (id_r, id_user), commit=True,
     )
+    # « Cette réponse m'a servi » est le seul signal de qualité que
+    # laisse un bénéficiaire. Il figurait au vocabulaire du journal sans
+    # y être jamais inscrit.
+    evenements.depuis_requete("reponse_utile", type_cible="reponse",
+                              id_cible=id_r)
     return jsonify({"marque": True})

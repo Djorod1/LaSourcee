@@ -21,6 +21,7 @@ from utils.auth_helpers import (
 from utils.urls import url_publique
 from utils.noms import normaliser_nom
 from routes.profil import profil_initial
+from services import evenements
 from utils.securite import (
     mot_de_passe_valide,
     est_bloque,
@@ -163,6 +164,17 @@ def inscription():
             )
 
     enregistrer_echec(cle_debit)   # ici : compte le débit, pas un échec
+
+    # L'inscription figurait au vocabulaire du journal d'activité sans y
+    # être jamais inscrite : on ne pouvait donc pas répondre à « combien
+    # de comptes cette semaine », qui est la première question qu'on se
+    # pose. Ni le nom ni l'adresse ne partent ici, seulement le rôle
+    # choisi et la complétude du profil de départ.
+    evenements.enregistrer("inscription", id_utilisateur=id_user,
+                           type_cible="utilisateur", id_cible=id_user,
+                           role=role,
+                           contexte={"secteurs": len(secteurs),
+                                     "profil_rempli": bool(colonnes)})
 
     # Envoi de l'e-mail de vérification (jeton 24h)
     email_parti = _envoyer_email_verification(id_user, email, prenom)
@@ -354,6 +366,13 @@ def connexion():
 
     token = creer_session(user["id_utilisateur"],
                           request.headers.get("User-Agent"))
+    # Sans cet évènement, impossible de dire qui revient et qui ne revient
+    # plus : la table des comptes ne connaît que la dernière connexion,
+    # elle écrase donc toutes les précédentes.
+    evenements.enregistrer("connexion",
+                           id_utilisateur=user["id_utilisateur"],
+                           role=user.get("role"),
+                           contexte={"moyen": "mot_de_passe"})
     reponse = jsonify({
         "id_utilisateur": user["id_utilisateur"],
         "role": user["role"],

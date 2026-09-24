@@ -26,6 +26,7 @@ l'extension ``unaccent`` de PostgreSQL, ou une colonne normalisée tenue
 from flask import Blueprint, jsonify, request
 
 from models.db import recuperer_tous
+from services import evenements
 from utils.auth_helpers import connexion_requise
 
 bp_recherche = Blueprint("recherche", __name__, url_prefix="/api/recherche")
@@ -88,6 +89,19 @@ def globale():
          ORDER BY libelle LIMIT %s""",
         (motif, MAX_RESULTATS),
     )
+
+    # Une recherche qui ne trouve rien est le signal le plus net qu'il
+    # manque quelque chose sur la plateforme. Le terme saisi n'est pas
+    # conservé : il est écrit par un membre, et le journal d'activité ne
+    # garde aucun texte. Sa longueur et le nombre de résultats suffisent
+    # à repérer les recherches qui reviennent bredouilles.
+    evenements.depuis_requete(
+        "recherche",
+        contexte={"longueur": len(terme),
+                  "referents": len(mentors),
+                  "questions": len(questions),
+                  "secteurs": len(secteurs),
+                  "bredouille": not (mentors or questions or secteurs)})
 
     return jsonify({
         "mentors": mentors,

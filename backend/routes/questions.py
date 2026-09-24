@@ -324,6 +324,9 @@ def basculer_utile(id_q):
             WHERE id_question = %s AND type_marquage = 'utile'""",
         (id_q,),
     )
+    if marque:
+        evenements.depuis_requete("question_utile", type_cible="question",
+                                  id_cible=id_q)
     return jsonify({"marque": marque, "nb_utiles": total["n"]})
 
 
@@ -393,6 +396,11 @@ def signaler(id_q):
         (id_user, id_q, motif),
         commit=True,
     )
+    # Le motif n'est pas recopie ici : il est ecrit par un membre, et le
+    # journal d'activite ne garde aucun texte. Seul compte le fait qu'un
+    # signalement a eu lieu, et sur quoi.
+    evenements.depuis_requete("signalement", type_cible="question",
+                              id_cible=id_q)
     return jsonify({"ok": True})
 
 

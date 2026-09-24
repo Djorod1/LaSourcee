@@ -6,6 +6,7 @@ import unicodedata
 from flask import Blueprint, g, jsonify, request
 
 from models.db import recuperer_un, recuperer_tous, executer, curseur
+from services import evenements
 from utils.auth_helpers import connexion_requise
 from utils.noms import normaliser_nom
 
@@ -670,7 +671,20 @@ def modifier_profil():
                 (anciennete[:40], id_user), commit=True,
             )
 
-    return jsonify(_charger_profil(id_user))
+    profil = _charger_profil(id_user)
+    # Savoir a quel moment un profil se remplit dit ce qui bloque dans le
+    # parcours. Le contenu des champs ne part pas : seulement combien
+    # sont renseignes, et lesquels des grands blocs le sont.
+    evenements.depuis_requete(
+        "profil_complete", type_cible="utilisateur", id_cible=id_user,
+        contexte={"champs_remplis": sum(
+                      1 for c in ("bio", "photo_url", "ville", "etudes",
+                                  "situation", "objectif", "langues",
+                                  "niveau_etudes", "domaine", "filiere",
+                                  "etablissement", "telephone")
+                      if profil.get(c)),
+                  "secteurs": len(profil.get("secteurs") or [])})
+    return jsonify(profil)
 
 
 def _est_en_ligne(derniere_activite):
@@ -1029,6 +1043,8 @@ def supprimer_mon_compte():
 
     executer("DELETE FROM utilisateur WHERE id_utilisateur = %s",
              (id_user,), commit=True)
+    evenements.enregistrer("compte_supprime", type_cible="utilisateur",
+                           contexte={"par": "le titulaire"})
 
     reponse = jsonify({"ok": True})
     return supprimer_cookie_session(reponse)

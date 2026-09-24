@@ -20,6 +20,7 @@ from flask import Blueprint, g, jsonify, request
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from utils.auth_helpers import connexion_requise
 from utils.urls import url_publique
+from services import evenements
 from services.notifications import notifier, notifier_decision_candidature
 from utils import email as mod_email
 
@@ -206,6 +207,10 @@ def deposer_candidature():
     _prevenir_administrateurs(profil, profession, organisation, annees,
                               motivation, lien_pro)
     _accuser_reception(profil)
+    evenements.depuis_requete("candidature", type_cible="utilisateur",
+                              id_cible=id_user,
+                              contexte={"secteurs": len(secteurs),
+                                        "annees": annees})
 
     return jsonify({
         "ok": True,
