@@ -972,6 +972,19 @@
         <textarea id="opp-description" rows="6" maxlength="4000"
                   placeholder="Conditions, public visé, ce que l'offre apporte, comment postuler…"></textarea>
       </div>
+      <div class="champ">
+        <label for="opp-affiche">Affiche <span class="facultatif">(facultatif)</span></label>
+        <input type="file" id="opp-affiche" accept="image/*"
+               onchange="choisirAffiche(this)" />
+        <p class="aide-champ">Une bourse ou un concours arrive souvent avec
+          une affiche : c'est elle qu'on reconnaît dans le fil. L'image est
+          réduite avant l'envoi, inutile de la préparer.</p>
+        <div id="opp-affiche-apercu" class="apercu-affiche" hidden>
+          <img alt="Aperçu de l'affiche choisie" />
+          <button type="button" class="btn btn-secondaire btn-petit"
+                  onclick="retirerAffiche()">Retirer l'affiche</button>
+        </div>
+      </div>
       <p class="note-param" id="opp-avertissement"></p>
     </div>
     <footer>

@@ -466,6 +466,7 @@ CREATE TABLE opportunite (
     domaine         TEXT,
     date_limite     TEXT,
     lien            TEXT,
+    affiche         TEXT,
     statut          TEXT    NOT NULL DEFAULT 'en_attente',
     motif_refus     TEXT,
     decide_par      INTEGER,

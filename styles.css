@@ -3120,6 +3120,27 @@ img, svg, video { max-width: 100%; height: auto; }
   display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;
 }
 
+/* Affiche d'une annonce.
+
+   Servie par une adresse dédiée plutôt que transportée dans le JSON :
+   le navigateur la charge quand elle entre à l'écran (« lazy »), la
+   garde en cache une semaine, et le fil reste léger même avec deux
+   cents annonces. Une hauteur bornée évite qu'une affiche en format
+   portrait ne pousse le texte hors de l'écran. */
+.opp-affiche {
+  display: block; width: 100%; max-height: 280px;
+  object-fit: cover; border-radius: var(--rayon-s);
+  margin-bottom: 14px; background: var(--fond);
+}
+.apercu-affiche {
+  margin-top: 10px; display: flex; flex-direction: column;
+  align-items: flex-start; gap: 8px;
+}
+.apercu-affiche img {
+  max-width: 100%; max-height: 200px;
+  border-radius: var(--rayon-s); border: 1px solid var(--bordure);
+}
+
 .carte-opportunite { margin-bottom: 14px; }
 .carte-opportunite h3 { font-size: 1.05rem; margin: 8px 0 4px; }
 .opp-entete {

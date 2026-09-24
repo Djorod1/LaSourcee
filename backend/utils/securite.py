@@ -236,6 +236,15 @@ def appliquer_entetes_securite(reponse):
     # Les reponses de l'API ne doivent jamais etre mises en cache par un
     # intermediaire : elles contiennent des donnees propres a une
     # session.
-    if request and request.path.startswith("/api/"):
+    #
+    # Sauf quand la route en a decide autrement. Toutes les reponses de
+    # l'API ne portent pas des donnees de session : l'affiche d'une
+    # annonce est une image publique, identique pour tout le monde et
+    # qui ne change pas. Ecraser son « Cache-Control » la ferait
+    # retelecharger a chaque passage dans le fil, ce qui coute cher sur
+    # une connexion mobile — et c'est precisement le public de la
+    # plateforme. Une route qui ne dit rien garde donc « no-store ».
+    if (request and request.path.startswith("/api/")
+            and "Cache-Control" not in reponse.headers):
         reponse.headers["Cache-Control"] = "no-store"
     return reponse

@@ -28,7 +28,7 @@ import logging
 import re
 from datetime import date, datetime
 
-from flask import Blueprint, g, jsonify, request
+from flask import Blueprint, current_app, g, jsonify, request
 
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from services import evenements
@@ -60,6 +60,26 @@ LONGUEUR_TITRE = 160
 LONGUEUR_DESCRIPTION = 4000
 LONGUEUR_COURTE = 120
 
+# Une affiche reduite a 1000 pixels de large en JPEG tient largement
+# sous cette borne. Elle vit dans la base, comme les photos de profil :
+# le disque d'un hebergement sans serveur ne survit pas a un
+# redemarrage, et un service de stockage separe serait une piece de plus
+# a tenir pour une plateforme de cette taille.
+LONGUEUR_AFFICHE = 600_000
+
+
+def _affiche_valide(valeur):
+    """Rend (affiche, erreur). Une affiche vide est acceptee."""
+    affiche = str(valeur or "").strip()
+    if not affiche:
+        return "", None
+    if len(affiche) > LONGUEUR_AFFICHE:
+        return None, ("Affiche trop lourde. Choisissez une image plus "
+                      "legere, ou recadrez-la.")
+    if not affiche.startswith("data:image/"):
+        return None, "Format d'affiche non reconnu."
+    return affiche, None
+
 _RE_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -86,11 +106,46 @@ def _referent_verifie(id_utilisateur):
     return bool(ligne and ligne["est_verifie"])
 
 
+# Au-dela, la file de relecture n'est plus tenable. Le compte n'est pas
+# bloque : il lui suffit qu'une de ses propositions soit tranchee.
+MAX_EN_ATTENTE = 3
+
+
+def _propositions_en_attente(id_utilisateur):
+    ligne = recuperer_un(
+        """SELECT COUNT(*) AS n FROM opportunite
+            WHERE id_auteur = %s AND statut = 'en_attente'""",
+        (id_utilisateur,))
+    return (ligne or {}).get("n", 0) or 0
+
+
 def _peut_proposer(utilisateur):
-    if _peut_publier_directement(utilisateur):
-        return True
-    return (utilisateur.get("role") == "mentor"
-            and _referent_verifie(utilisateur["id_utilisateur"]))
+    """Qui peut soumettre une annonce a la relecture ?
+
+    Tout membre dont l'adresse est confirmee. La regle d'avant reservait
+    ce droit aux referents verifies, et c'etait le maillon faible :
+    celui qui voit passer une bourse, c'est l'etudiant — sur le panneau
+    d'affichage de son universite, dans un groupe de discussion. En le
+    bloquant, on coupait la meilleure source d'annonces et on le
+    renvoyait vers un formulaire de contact que presque personne
+    n'utilise.
+
+    La barriere utile n'est pas qui propose, c'est ce qui part en ligne
+    sans relecture — et cela n'a pas bouge : seul un administrateur
+    publie directement. Reste le risque de noyer la file, borne par
+    MAX_EN_ATTENTE : on ne peut pas avoir plus de trois propositions en
+    attente a la fois. C'est une limite qui se leve d'elle-meme des
+    qu'une proposition est tranchee, et qui ne punit pas le nouveau venu
+    ayant trouve une vraie bourse aujourd'hui — ce qu'un seuil
+    d'anciennete aurait fait.
+
+    On n'exige pas ici une adresse confirmee : en production, la
+    confirmation est deja requise pour se connecter. La redemander
+    serait une seconde regle disant la meme chose, et surtout elle ferait
+    diverger le developpement de la production — ou l'on n'aurait plus
+    jamais l'occasion de s'en apercevoir.
+    """
+    return True
 
 
 def _nettoyer(valeur, longueur):
@@ -141,6 +196,8 @@ def lister():
         f"""SELECT o.id_opportunite, o.titre, o.categorie, o.organisme,
                    o.description, o.pays, o.niveau, o.domaine,
                    o.date_limite, o.lien, o.vues, o.cree_le,
+                   CASE WHEN o.affiche IS NULL OR o.affiche = ''
+                        THEN 0 ELSE 1 END AS a_une_affiche,
                    u.id_utilisateur, u.prenom, u.nom, u.role, u.photo_url
               FROM opportunite o
          LEFT JOIN utilisateur u ON u.id_utilisateur = o.id_auteur
@@ -193,7 +250,64 @@ def detail(id_opp):
     ligne["categorie_libelle"] = CATEGORIES.get(ligne["categorie"],
                                                 "Appel à candidatures")
     ligne["cloturee"] = _cloturee(ligne)
+    # L'affiche ne voyage pas dans le JSON : elle a son adresse, que le
+    # navigateur charge paresseusement et met en cache. Transportee ici,
+    # elle se retelechargerait a chaque ouverture et gonflerait une
+    # reponse que l'on lit surtout pour son texte.
+    ligne["a_une_affiche"] = bool(ligne.pop("affiche", None))
     return jsonify(ligne)
+
+
+@bp_opportunites.get("/<int:id_opp>/affiche")
+def affiche(id_opp):
+    """L'affiche d'une annonce, servie comme une image.
+
+    Une adresse dediee plutot qu'un champ dans le JSON : le navigateur
+    la charge quand elle entre a l'ecran, la garde en cache, et le fil
+    reste leger meme avec deux cents annonces. Publique, comme l'annonce
+    qu'elle illustre — elle ne revele rien de plus que le fil.
+    """
+    import base64
+    import binascii
+
+    ligne = recuperer_un(
+        "SELECT affiche, statut FROM opportunite WHERE id_opportunite = %s",
+        (id_opp,))
+    if not ligne or not ligne.get("affiche"):
+        return _erreur("Affiche introuvable.", 404)
+    if ligne.get("statut") != "publiee":
+        # Une annonce en attente ou refusee n'expose pas son image : ce
+        # serait un moyen de savoir qu'elle existe.
+        #
+        # La route est ouverte — une image doit se charger sur une page
+        # publique sans authentification —, donc `g.utilisateur` n'est
+        # jamais pose ici : le decorateur qui l'installe ne s'applique
+        # pas. On releve la session a la main, faute de quoi meme un
+        # relecteur se verrait refuser l'affiche qu'il doit examiner.
+        from utils.auth_helpers import (jeton_session_courant,
+                                        utilisateur_depuis_jeton)
+        moi = utilisateur_depuis_jeton(jeton_session_courant())
+        if not (moi and _peut_publier_directement(moi)):
+            return _erreur("Affiche introuvable.", 404)
+
+    brut = str(ligne["affiche"])
+    if "," not in brut or not brut.startswith("data:image/"):
+        return _erreur("Affiche illisible.", 404)
+    entete, donnees = brut.split(",", 1)
+    type_mime = entete[5:].split(";")[0] or "image/jpeg"
+    if type_mime not in ("image/jpeg", "image/png", "image/webp",
+                         "image/gif"):
+        return _erreur("Affiche illisible.", 404)
+    try:
+        octets = base64.b64decode(donnees, validate=True)
+    except (binascii.Error, ValueError):
+        return _erreur("Affiche illisible.", 404)
+
+    reponse = current_app.response_class(octets, mimetype=type_mime)
+    # Une affiche ne change pas : la remettre en cache une semaine evite
+    # de la retelecharger a chaque passage dans le fil.
+    reponse.headers["Cache-Control"] = "public, max-age=604800"
+    return reponse
 
 
 @bp_opportunites.post("")
@@ -201,15 +315,13 @@ def detail(id_opp):
 def proposer():
     moi = g.utilisateur
     direct = _peut_publier_directement(moi)
-    if not direct and not _peut_proposer(moi):
-        if moi.get("role") == "mentor":
+    if not direct:
+        en_attente = _propositions_en_attente(moi["id_utilisateur"])
+        if en_attente >= MAX_EN_ATTENTE:
             return _erreur(
-                "Votre candidature de référent n'a pas encore été validée. "
-                "Vous pourrez proposer des annonces ensuite.", 403)
-        return _erreur(
-            "Les annonces sont publiées par l'équipe et proposées par les "
-            "référents. Si vous en connaissez une, écrivez à l'équipe : "
-            "elle la reprendra.", 403)
+                f"Vous avez déjà {en_attente} propositions en attente de "
+                "relecture. Patientez qu'elles soient examinées avant d'en "
+                "proposer une autre.", 429)
 
     d = request.get_json(silent=True) or {}
     titre = _nettoyer(d.get("titre"), LONGUEUR_TITRE)
@@ -239,19 +351,24 @@ def proposer():
         return _erreur("Indiquez au moins l'organisme ou le lien officiel : "
                        "sans quoi personne ne peut vérifier l'annonce.")
 
+    affiche, erreur_affiche = _affiche_valide(d.get("affiche"))
+    if erreur_affiche:
+        return _erreur(erreur_affiche)
+
     statut = "publiee" if direct else "en_attente"
     with curseur(commit=True) as cur:
         cur.execute(
             """INSERT INTO opportunite
                   (id_auteur, titre, categorie, organisme, description,
-                   pays, niveau, domaine, date_limite, lien, statut)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                   pays, niveau, domaine, date_limite, lien, statut,
+                   affiche)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
             (moi["id_utilisateur"], titre, categorie, organisme or None,
              description,
              _nettoyer(d.get("pays"), LONGUEUR_COURTE) or None,
              _nettoyer(d.get("niveau"), LONGUEUR_COURTE) or None,
              _nettoyer(d.get("domaine"), LONGUEUR_COURTE) or None,
-             limite or None, lien or None, statut))
+             limite or None, lien or None, statut, affiche or None))
         id_opp = cur.lastrowid
 
     evenements.depuis_requete("opportunite_proposee", type_cible="opportunite",
@@ -297,6 +414,8 @@ def a_relire():
         """SELECT o.id_opportunite, o.titre, o.categorie, o.organisme,
                   o.description, o.pays, o.niveau, o.domaine,
                   o.date_limite, o.lien, o.cree_le,
+                  CASE WHEN o.affiche IS NULL OR o.affiche = ''
+                       THEN 0 ELSE 1 END AS a_une_affiche,
                   u.id_utilisateur, u.prenom, u.nom, u.photo_url
              FROM opportunite o
         LEFT JOIN utilisateur u ON u.id_utilisateur = o.id_auteur

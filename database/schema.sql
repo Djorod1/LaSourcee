@@ -478,6 +478,7 @@ CREATE TABLE opportunite (
     domaine          VARCHAR(120) NULL,
     date_limite      DATE         NULL,
     lien             VARCHAR(400) NULL,
+    affiche         TEXT,
     statut           VARCHAR(20)  NOT NULL DEFAULT 'en_attente',
     motif_refus      VARCHAR(400) NULL,
     decide_par       INT UNSIGNED NULL,

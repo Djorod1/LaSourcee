@@ -5966,6 +5966,9 @@ function carteOpportunite(o) {
   const auteur = `${o.prenom || ''} ${o.nom || ''}`.trim();
   const officiel = o.role === 'admin' || o.role === 'super_admin';
   return `<article class="carte carte-opportunite${o.cloturee ? ' close' : ''}">
+    ${o.a_une_affiche ? `<img class="opp-affiche" loading="lazy"
+         src="/api/opportunites/${o.id_opportunite}/affiche"
+         alt="Affiche de : ${echapper(o.titre)}" />` : ''}
     <div class="opp-entete">
       <span class="tag tag-ambre">${echapper(o.categorie_libelle || '')}</span>
       <span class="opp-echeance ${e.urgence}">${echapper(e.texte)}</span>
@@ -6007,6 +6010,63 @@ async function ouvrirFormulaireOpportunite() {
   ouvrirModal('modalOpportunite');
 }
 
+/* Affiche d'une annonce : choisie, réduite, gardée en mémoire.
+
+   Une photo prise au téléphone pèse plusieurs mégaoctets ; la borne du
+   serveur est à deux. On la réduit donc avant l'envoi, et la personne
+   n'a rien à préparer. Mille pixels de large suffisent largement pour
+   une affiche lue à l'écran, et laissent le fichier sous la limite. */
+const LARGEUR_AFFICHE = 1000;
+let _afficheChoisie = '';
+
+function reduireAffiche(dataUrl) {
+  return new Promise((resoudre) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const facteur = Math.min(1, LARGEUR_AFFICHE / img.width);
+        const toile = document.createElement('canvas');
+        toile.width = Math.round(img.width * facteur);
+        toile.height = Math.round(img.height * facteur);
+        toile.getContext('2d').drawImage(img, 0, 0, toile.width, toile.height);
+        resoudre(toile.toDataURL('image/jpeg', 0.82));
+      } catch (_) {
+        resoudre(dataUrl);     // navigateur sans canvas : on garde l'original
+      }
+    };
+    img.onerror = () => resoudre(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+async function choisirAffiche(champ) {
+  const fichier = champ.files && champ.files[0];
+  if (!fichier) return;
+  if (!fichier.type.startsWith('image/')) {
+    champ.value = '';
+    return toast('Choisissez une image.', 'erreur');
+  }
+  const lecteur = new FileReader();
+  lecteur.onload = async () => {
+    _afficheChoisie = await reduireAffiche(lecteur.result);
+    const apercu = document.getElementById('opp-affiche-apercu');
+    if (apercu) {
+      apercu.querySelector('img').src = _afficheChoisie;
+      apercu.hidden = false;
+    }
+  };
+  lecteur.onerror = () => toast("L'image n'a pas pu être lue.", 'erreur');
+  lecteur.readAsDataURL(fichier);
+}
+
+function retirerAffiche() {
+  _afficheChoisie = '';
+  const champ = document.getElementById('opp-affiche');
+  if (champ) champ.value = '';
+  const apercu = document.getElementById('opp-affiche-apercu');
+  if (apercu) { apercu.hidden = true; apercu.querySelector('img').src = ''; }
+}
+
 async function envoyerOpportunite(bouton) {
   const val = id => (document.getElementById(id)?.value || '').trim();
   const corps = {
@@ -6019,6 +6079,7 @@ async function envoyerOpportunite(bouton) {
     domaine: val('opp-domaine'),
     date_limite: val('opp-limite'),
     lien: val('opp-lien'),
+    affiche: _afficheChoisie,
   };
   const libelle = bouton.textContent;
   bouton.disabled = true; bouton.textContent = 'Envoi…';
@@ -6031,6 +6092,7 @@ async function envoyerOpportunite(bouton) {
       const champ = document.getElementById(id);
       if (champ) champ.value = '';
     });
+    retirerAffiche();
     rendreOpportunites();
   } catch (err) {
     toast(err.message || "L'annonce n'a pas pu être envoyée.", 'erreur');
