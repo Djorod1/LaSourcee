@@ -312,6 +312,79 @@ def executer():
     verifier("La fenêtre de connexion Google reste jointe à la page",
              coop == "same-origin-allow-popups", f"reçu « {coop} »")
 
+    titre("EN-TÊTES SUR LES PAGES SERVIES PAR LE CDN")
+
+    # Les en-têtes posés par Flask ne touchent que ce que Flask sert. Or
+    # index.html, verifier-email.html et les autres fichiers statiques
+    # sont distribués par le CDN : la règle `handle: filesystem` de
+    # vercel.json les sert sans jamais passer par la fonction Python.
+    #
+    # La politique de sécurité du contenu n'atteignait donc AUCUNE des
+    # pages HTML — c'est-à-dire précisément celles qui exécutent du
+    # JavaScript et qui portent le bouton de connexion Google. Elle ne
+    # protégeait que les réponses de l'API et les pages publiques.
+    # Cross-Origin-Opener-Policy non plus. Les deux sont maintenant
+    # déclarés dans vercel.json, qui s'applique à toutes les réponses.
+    config = json.loads((RACINE / "vercel.json").read_text(encoding="utf-8"))
+    entetes_cdn = {}
+    for regle in config.get("routes", []):
+        if regle.get("src") == "/(.*)" and regle.get("headers"):
+            entetes_cdn = regle["headers"]
+            break
+    verifier("Une règle pose des en-têtes sur toutes les réponses",
+             bool(entetes_cdn))
+    for nom in ("Content-Security-Policy", "Cross-Origin-Opener-Policy",
+                "X-Content-Type-Options", "X-Frame-Options",
+                "Referrer-Policy", "Strict-Transport-Security"):
+        verifier(f"{nom} atteint aussi les pages statiques",
+                 nom in entetes_cdn, "absent de vercel.json")
+
+    # Deux définitions de la même politique finissent toujours par
+    # diverger : celle du CDN et celle de Flask doivent rester identiques,
+    # sinon on durcit d'un côté en croyant durcir partout.
+    from utils.securite import POLITIQUE_CSP as _csp_flask
+    verifier("La politique du CDN est exactement celle de Flask",
+             entetes_cdn.get("Content-Security-Policy") == _csp_flask,
+             "vercel.json et securite.py ont divergé")
+    verifier("La fenêtre de connexion Google reste jointe, côté CDN aussi",
+             entetes_cdn.get("Cross-Origin-Opener-Policy")
+             == "same-origin-allow-popups",
+             str(entetes_cdn.get("Cross-Origin-Opener-Policy")))
+
+    titre("FICHIER D'EXEMPLE DES VARIABLES")
+
+    # .env.example est ce qu'on lit pour savoir quoi configurer avant une
+    # mise en ligne. Il avait pris du retard sur le code : CRON_SECRET n'y
+    # figurait pas, si bien qu'on pouvait tout renseigner sans jamais
+    # apprendre que le résumé ne partirait pas. Une variable lue par le
+    # code et absente d'ici est une panne qu'on découvrira en production.
+    exemple = (RACINE / "backend" / ".env.example").read_text(encoding="utf-8")
+    declarees = set(re.findall(r"^\s*#?\s*([A-Z][A-Z0-9_]+)=", exemple, re.M))
+
+    lues = set()
+    for dossier, _, fichiers in os.walk(RACINE / "backend"):
+        if "__pycache__" in dossier:
+            continue
+        for f in fichiers:
+            if not f.endswith(".py") or f.startswith("tests_"):
+                continue
+            texte = Path(dossier, f).read_text(encoding="utf-8")
+            lues |= set(re.findall(
+                r'(?:getenv|environ\.get|environ\[)\(?\s*"([A-Z][A-Z0-9_]+)"',
+                texte))
+            lues |= set(re.findall(
+                r'_(?:booleen|entier)\(\s*"([A-Z][A-Z0-9_]+)"', texte))
+
+    # Celles-ci sont posées par la plateforme, pas par la personne qui
+    # configure : elles n'ont rien à faire dans un fichier d'exemple.
+    POSEES_PAR_LA_PLATEFORME = {
+        "VERCEL", "VERCEL_ENV", "VERCEL_URL",
+        "VERCEL_PROJECT_PRODUCTION_URL", "PORT", "POSTGRES_URL", "FLASK_DEBUG",
+    }
+    oubliees = sorted(lues - declarees - POSEES_PAR_LA_PLATEFORME)
+    verifier("Toute variable lue par le code figure dans .env.example",
+             not oubliees, ", ".join(oubliees))
+
     titre("HEURE DE LA BASE DE DONNÉES")
 
     # Toutes les dates sont écrites depuis Python en temps universel, et
@@ -538,7 +611,9 @@ def executer():
     # -----------------------------------------------------------------
     titre("9. CONFIGURATION DE DÉPLOIEMENT")
     # -----------------------------------------------------------------
-    import json
+    # `json` est importé en tête du module. Le réimporter ici en faisait
+    # une variable locale à toute la fonction, si bien que les contrôles
+    # placés plus haut échouaient avant même de s'exécuter.
     fichier = RACINE / "vercel.json"
     verifier("vercel.json présent", fichier.exists())
     conf = json.loads(fichier.read_text(encoding="utf-8"))
