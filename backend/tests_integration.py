@@ -2686,6 +2686,28 @@ def executer_tests():
              r_get.status_code == 200, f"reçu {r_get.status_code}")
     verifier("Et le GET exige le même secret",
              app.test_client().get("/api/taches/resume").status_code == 403)
+
+    # Coller une valeur dans un tableau de bord y laisse tres facilement
+    # un retour a la ligne ou une espace. La valeur configuree et celle
+    # recue cessent alors d'etre egales, et la tache repond 403 tous les
+    # deux jours sans que rien n'explique pourquoi. Les deux cotes sont
+    # debarrasses de leurs espaces de bordure.
+    _os.environ["CRON_SECRET"] = "  secret-de-test-pour-la-tache\n"
+    r_espaces = app.test_client().post(
+        "/api/taches/resume",
+        headers={"Authorization": "Bearer secret-de-test-pour-la-tache"})
+    verifier("Une espace autour du secret configuré ne bloque pas la tâche",
+             r_espaces.status_code == 200, str(r_espaces.status_code))
+    r_recu = app.test_client().post(
+        "/api/taches/resume",
+        headers={"Authorization": "Bearer  secret-de-test-pour-la-tache  "})
+    verifier("Ni une espace autour du secret reçu",
+             r_recu.status_code == 200, str(r_recu.status_code))
+    _os.environ["CRON_SECRET"] = "secret-de-test-pour-la-tache"
+    verifier("Un secret entièrement vide reste refusé",
+             app.test_client().post(
+                 "/api/taches/resume",
+                 headers={"Authorization": "Bearer    "}).status_code == 403)
     verifier("En mode console, rien ne part et rien n'est marqué",
              "ignore" in (r.get_json() or {}))
     _os.environ.pop("CRON_SECRET", None)
