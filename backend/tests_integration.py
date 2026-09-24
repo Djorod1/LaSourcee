@@ -2431,12 +2431,19 @@ def executer_tests():
     print("═" * 70)
 
     # --- Qui publie quoi ---
+    # La regle a change : tout membre peut proposer, personne hors
+    # administration ne met en ligne. Celui qui voit passer une bourse,
+    # c'est l'etudiant ; la barriere utile porte sur ce qui parait, pas
+    # sur qui propose.
     r = lecteur.post("/api/opportunites", json={
-        "titre": "Bourse que personne ne devrait pouvoir publier",
-        "description": "Un bénéficiaire ne publie pas d'annonce, il la "
-                       "signale à l'équipe qui la reprend.",
+        "titre": "Bourse repérée par un bénéficiaire",
+        "description": "Un bénéficiaire peut proposer une annonce, mais "
+                       "elle passe par une relecture avant de paraître.",
         "organisme": "Inconnu"})
-    verifier("Un bénéficiaire ne publie pas d'annonce", r.status_code == 403)
+    verifier("Un bénéficiaire peut proposer une annonce",
+             r.status_code == 201, r.get_data(as_text=True)[:110])
+    verifier("Mais elle ne paraît pas sans relecture",
+             (r.get_json() or {}).get("statut") == "en_attente")
 
     r = cand.post("/api/opportunites", json={
         "titre": "Bourse de master en agronomie",
@@ -3801,14 +3808,15 @@ def executer_tests():
         "lien": "https://exemple.org/bourse",
     }
     r = candidat.post("/api/opportunites", json=annonce)
-    verifier("Un référent non vérifié ne publie pas d'annonce",
-             r.status_code == 403, str(r.status_code))
-    verifier("Et le refus dit pourquoi, sans le laisser deviner",
-             "validée" in (r.get_json() or {}).get("erreur", ""),
-             (r.get_json() or {}).get("erreur", "")[:90])
+    verifier("Un référent non vérifié propose comme tout le monde",
+             r.status_code == 201, r.get_data(as_text=True)[:110])
+    verifier("Mais sa proposition attend une relecture",
+             (r.get_json() or {}).get("statut") == "en_attente")
     vue = candidat.get("/api/opportunites").get_json() or {}
-    verifier("L'interface ne lui propose pas un bouton qui refusera",
-             vue.get("peut_proposer") is False, str(vue.get("peut_proposer")))
+    verifier("L'interface lui propose le bouton, qui aboutira",
+             vue.get("peut_proposer") is True, str(vue.get("peut_proposer")))
+    verifier("Sans lui donner la publication directe",
+             vue.get("publie_directement") is False)
 
     with app.app_context():
         _maj("UPDATE mentor_details SET est_verifie = 1 "
@@ -3937,6 +3945,240 @@ def executer_tests():
              vivante is not None)
     verifier("Une session échue depuis trente minutes est refusée",
              morte is None)
+
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  51. UN MESSAGE PRIVÉ NON LU FINIT PAR SE SIGNALER")
+    print("═" * 70)
+
+    from datetime import datetime as _dtm, timedelta as _tdm
+    import services.messages_manques as _mm
+
+    # Un message prive ne deposait qu'une notification dans la cloche.
+    # Quelqu'un qui ne revient pas ne l'apprenait donc jamais, et c'est
+    # l'echange lui-meme qui mourait.
+    _avant_envois = {"n": 0}
+    _vrai_envoi = None
+    import utils.email as _mod_mail
+    _vrai_envoi = _mod_mail.envoyer
+    _partis = []
+
+    def _envoi_espion(destinataire, sujet, corps, corps_html=None):
+        _partis.append({"a": destinataire, "sujet": sujet,
+                        "corps": corps, "html": corps_html or ""})
+        return True
+
+    _mod_mail.envoyer = _envoi_espion
+    try:
+        with app.app_context():
+            # Un message tout juste arrive : le delai de grace n'est pas
+            # ecoule, on ne derange personne.
+            _maj("UPDATE conversation_participant SET lu_jusqua = NULL, "
+                 "prevenu_le = NULL WHERE id_conversation = %s",
+                 (id_conv,), commit=True)
+            _maj("UPDATE message SET envoye_le = %s "
+                 "WHERE id_conversation = %s",
+                 (_dtm.utcnow().strftime("%Y-%m-%d %H:%M:%S"), id_conv),
+                 commit=True)
+            frais = _mm.prevenir_messages_non_lus()
+        verifier("Un message tout juste reçu ne déclenche aucun e-mail",
+                 frais["envoyes"] == 0 and not _partis, str(frais))
+
+        with app.app_context():
+            # Le meme message, vieux de treize heures.
+            _maj("UPDATE message SET envoye_le = %s "
+                 "WHERE id_conversation = %s",
+                 ((_dtm.utcnow() - _tdm(hours=13)).strftime(
+                     "%Y-%m-%d %H:%M:%S"), id_conv), commit=True)
+            _maj("UPDATE conversation_participant SET prevenu_le = NULL "
+                 "WHERE id_conversation = %s", (id_conv,), commit=True)
+            vieux = _mm.prevenir_messages_non_lus()
+        verifier("Passé douze heures, un e-mail part",
+                 vieux["envoyes"] >= 1, str(vieux))
+        verifier("Il va bien à la personne qui n'a pas lu",
+                 any(m["a"] == "lisa@test.io" for m in _partis),
+                 str([m["a"] for m in _partis]))
+
+        # Le contenu d'un message prive ne sort pas de la plateforme.
+        verifier("Le contenu du message n'est pas recopié dans l'e-mail",
+                 not any("votre question m'a intéressée" in m["corps"]
+                         or "votre question m'a intéressée" in m["html"]
+                         for m in _partis),
+                 "un message privé a fuité dans un e-mail")
+        verifier("L'e-mail porte un lien de désinscription",
+                 all("resume/stop" in m["corps"] for m in _partis))
+
+        # Deux passages de suite ne font pas deux e-mails.
+        _partis.clear()
+        with app.app_context():
+            repete = _mm.prevenir_messages_non_lus()
+        verifier("Un second passage le même jour n'écrit pas de nouveau",
+                 repete["envoyes"] == 0 and not _partis, str(repete))
+
+        # Une fois la conversation lue, plus rien ne part.
+        with app.app_context():
+            _maj("UPDATE conversation_participant SET lu_jusqua = %s, "
+                 "prevenu_le = NULL WHERE id_conversation = %s",
+                 (_dtm.utcnow().strftime("%Y-%m-%d %H:%M:%S"), id_conv),
+                 commit=True)
+            lu = _mm.prevenir_messages_non_lus()
+        verifier("Une conversation lue ne déclenche plus rien",
+                 lu["envoyes"] == 0, str(lu))
+
+        # Celui qui a decoche la preference n'est pas ecrit.
+        with app.app_context():
+            _maj("UPDATE conversation_participant SET lu_jusqua = NULL, "
+                 "prevenu_le = NULL WHERE id_conversation = %s",
+                 (id_conv,), commit=True)
+            _maj("UPDATE utilisateur SET preferences_notif = %s "
+                 "WHERE id_utilisateur = %s",
+                 ('{"email": {"message": false}}', id_lecteur), commit=True)
+            _partis.clear()
+            refuse = _mm.prevenir_messages_non_lus()
+        verifier("Qui a décoché la préférence n'est pas écrit",
+                 refuse["envoyes"] == 0 and not _partis, str(refuse))
+        with app.app_context():
+            _maj("UPDATE utilisateur SET preferences_notif = NULL "
+                 "WHERE id_utilisateur = %s", (id_lecteur,), commit=True)
+    finally:
+        _mod_mail.envoyer = _vrai_envoi
+
+    # La tache est une arme : elle ecrit a des gens.
+    verifier("La tâche des messages exige le secret partagé",
+             app.test_client().get(
+                 "/api/taches/messages-non-lus").status_code == 403)
+
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  52. QUI PROPOSE UNE ANNONCE, ET AVEC QUELLE AFFICHE")
+    print("═" * 70)
+
+    import base64 as _b64
+
+    # La regle d'avant reservait la proposition aux referents verifies.
+    # Or celui qui voit passer une bourse, c'est l'etudiant. La barriere
+    # utile n'est pas qui propose, c'est ce qui part en ligne sans
+    # relecture — et cela n'a pas bouge.
+    annonce_etu = {
+        "titre": "Concours d'entrée à l'école polytechnique",
+        "description": "Concours annuel ouvert aux bacheliers scientifiques, "
+                       "inscriptions en ligne jusqu'à la fin du mois.",
+        "categorie": "concours",
+        "lien": "https://exemple.org/concours",
+    }
+    r = lecteur.post("/api/opportunites", json=annonce_etu)
+    verifier("Un bénéficiaire peut proposer une annonce",
+             r.status_code == 201, r.get_data(as_text=True)[:120])
+    verifier("Sa proposition part en relecture, pas en ligne",
+             (r.get_json() or {}).get("statut") == "en_attente")
+
+    vue_etu = lecteur.get("/api/opportunites").get_json() or {}
+    verifier("Et l'interface lui propose bien le bouton",
+             vue_etu.get("peut_proposer") is True)
+    verifier("Sans lui donner la publication directe",
+             vue_etu.get("publie_directement") is False)
+
+    # Le garde-fou : on ne noie pas la file de relecture.
+    for n in range(3):
+        lecteur.post("/api/opportunites",
+                     json={**annonce_etu,
+                           "titre": f"Autre concours numéro {n} à découvrir"})
+    r = lecteur.post("/api/opportunites",
+                     json={**annonce_etu, "titre": "Un concours de trop ici"})
+    verifier("Au-delà de trois propositions en attente, on patiente",
+             r.status_code == 429, str(r.status_code))
+    verifier("Et le refus dit pourquoi et quoi faire",
+             "relecture" in (r.get_json() or {}).get("erreur", ""),
+             (r.get_json() or {}).get("erreur", "")[:90])
+
+    # Une proposition tranchee libere la place : la limite se leve
+    # d'elle-meme, elle ne condamne personne.
+    en_attente = patron.get("/api/opportunites/a-relire").get_json() or []
+    a_trancher = next((o for o in en_attente
+                       if "Autre concours" in (o.get("titre") or "")), None)
+    verifier("Le relecteur voit les propositions en attente",
+             a_trancher is not None, str(len(en_attente)))
+    if a_trancher:
+        patron.post(f"/api/opportunites/{a_trancher['id_opportunite']}/decision",
+                    json={"statut": "refusee", "motif": "Doublon."})
+        r = lecteur.post("/api/opportunites",
+                         json={**annonce_etu,
+                               "titre": "Une place s'est libérée ici"})
+        verifier("Une décision rendue rouvre la possibilité de proposer",
+                 r.status_code == 201, str(r.status_code))
+
+    # --- L'affiche ---
+    #
+    # Un pixel PNG, le plus petit fichier d'image valable.
+    PIXEL = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfF"
+             "cSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+    r = patron.post("/api/opportunites", json={
+        "titre": "Bourse illustrée par une affiche",
+        "description": "Bourse annuelle destinée aux étudiants de dernière "
+                       "année, dossier à déposer avant la rentrée.",
+        "categorie": "bourse",
+        "lien": "https://exemple.org/affiche",
+        "affiche": PIXEL,
+    })
+    verifier("Une annonce accepte une affiche", r.status_code == 201,
+             r.get_data(as_text=True)[:120])
+    id_aff = (r.get_json() or {}).get("id_opportunite")
+
+    fil = lecteur.get("/api/opportunites").get_json() or {}
+    portee = next((o for o in fil.get("opportunites", [])
+                   if o.get("id_opportunite") == id_aff), None)
+    verifier("Le fil signale que l'annonce a une affiche",
+             portee is not None and portee.get("a_une_affiche") in (1, True),
+             str(portee.get("a_une_affiche") if portee else "annonce absente"))
+    verifier("Mais le fil ne transporte pas l'image",
+             portee is not None and "affiche" not in portee,
+             "l'image alourdirait chaque chargement du fil")
+
+    r_img = lecteur.get(f"/api/opportunites/{id_aff}/affiche")
+    verifier("L'affiche se sert à son adresse",
+             r_img.status_code == 200, str(r_img.status_code))
+    verifier("Avec le bon type d'image",
+             r_img.headers.get("Content-Type", "").startswith("image/png"),
+             r_img.headers.get("Content-Type", "absent"))
+    verifier("Et elle se met en cache, contrairement au reste de l'API",
+             "max-age" in r_img.headers.get("Cache-Control", ""),
+             r_img.headers.get("Cache-Control", "absent"))
+    verifier("Les octets rendus sont bien ceux de l'image",
+             r_img.get_data() == _b64.b64decode(PIXEL.split(",", 1)[1]))
+
+    # Une affiche qui n'est pas une image n'entre pas.
+    r = patron.post("/api/opportunites", json={
+        "titre": "Annonce avec une affiche douteuse ici",
+        "description": "Description suffisamment longue pour passer le "
+                       "contrôle de recevabilité du formulaire.",
+        "categorie": "bourse", "lien": "https://exemple.org/x",
+        "affiche": "data:text/html;base64,PHNjcmlwdD4=",
+    })
+    verifier("Une affiche qui n'est pas une image est refusée",
+             r.status_code == 400, str(r.status_code))
+
+    # Une annonce en attente ne laisse pas deviner son existence.
+    # On passe par un compte qui n'a pas epuise son quota : avec
+    # « lecteur », la proposition serait refusee et les deux controles
+    # suivants ne s'executeraient pas du tout — verts par absence.
+    r = chercheur.post("/api/opportunites", json={
+        "titre": "Proposition encore en attente de relecture",
+        "description": "Description suffisamment longue pour passer le "
+                       "contrôle de recevabilité du formulaire.",
+        "categorie": "bourse", "lien": "https://exemple.org/y",
+        "affiche": PIXEL})
+    id_attente = (r.get_json() or {}).get("id_opportunite")
+    verifier("L'annonce en attente a bien été créée pour ce contrôle",
+             bool(id_attente), r.get_data(as_text=True)[:110])
+    if id_attente:
+        verifier("L'affiche d'une annonce non publiée reste invisible",
+                 lecteur.get(
+                     f"/api/opportunites/{id_attente}/affiche"
+                 ).status_code == 404)
+        verifier("Mais le relecteur y accède",
+                 patron.get(
+                     f"/api/opportunites/{id_attente}/affiche"
+                 ).status_code == 200)
 
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)

@@ -157,6 +157,13 @@ function afficherVue(id) {
 }
 
 function naviguerApp(panneau) {
+  // Quitter la messagerie ferme la conversation : sans cela, la releve
+  // continuerait d'interroger le serveur pour un fil qui n'est plus a
+  // l'ecran, et rendrait la main a un element disparu.
+  if (panneau !== 'messages' && _conversationOuverte) {
+    _conversationOuverte = null;
+    arreterReleveConversation();
+  }
   document.querySelectorAll('.sous-vue').forEach(sv => sv.style.display = 'none');
   const cible = document.getElementById('sv-' + panneau);
   if (cible) cible.style.display = 'block';
@@ -4776,8 +4783,17 @@ function arreterReleveNotifications() {
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     arreterReleveNotifications();
+    // Interroger le serveur pour un ecran que personne ne regarde use
+    // la batterie sans rien apporter.
+    arreterReleveConversation();
   } else if (etat.utilisateur) {
     demarrerReleveNotifications();
+    // Au retour, on rattrape tout de suite ce qui est arrive pendant
+    // l'absence, puis la releve reprend son rythme.
+    if (_conversationOuverte) {
+      rafraichirConversation(_conversationOuverte);
+      demarrerReleveConversation(_conversationOuverte);
+    }
   }
 });
 
@@ -5445,10 +5461,7 @@ async function ouvrirConversation(id, nom) {
     </header>
     <div class="messages" id="messages-defilement">
       ${messages.length
-        ? messages.map(m => `<div class="message ${m.id_expediteur === moi ? 'de-moi' : ''}">
-            <p>${echapper(m.contenu)}</p>
-            ${baliseTemps(m.envoye_le)}
-          </div>`).join('')
+        ? messages.map(m => blocMessage(m, moi)).join('')
         : '<p class="desc">Aucun message. Écrivez le premier.</p>'}
     </div>
     <form class="saisie-message" onsubmit="event.preventDefault(); envoyerMessage(${id});">
@@ -5463,6 +5476,87 @@ async function ouvrirConversation(id, nom) {
   const defil = document.getElementById('messages-defilement');
   if (defil) defil.scrollTop = defil.scrollHeight;
   rendreMessagerie();
+  demarrerReleveConversation(id);
+}
+
+/* Un message, tel qu'il s'affiche dans le fil.
+
+   Le balisage vit ici plutôt qu'à l'endroit qui l'emploie : l'ouverture
+   de la conversation et sa relève doivent produire exactement la même
+   chose, faute de quoi un message arrivé en direct ne ressemblerait pas
+   à ses voisins après un rechargement. */
+function blocMessage(m, moi) {
+  return `<div class="message ${m.id_expediteur === moi ? 'de-moi' : ''}"
+               data-msg="${m.id_message}">
+    <p>${echapper(m.contenu)}</p>
+    ${baliseTemps(m.envoye_le)}
+  </div>`;
+}
+
+/* Relève d'une conversation ouverte.
+
+   La pastille se rafraîchissait, pas le fil : en regardant une
+   conversation, on ne voyait pas arriver la réponse. Il fallait changer
+   d'écran et revenir, ce que personne ne devine.
+
+   Trois précautions, et chacune répare ce que la solution évidente
+   casserait :
+
+     - on n'ajoute que ce qui manque, au lieu de tout reconstruire : une
+       reconstruction efface le message en cours de saisie ;
+     - on ne descend le fil que si la personne y était déjà : la
+       ramener de force en bas pendant qu'elle relit le début est
+       exactement ce qu'il ne faut pas faire ;
+     - la relève s'arrête quand l'onglet passe en arrière-plan, et
+       reprend au retour : interroger le serveur pour un écran que
+       personne ne regarde use la batterie sans rien apporter. */
+const RELEVE_CONVERSATION_MS = 15000;
+let _minuteurConversation = null;
+
+function demarrerReleveConversation(id) {
+  arreterReleveConversation();
+  _minuteurConversation = setInterval(
+    () => rafraichirConversation(id), RELEVE_CONVERSATION_MS);
+}
+
+function arreterReleveConversation() {
+  if (_minuteurConversation) {
+    clearInterval(_minuteurConversation);
+    _minuteurConversation = null;
+  }
+}
+
+async function rafraichirConversation(id) {
+  if (_conversationOuverte !== id) return arreterReleveConversation();
+  const zone = document.getElementById('messages-defilement');
+  if (!zone) return arreterReleveConversation();
+
+  let messages;
+  try {
+    messages = await API.get(`/messagerie/conversations/${id}/messages`);
+  } catch (_) {
+    return;            // une relève ratée n'interrompt rien
+  }
+  if (_conversationOuverte !== id) return;
+
+  const connus = new Set(
+    [...zone.querySelectorAll('[data-msg]')].map(e => e.dataset.msg));
+  const nouveaux = (messages || []).filter(
+    m => !connus.has(String(m.id_message)));
+  if (!nouveaux.length) return;
+
+  // « Au bas du fil » à quelques pixels près : un défilement n'atterrit
+  // pas toujours sur la valeur exacte.
+  const enBas = zone.scrollHeight - zone.scrollTop - zone.clientHeight < 40;
+  const moi = etat.utilisateur?.id;
+  const vide = zone.querySelector('.desc');
+  if (vide) vide.remove();
+  zone.insertAdjacentHTML('beforeend',
+    nouveaux.map(m => blocMessage(m, moi)).join(''));
+  if (enBas) zone.scrollTop = zone.scrollHeight;
+
+  // La conversation vient d'être lue : la pastille doit suivre.
+  chargerCompteurMessages();
 }
 
 async function envoyerMessage(id) {
@@ -5872,6 +5966,9 @@ function carteOpportunite(o) {
   const auteur = `${o.prenom || ''} ${o.nom || ''}`.trim();
   const officiel = o.role === 'admin' || o.role === 'super_admin';
   return `<article class="carte carte-opportunite${o.cloturee ? ' close' : ''}">
+    ${o.a_une_affiche ? `<img class="opp-affiche" loading="lazy"
+         src="/api/opportunites/${o.id_opportunite}/affiche"
+         alt="Affiche de : ${echapper(o.titre)}" />` : ''}
     <div class="opp-entete">
       <span class="tag tag-ambre">${echapper(o.categorie_libelle || '')}</span>
       <span class="opp-echeance ${e.urgence}">${echapper(e.texte)}</span>
@@ -5913,6 +6010,63 @@ async function ouvrirFormulaireOpportunite() {
   ouvrirModal('modalOpportunite');
 }
 
+/* Affiche d'une annonce : choisie, réduite, gardée en mémoire.
+
+   Une photo prise au téléphone pèse plusieurs mégaoctets ; la borne du
+   serveur est à deux. On la réduit donc avant l'envoi, et la personne
+   n'a rien à préparer. Mille pixels de large suffisent largement pour
+   une affiche lue à l'écran, et laissent le fichier sous la limite. */
+const LARGEUR_AFFICHE = 1000;
+let _afficheChoisie = '';
+
+function reduireAffiche(dataUrl) {
+  return new Promise((resoudre) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const facteur = Math.min(1, LARGEUR_AFFICHE / img.width);
+        const toile = document.createElement('canvas');
+        toile.width = Math.round(img.width * facteur);
+        toile.height = Math.round(img.height * facteur);
+        toile.getContext('2d').drawImage(img, 0, 0, toile.width, toile.height);
+        resoudre(toile.toDataURL('image/jpeg', 0.82));
+      } catch (_) {
+        resoudre(dataUrl);     // navigateur sans canvas : on garde l'original
+      }
+    };
+    img.onerror = () => resoudre(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+async function choisirAffiche(champ) {
+  const fichier = champ.files && champ.files[0];
+  if (!fichier) return;
+  if (!fichier.type.startsWith('image/')) {
+    champ.value = '';
+    return toast('Choisissez une image.', 'erreur');
+  }
+  const lecteur = new FileReader();
+  lecteur.onload = async () => {
+    _afficheChoisie = await reduireAffiche(lecteur.result);
+    const apercu = document.getElementById('opp-affiche-apercu');
+    if (apercu) {
+      apercu.querySelector('img').src = _afficheChoisie;
+      apercu.hidden = false;
+    }
+  };
+  lecteur.onerror = () => toast("L'image n'a pas pu être lue.", 'erreur');
+  lecteur.readAsDataURL(fichier);
+}
+
+function retirerAffiche() {
+  _afficheChoisie = '';
+  const champ = document.getElementById('opp-affiche');
+  if (champ) champ.value = '';
+  const apercu = document.getElementById('opp-affiche-apercu');
+  if (apercu) { apercu.hidden = true; apercu.querySelector('img').src = ''; }
+}
+
 async function envoyerOpportunite(bouton) {
   const val = id => (document.getElementById(id)?.value || '').trim();
   const corps = {
@@ -5925,6 +6079,7 @@ async function envoyerOpportunite(bouton) {
     domaine: val('opp-domaine'),
     date_limite: val('opp-limite'),
     lien: val('opp-lien'),
+    affiche: _afficheChoisie,
   };
   const libelle = bouton.textContent;
   bouton.disabled = true; bouton.textContent = 'Envoi…';
@@ -5937,6 +6092,7 @@ async function envoyerOpportunite(bouton) {
       const champ = document.getElementById(id);
       if (champ) champ.value = '';
     });
+    retirerAffiche();
     rendreOpportunites();
   } catch (err) {
     toast(err.message || "L'annonce n'a pas pu être envoyée.", 'erreur');

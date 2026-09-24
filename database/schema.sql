@@ -278,6 +278,7 @@ CREATE TABLE conversation_participant (
     id_utilisateur   INT UNSIGNED NOT NULL,
     rejoint_le       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     lu_jusqua        DATETIME NULL,
+    prevenu_le       DATETIME NULL,
     PRIMARY KEY (id_conversation, id_utilisateur),
     CONSTRAINT fk_cp_conv FOREIGN KEY (id_conversation)
         REFERENCES conversation(id_conversation) ON DELETE CASCADE,
@@ -477,6 +478,7 @@ CREATE TABLE opportunite (
     domaine          VARCHAR(120) NULL,
     date_limite      DATE         NULL,
     lien             VARCHAR(400) NULL,
+    affiche         TEXT,
     statut           VARCHAR(20)  NOT NULL DEFAULT 'en_attente',
     motif_refus      VARCHAR(400) NULL,
     decide_par       INT UNSIGNED NULL,

@@ -102,6 +102,10 @@
     {
       "path": "/api/taches/resume",
       "schedule": "0 9 */2 * *"
+    },
+    {
+      "path": "/api/taches/messages-non-lus",
+      "schedule": "0 7,19 * * *"
     }
   ]
 }

@@ -341,6 +341,14 @@ def initialiser_si_necessaire(app):
 # choisis le sont : TEXT et INTEGER existent partout, et une valeur par
 # défaut évite d'avoir à remplir les lignes existantes.
 COLONNES_ATTENDUES = [
+    # Date du dernier e-mail envoye a cette personne au sujet de cette
+    # conversation. Sans elle, on ne saurait pas distinguer « jamais
+    # prevenu » de « prevenu il y a cinq minutes », et un message non lu
+    # produirait un e-mail a chaque passage de la tache.
+    ("conversation_participant", "prevenu_le", "TEXT"),
+    # Affiche d'une annonce. Une bourse ou un concours arrive presque
+    # toujours avec une image, et c'est elle qu'on reconnait dans un fil.
+    ("opportunite", "affiche", "TEXT"),
     ("utilisateur", "preferences_notif", "TEXT"),
     ("utilisateur", "situation", "TEXT"),
     ("utilisateur", "objectif", "TEXT"),
