@@ -4,6 +4,7 @@ from flask import Blueprint, g, jsonify, request
 
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from services import evenements
+from routes.recherche import motif_like
 from utils.auth_helpers import connexion_requise
 from services.notifications import notifier_reaction, notifier
 
@@ -33,8 +34,15 @@ def lister():
         conditions.append("u.id_pays = %s")
         params.append(id_pays)
     if terme:
-        conditions.append("(q.titre LIKE %s OR q.corps LIKE %s)")
-        params.extend([f"%{terme}%", f"%{terme}%"])
+        # Troisieme et dernier endroit ou LIKE comparait sans uniformiser
+        # la casse : sur PostgreSQL, filtrer le fil sur « bourse » ne
+        # trouvait pas une question intitulee « Bourse ». La preparation
+        # du motif est celle de la recherche globale, qui echappe aussi
+        # les jokers.
+        conditions.append("(LOWER(q.titre) LIKE %s ESCAPE '\\' "
+                          " OR LOWER(q.corps) LIKE %s ESCAPE '\\')")
+        motif = motif_like(terme)
+        params.extend([motif, motif])
     if tri == "sansrep":
         conditions.append(
             "NOT EXISTS (SELECT 1 FROM reponse r WHERE r.id_question = q.id_question)"

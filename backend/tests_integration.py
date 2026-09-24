@@ -3810,6 +3810,21 @@ def executer_tests():
         verifier("L'annuaire ignore la casse (PostgreSQL)",
                  any(m["prenom"] == "Candide" for m in trouves),
                  str([m.get("prenom") for m in trouves]))
+    # Le fil de questions portait le meme defaut que la recherche et
+    # l'annuaire : filtrer sur « bourse » ne trouvait pas « Bourse ».
+    if os.environ["DB_TYPE"] == "postgres":
+        # « Comment » existe dans plusieurs titres, jamais en minuscules :
+        # sans LOWER des deux cotes, PostgreSQL n'en trouve aucun.
+        titres = [q["titre"] for q in
+                  (lecteur.get("/api/questions?q=comment").get_json() or [])]
+        verifier("Le filtre du fil ignore la casse (PostgreSQL)",
+                 any(t.startswith("Comment") for t in titres),
+                 str(titres)[:110])
+    # La route rend directement la liste des questions.
+    fil = lecteur.get("/api/questions?q=t%25e").get_json()
+    verifier("Un joker saisi dans le fil n'est pas interprété",
+             fil == [], str(fil)[:110])
+
     tout = lecteur.get("/api/mentors?q=a%25e").get_json() or []
     verifier("Un joker saisi dans l'annuaire n'est pas interprété",
              not tout, str([m.get("prenom") for m in tout]))
