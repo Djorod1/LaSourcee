@@ -726,16 +726,96 @@ function ajouterSecteurPerso() {
    vide et le pays disparaissait du profil sans un mot. La liste
    affichée et la liste enregistrable sont désormais la même. */
 let _pays = null;
+let _secteurs = null;
 
 async function chargerPays() {
   if (_pays) return _pays;
-  try {
-    const r = await API.get('/profil/referentiels');
-    _pays = (r.pays || []).map(p => p.libelle);
-  } catch (_) {
-    _pays = [];
-  }
+  await chargerReferentielsPublics();
   return _pays;
+}
+
+/* Secteurs proposés, servis par le serveur.
+
+   Ils étaient écrits en dur à quatre endroits : les pastilles de
+   l'inscription, le filtre du fil, les catégories du formulaire de
+   question, et le panneau du compte. L'administration, elle, permet
+   d'en ajouter, d'en renommer et d'en supprimer. Un secteur créé
+   n'apparaissait donc nulle part, et un secteur renommé ne
+   correspondait plus à ce que la page proposait toujours. Une seule
+   source, celle de la base. */
+async function chargerSecteurs() {
+  if (_secteurs) return _secteurs;
+  await chargerReferentielsPublics();
+  return _secteurs;
+}
+
+let _referentielsEnCours = null;
+
+function chargerReferentielsPublics() {
+  if (_pays && _secteurs) return Promise.resolve();
+  // Un seul appel, même si plusieurs écrans le demandent en même temps
+  // au démarrage : sans cela la page ouvrait trois requêtes identiques.
+  if (!_referentielsEnCours) {
+    _referentielsEnCours = API.get('/profil/referentiels')
+      .then(r => {
+        _pays = (r.pays || []).map(p => p.libelle);
+        _secteurs = (r.secteurs || []).map(s => s.libelle);
+      })
+      .catch(() => { _pays = _pays || []; _secteurs = _secteurs || []; })
+      .finally(() => { _referentielsEnCours = null; });
+  }
+  return _referentielsEnCours;
+}
+
+/* Remplit un conteneur de pastilles avec les secteurs du serveur.
+
+   Les pastilles écrites dans la page servent de repli : si le serveur
+   ne répond pas, on garde ce qui est déjà affiché plutôt que de laisser
+   un vide où l'on ne peut rien choisir. */
+async function remplirChipsSecteurs(conteneur, gestionnaire, enPlus = []) {
+  if (!conteneur || conteneur.dataset.remp === '1') return;
+  const liste = await chargerSecteurs();
+  if (!liste || !liste.length) return;
+  conteneur.dataset.remp = '1';
+  const avant = conteneur.querySelector('[data-autre="1"]') || null;
+  conteneur.querySelectorAll('.chip-select:not([data-autre])')
+    .forEach(c => c.remove());
+  const vus = new Set();
+  liste.concat(enPlus).forEach(libelle => {
+    if (vus.has(libelle)) return;
+    vus.add(libelle);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip-select';
+    b.setAttribute('aria-pressed', 'false');
+    b.textContent = libelle;
+    b.addEventListener('click', () => gestionnaire(b));
+    conteneur.insertBefore(b, avant);
+  });
+}
+
+async function remplirFiltreSecteurs() {
+  const sel = document.getElementById('filtre-secteur');
+  if (!sel || sel.dataset.remp === '1') return;
+  const liste = await chargerSecteurs();
+  if (!liste || !liste.length) return;
+  const choisi = sel.value;
+  sel.dataset.remp = '1';
+  sel.innerHTML = '<option value="">Tous les secteurs</option>'
+    + liste.map(s => `<option${s === choisi ? ' selected' : ''}>${
+        echapper(s)}</option>`).join('');
+}
+
+async function remplirSecteursPage() {
+  await Promise.all([
+    remplirChipsSecteurs(
+      document.querySelector('#etape-2 .chips-select'), toggleChip),
+    // « Autre » n'est pas un secteur de la base : c'est la sortie de
+    // secours pour une question qui n'entre dans aucune case. Elle reste.
+    remplirChipsSecteurs(
+      document.getElementById('chips-cat'), choisirCat, ['Autre']),
+    remplirFiltreSecteurs(),
+  ]);
 }
 
 function optionsPays(choisi) {
@@ -2001,9 +2081,14 @@ function rendreEspaceMentor() {
   const aTraiter = questions
     .filter(q => u.secteurs.includes(q.secteur) && q.reponses.length === 0)
     .slice(0, 5);
+  // Ce compteur parcourait les questions chargées dans la page et
+  // retenait les réponses dont le nom d'auteur « contenait » le prénom
+  // du référent. Il valait donc zéro tant que le fil n'était pas chargé,
+  // ne voyait jamais que la première page, et attribuait à Marie les
+  // réponses de Marie-Claire. Le serveur compte déjà, sur la base
+  // entière : c'est ce chiffre-là qu'on montre.
   const stats = {
-    reponses: questions.reduce((n, q) =>
-      n + q.reponses.filter(r => r.auteur.includes(u.prenom)).length, 0),
+    reponses: u.nb_reponses_publiees || 0,
     secteurs: u.secteurs.length,
   };
 
@@ -2396,7 +2481,8 @@ function changerPanParam(elem, p) {
   if (p === 'compte') {
     // Les pays viennent du serveur : le panneau attend la liste plutôt
     // que de s'afficher avec un sélecteur vide.
-    Promise.all([chargerReferentielsProfil(), chargerPays()]).then(() => {
+    Promise.all([chargerReferentielsProfil(), chargerPays(),
+                 chargerSecteurs()]).then(() => {
       c.innerHTML = panneauCompte();
       // L'état de la limite se calcule au rendu, pas au premier clic :
       // sinon quelqu'un arrivant avec quatre objectifs déjà cochés
@@ -2411,7 +2497,12 @@ function changerPanParam(elem, p) {
 
 function panneauCompte() {
   const u = etat.utilisateur;
-  const secteursDefaut = ['Technologie','Médecine','Droit','Finance','Arts','Éducation','Ingénierie','Entrepreneuriat'];
+  // La liste vient de la base, où l'administration la tient à jour. Le
+  // repli n'est là que si le serveur n'a pas répondu : mieux vaut huit
+  // secteurs figés qu'un panneau sans aucun choix.
+  const secteursDefaut = (_secteurs && _secteurs.length) ? _secteurs
+    : ['Technologie', 'Médecine', 'Droit', 'Finance',
+       'Arts', 'Éducation', 'Ingénierie', 'Entrepreneuriat'];
   const secteursPerso = (u.secteurs || []).filter(s => !secteursDefaut.includes(s));
   const optsPays = optionsPays(u.pays);
   return `<div class="section-param">
@@ -3712,6 +3803,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Contacte le serveur et charge la session courante
   await initialiserApi();
   if (!MODE.api) afficherServeurIndisponible();
+
+  // Les secteurs affichés à l'inscription, dans le filtre du fil et dans
+  // le formulaire de question viennent de la base : ce sont ceux que
+  // l'administration tient à jour, pas une liste figée dans la page.
+  if (MODE.api) remplirSecteursPage();
 
   // Charge la configuration OAuth publique (Client ID Google + flag LinkedIn)
   try {

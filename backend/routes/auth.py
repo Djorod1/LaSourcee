@@ -94,9 +94,34 @@ def inscription():
     if not ok:
         return _erreur(message)
 
-    if recuperer_un("SELECT 1 FROM utilisateur WHERE email = %s LIMIT 1",
-                    (email,)):
-        return _erreur("Cette adresse e-mail est déjà utilisée.", 409)
+    # Une adresse déjà inscrite recevait « Cette adresse e-mail est déjà
+    # utilisée », en 409. On pouvait donc savoir, adresse par adresse, qui
+    # a un compte ici : il suffisait d'essayer de s'inscrire. La connexion
+    # et l'oubli de mot de passe se gardent bien de le dire ; l'inscription
+    # était la porte restée ouverte.
+    #
+    # La réponse est maintenant la même dans les deux cas. Ce n'est pas un
+    # silence : la personne qui possède déjà le compte reçoit un e-mail
+    # qui le lui rappelle et lui indique quoi faire. C'est même plus utile
+    # qu'un message d'erreur, puisque c'est dans sa boîte qu'elle va
+    # regarder après s'être vu dire de confirmer son adresse.
+    #
+    # En mode souple, l'inscription ouvre une session immédiatement : il
+    # n'y a pas de réponse indiscernable à donner, et ce mode ne sert
+    # qu'au développement. Le message d'erreur y reste.
+    existant = recuperer_un(
+        "SELECT id_utilisateur, prenom FROM utilisateur WHERE email = %s LIMIT 1",
+        (email,))
+    if existant:
+        if not current_app.config["VERIFICATION_EMAIL_OBLIGATOIRE"]:
+            return _erreur("Cette adresse e-mail est déjà utilisée.", 409)
+        enregistrer_echec(cle_debit)
+        _prevenir_compte_existant(email, existant.get("prenom") or "")
+        return jsonify({
+            "verification_requise": True,
+            "email_envoye": True,
+            "message": "Un e-mail de confirmation vous a été envoyé.",
+        }), 201
 
     # Ce que l'accueil guidé a recueilli est écrit dans la même
     # transaction que le compte. Auparavant, l'interface gardait ces
@@ -166,6 +191,46 @@ def inscription():
     })
     _poser_cookie(reponse, token)
     return reponse, 201
+
+
+def _prevenir_compte_existant(email: str, prenom: str):
+    """Prévient le titulaire qu'on a tenté de se réinscrire avec son adresse.
+
+    C'est la contrepartie de la réponse indiscernable : sans ce message,
+    quelqu'un qui a oublié qu'il avait un compte attendrait un code qui
+    ne viendrait jamais.
+    """
+    from utils.email import envoyer, gabarit_html
+    bonjour = f"Bonjour {prenom}," if prenom else "Bonjour,"
+    lien = url_publique("/index.html")
+    try:
+        envoyer(
+            email,
+            "Vous avez déjà un compte LaSourcee",
+            f"{bonjour}\n\n"
+            "Quelqu'un vient d'essayer de créer un compte LaSourcee avec\n"
+            "cette adresse. Un compte existe déjà : il n'y en a donc pas\n"
+            "de nouveau, et rien n'a changé.\n\n"
+            "Si c'était vous, connectez-vous simplement. Si vous avez\n"
+            "oublié votre mot de passe, utilisez « Mot de passe oublié »\n"
+            "sur la page de connexion.\n\n"
+            "Si ce n'était pas vous, vous n'avez rien à faire : votre\n"
+            "mot de passe n'a pas été communiqué et reste inchangé.\n\n"
+            "L'équipe LaSourcee",
+            corps_html=gabarit_html(
+                "Vous avez déjà un compte LaSourcee",
+                [bonjour,
+                 "Quelqu'un vient d'essayer de créer un compte avec cette "
+                 "adresse. <b>Un compte existe déjà</b> : il n'y en a pas de "
+                 "nouveau, et rien n'a changé.",
+                 "Si c'était vous, connectez-vous. Mot de passe oublié ? "
+                 "Utilisez le lien prévu sur la page de connexion.",
+                 "Si ce n'était pas vous, vous n'avez rien à faire : votre "
+                 "mot de passe n'a pas été communiqué et reste inchangé."],
+                bouton_texte="Se connecter", bouton_lien=lien),
+        )
+    except Exception:                                   # pragma: no cover
+        logger.exception("Avis de compte existant non envoyé à %s", email)
 
 
 def _envoyer_email_verification(id_user: int, email: str, prenom: str):

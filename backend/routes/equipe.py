@@ -29,6 +29,8 @@ from utils.audit import journaliser
 from utils.noms import normaliser_nom
 from utils.permissions import permission_requise
 from utils.securite import est_bloque, enregistrer_echec
+from utils.urls import url_publique
+from utils.email import envoyer, gabarit_html
 
 logger = logging.getLogger("lasourcee.equipe")
 
@@ -201,7 +203,8 @@ def traiter(id_message):
         return jsonify({"erreur": "Statut inconnu."}), 400
 
     ligne = recuperer_un(
-        "SELECT id_utilisateur FROM message_equipe WHERE id_message = %s",
+        """SELECT id_utilisateur, nom, email, categorie, message
+             FROM message_equipe WHERE id_message = %s""",
         (id_message,))
     if not ligne:
         return jsonify({"erreur": "Message introuvable."}), 404
@@ -220,9 +223,54 @@ def traiter(id_message):
 
     # La personne qui a écrit doit savoir que quelqu'un a lu. Sans
     # cela, on écrit une fois et on n'écrit plus jamais.
-    if reponse and ligne.get("id_utilisateur"):
+    remise = _remettre_reponse(id_message, ligne, reponse) if reponse else None
+    return jsonify({"ok": True, "statut": statut, "reponse_remise": remise})
+
+
+def _remettre_reponse(id_message, ligne, reponse):
+    """Fait parvenir la réponse à qui a écrit, compte ou pas.
+
+    Le module dit en tête qu'on n'exige pas de compte, parce que celui
+    qui n'arrive pas à se connecter est précisément celui qui a besoin
+    d'écrire. La réponse, elle, ne partait que par notification interne :
+    elle n'atteignait donc jamais ces personnes-là. L'équipe rédigeait,
+    le message s'enregistrait, le dossier passait à « traité », et rien
+    n'arrivait. On répond sur le canal dont on dispose, et on dit
+    lequel.
+    """
+    if ligne.get("id_utilisateur"):
         notifier(ligne["id_utilisateur"],
                  "L'équipe de LaSourcee a répondu à votre message : "
                  + reponse[:180],
                  type_notif="systeme")
-    return jsonify({"ok": True, "statut": statut})
+        return "notification"
+
+    adresse = (ligne.get("email") or "").strip()
+    if not adresse:
+        logger.warning("Message %s sans destinataire : réponse non remise.",
+                       id_message)
+        return None
+
+    prenom = (ligne.get("nom") or "").split(" ")[0]
+    bonjour = f"Bonjour {prenom}," if prenom else "Bonjour,"
+    rappel = (ligne.get("message") or "").strip()
+    corps = (
+        f"{bonjour}\n\n"
+        "Vous nous avez écrit, voici notre réponse :\n\n"
+        f"{reponse}\n\n"
+        + (f"Pour mémoire, votre message :\n« {rappel[:500]} »\n\n"
+           if rappel else "")
+        + "Vous pouvez répondre directement à cet e-mail.\n\n"
+        "L'équipe de LaSourcee"
+    )
+    html = gabarit_html(
+        "Réponse de l'équipe de LaSourcee",
+        [bonjour, "Vous nous avez écrit, voici notre réponse :",
+         reponse] + ([f"Pour mémoire, votre message : « {rappel[:500]} »"]
+                     if rappel else []),
+        bouton_texte="Ouvrir LaSourcee", bouton_lien=url_publique("/index.html"))
+    envoye = envoyer(adresse, "Réponse de l'équipe de LaSourcee", corps, html)
+    if not envoye:
+        logger.error("Réponse au message %s non remise à %s.",
+                     id_message, adresse)
+    return "email" if envoye else None

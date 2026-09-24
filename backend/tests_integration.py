@@ -3431,6 +3431,207 @@ def executer_tests():
                        "  AND details LIKE ?",
                        ("%droits retires%",)) >= 1)
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  47. CE QUE LA PAGE PROPOSE, ET CE QU'ELLE LAISSE FILTRER")
+    print("═" * 70)
+
+    # --- La recherche globale -----------------------------------------
+    #
+    # Elle comparait avec LIKE sans uniformiser la casse. PostgreSQL, qui
+    # sert la production, distingue les majuscules : chercher « techno »
+    # ne trouvait rien alors que « Technologie » existait.
+    chercheur, _ = _compte_admin(
+        "Chercheuse", "chercheuse@test.io", "ChercheTest2026!",
+        "etudiant", '[]')
+    # Le defaut ne se voit que sur PostgreSQL : le LIKE de SQLite ignore
+    # deja la casse des caracteres ASCII, si bien qu'un controle passe ici
+    # resterait vert meme sans la correction. On ne l'affirme donc que la
+    # ou il peut echouer, plutot que de se donner une assurance vide.
+    if os.environ["DB_TYPE"] == "postgres":
+        libelles = [x["libelle"] for x in
+                    (chercheur.get("/api/recherche?q=technologie").get_json()
+                     or {}).get("secteurs", [])]
+        verifier("La recherche ignore la casse (PostgreSQL)",
+                 "Technologie" in libelles, str(libelles))
+        # Les accents ne sont volontairement pas affirmes ici : leur
+        # pliage depend du collationnement de la base, pas du code. Sous
+        # « C », lower('É') rend 'É' et rien ne peut y faire cote SQL ;
+        # sous en_US.UTF-8, qui sert en production, cela fonctionne.
+        # L'affirmer reviendrait a tester la configuration du serveur de
+        # test, et a rougir ou verdir pour une raison etrangere au code.
+    else:
+        verifier("La recherche trouve un secteur en minuscules",
+                 "Technologie" in [x["libelle"] for x in
+                                   (chercheur.get("/api/recherche?q=techno")
+                                    .get_json() or {}).get("secteurs", [])])
+
+    # Un referent non verifie ne figure pas dans l'annuaire. Il ne doit
+    # pas non plus sortir de la recherche : c'est la meme information.
+    with app.app_context():
+        from utils.auth_helpers import hacher_mot_de_passe
+        _maj("""INSERT INTO utilisateur
+                  (prenom, nom, email, mot_de_passe, role, est_actif,
+                   email_verifie, bio)
+                VALUES ('Zacharie', 'Discret', 'discret@test.io', %s,
+                        'mentor', 1, 1, 'Specialiste zzzunique')""",
+             (hacher_mot_de_passe("DiscretTest2026!"),), commit=True)
+        id_discret = _id("discret@test.io")
+        _maj("INSERT INTO mentor_details (id_utilisateur, est_verifie) "
+             "VALUES (%s, 0)", (id_discret,), commit=True)
+
+    trouves = (chercheur.get("/api/recherche?q=zzzunique").get_json()
+               or {}).get("mentors", [])
+    annuaire = (chercheur.get("/api/mentors").get_json() or {})
+    liste_annuaire = annuaire.get("mentors", annuaire) if isinstance(
+        annuaire, dict) else annuaire
+    dans_annuaire = any(m.get("id_utilisateur") == id_discret
+                        for m in (liste_annuaire or []))
+    verifier("Un référent non vérifié reste hors de l'annuaire",
+             not dans_annuaire)
+    verifier("Et la recherche ne l'expose pas davantage",
+             not any(m.get("id_utilisateur") == id_discret for m in trouves),
+             str([m.get("prenom") for m in trouves]))
+
+    # Un joker saisi ne doit pas balayer la table entiere. Le terme fait
+    # trois caracteres exprès : en dessous de deux, la route repond une
+    # liste vide sans rien chercher, et le controle passerait tout seul.
+    # Echappe, « t%e » ne trouve rien ; non echappe, il trouve tout ce qui
+    # porte un t suivi plus loin d'un e, soit la moitie de la table.
+    tout = (chercheur.get("/api/recherche?q=t%25e").get_json()
+            or {}).get("secteurs", [])
+    verifier("Un joker saisi est cherché tel quel, pas interprété",
+             not tout, str([x["libelle"] for x in tout]))
+
+    # --- Suppression d'un secteur -------------------------------------
+    #
+    # `utilisateur_secteur` part en cascade : supprimer un secteur
+    # retirait sans un mot ce domaine aux referents qui l'avaient declare.
+    with app.app_context():
+        _maj("INSERT INTO secteur (libelle) VALUES ('Zone de test')",
+             (), commit=True)
+    id_sect = jeton_sql(
+        "SELECT id_secteur FROM secteur WHERE libelle = ?", ("Zone de test",))
+    r = patron.delete(f"/api/admin/secteurs/{id_sect}")
+    verifier("Un secteur que personne ne porte se supprime",
+             r.status_code == 200, r.get_data(as_text=True)[:110])
+
+    with app.app_context():
+        _maj("INSERT INTO secteur (libelle) VALUES ('Zone portee')",
+             (), commit=True)
+    id_porte = jeton_sql(
+        "SELECT id_secteur FROM secteur WHERE libelle = ?", ("Zone portee",))
+    with app.app_context():
+        _maj("INSERT INTO utilisateur_secteur (id_utilisateur, id_secteur) "
+             "VALUES (%s, %s)", (id_discret, id_porte), commit=True)
+    r = patron.delete(f"/api/admin/secteurs/{id_porte}")
+    verifier("Un secteur déclaré par un référent ne se supprime pas",
+             r.status_code == 409, str(r.status_code))
+    verifier("Le domaine du référent est resté en place",
+             jeton_sql("SELECT COUNT(*) FROM utilisateur_secteur "
+                       "WHERE id_secteur = ?", (id_porte,)) == 1)
+    verifier("Le message dit combien de personnes sont concernées",
+             "1 référent" in (r.get_json() or {}).get("erreur", ""),
+             (r.get_json() or {}).get("erreur", "")[:90])
+
+    # --- Candidature de référent --------------------------------------
+    #
+    # Un identifiant de domaine inexistant heurtait la cle etrangere : la
+    # candidature entiere etait perdue sur une erreur de serveur.
+    candidat, id_candidat = _compte_admin(
+        "Candide", "candide@test.io", "CandideTest2026!", "mentor", '[]')
+    dossier = {
+        "bio": "Ingénieure en poste depuis douze ans, je forme des juniors.",
+        "motivation": "Je veux rendre ce qu'on m'a donné, et je sais que "
+                      "quelques conseils au bon moment changent une "
+                      "trajectoire entière.",
+        "profession": "Ingénieure logiciel",
+        "annees_experience": 12,
+    }
+    r = candidat.post("/api/mentors/candidature",
+                      json={**dossier, "secteurs": [999999]})
+    verifier("Un domaine d'expertise inexistant est refusé proprement",
+             r.status_code == 400, str(r.status_code))
+    verifier("Et aucune candidature n'est enregistrée au passage",
+             jeton_sql("SELECT COUNT(*) FROM utilisateur_secteur "
+                       "WHERE id_utilisateur = ?", (id_candidat,)) == 0)
+
+    id_vrai = jeton_sql(
+        "SELECT id_secteur FROM secteur WHERE libelle = ?", ("Technologie",))
+    r = candidat.post("/api/mentors/candidature",
+                      json={**dossier, "secteurs": [id_vrai, id_vrai]})
+    verifier("Une candidature avec un domaine réel aboutit",
+             r.status_code in (200, 201), r.get_data(as_text=True)[:110])
+    verifier("Un domaine cité deux fois n'est enregistré qu'une",
+             jeton_sql("SELECT COUNT(*) FROM utilisateur_secteur "
+                       "WHERE id_utilisateur = ?", (id_candidat,)) == 1)
+
+    # --- Inscription : ne pas dire qui a un compte ---------------------
+    #
+    # « Cette adresse est deja utilisee » permettait de savoir, adresse
+    # par adresse, qui est inscrit ici.
+    # La reponse indiscernable ne vaut que quand la confirmation est
+    # exigee : en mode souple, l'inscription ouvre une session, et il n'y
+    # a rien d'indiscernable a renvoyer.
+    _avant_verif = app.config.get("VERIFICATION_EMAIL_OBLIGATOIRE")
+    app.config["VERIFICATION_EMAIL_OBLIGATOIRE"] = True
+    depart = app.test_client()
+    r = depart.post("/api/auth/inscription", json={
+        "prenom": "Sosie", "nom": "Essai", "email": "chercheuse@test.io",
+        "mot_de_passe": "SosieTest2026!", "role": "etudiant",
+        "consentement": {"conditions": True, "donnees": True},
+    })
+    corps = r.get_json() or {}
+    app.config["VERIFICATION_EMAIL_OBLIGATOIRE"] = _avant_verif
+    verifier("Une adresse déjà inscrite ne se distingue plus d'une nouvelle",
+             r.status_code == 201 and corps.get("verification_requise") is True,
+             f"{r.status_code} {str(corps)[:90]}")
+    verifier("Le mot de passe du compte existant n'a pas été touché",
+             chercheur.get("/api/profil/moi").status_code == 200)
+    verifier("Aucun second compte n'a été créé",
+             jeton_sql("SELECT COUNT(*) FROM utilisateur WHERE email = ?",
+                       ("chercheuse@test.io",)) == 1)
+
+    # --- Réponse de l'équipe à quelqu'un sans compte -------------------
+    #
+    # Elle ne partait que par notification interne : elle n'atteignait
+    # donc jamais ceux qui ecrivent sans compte, c'est-a-dire ceux qui
+    # n'arrivent pas a se connecter.
+    anonyme = app.test_client()
+    r = anonyme.post("/api/equipe/message", json={
+        "nom": "Passante", "email": "passante@test.io",
+        "categorie": "panne",
+        "message": "La page de connexion tourne sans fin sur mon téléphone.",
+    })
+    verifier("Un message sans compte est accepté",
+             r.status_code == 201, r.get_data(as_text=True)[:110])
+    id_msg = (r.get_json() or {}).get("id_message")
+    r = patron.post(f"/api/equipe/messages/{id_msg}/traiter",
+                    json={"statut": "traite",
+                          "reponse": "C'est corrigé, merci de l'avoir signalé."})
+    verifier("La réponse de l'équipe est remise par e-mail",
+             (r.get_json() or {}).get("reponse_remise") == "email",
+             str(r.get_json())[:110])
+
+    r = anonyme.post("/api/equipe/message", json={
+        "categorie": "panne",
+        "message": "Le bouton publier ne répond plus depuis ce matin.",
+    })
+    id_avec = (r.get_json() or {}).get("id_message") if r.status_code == 201 \
+        else None
+    if id_avec is None:
+        # Sans compte et sans adresse, le message est refuse : c'est la
+        # regle. On passe par un compte pour la variante « notification ».
+        r = chercheur.post("/api/equipe/message", json={
+            "categorie": "panne",
+            "message": "Le bouton publier ne répond plus depuis ce matin."})
+        id_avec = (r.get_json() or {}).get("id_message")
+    r = patron.post(f"/api/equipe/messages/{id_avec}/traiter",
+                    json={"statut": "traite", "reponse": "Nous regardons."})
+    verifier("Et par notification quand la personne a un compte",
+             (r.get_json() or {}).get("reponse_remise") == "notification",
+             str(r.get_json())[:110])
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

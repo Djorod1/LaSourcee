@@ -500,6 +500,23 @@ def supprimer_secteur(id_s):
             "erreur": f"Ce secteur est utilisé par {usage['n']} question(s). "
                       "Réassignez-les avant suppression."
         }), 409
+    # Le controle ne regardait que les questions. Or `utilisateur_secteur`
+    # part en cascade : supprimer un secteur retirait sans un mot ce
+    # domaine d'expertise a tous les referents qui l'avaient declare. Ils
+    # sortaient de l'annuaire filtre par secteur et ne recevaient plus les
+    # questions correspondantes, sans que personne, eux compris, ne
+    # l'apprenne. Renommer reste possible ; supprimer ne l'est pas.
+    porteurs = recuperer_un(
+        "SELECT COUNT(*) AS n FROM utilisateur_secteur WHERE id_secteur = %s",
+        (id_s,),
+    )
+    if porteurs and porteurs["n"] > 0:
+        return jsonify({
+            "erreur": f"Ce secteur est déclaré comme domaine d'expertise par "
+                      f"{porteurs['n']} référent(s). Le supprimer le "
+                      "retirerait de leur profil. Renommez-le, ou demandez-"
+                      "leur de changer de domaine."
+        }), 409
     n = executer("DELETE FROM secteur WHERE id_secteur = %s",
                  (id_s,), commit=True)
     if not n:
