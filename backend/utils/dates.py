@@ -1,12 +1,18 @@
-"""Normalisation des dates entre SQLite et MySQL.
+"""Normalisation des dates, quel que soit le moteur.
 
 SQLite stocke les dates sous forme de texte (« 2026-08-26 13:00:43 »),
-alors que MySQL renvoie de vrais objets ``datetime``. Comparer
-directement la valeur lue en base avec ``datetime.utcnow()`` provoque
-donc une ``TypeError`` en SQLite.
+tandis que PostgreSQL et MySQL rendent de vrais objets ``datetime``.
+Comparer directement la valeur lue en base avec ``datetime.utcnow()``
+provoque donc une ``TypeError`` en SQLite.
 
 Toute comparaison de date issue de la base doit passer par
 ``vers_datetime()``.
+
+Les colonnes de date sont déclarées ``TIMESTAMP`` sans fuseau dans les
+trois schémas, et les valeurs écrites sont en temps universel : les
+``datetime`` rendus ici sont donc naïfs, comparables à
+``datetime.utcnow()``. Déclarer un jour une colonne avec fuseau
+imposerait de revoir ce module, faute de quoi la comparaison lèverait.
 """
 
 from datetime import datetime

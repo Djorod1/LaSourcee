@@ -20,6 +20,7 @@ from flask import Blueprint, g, jsonify, request
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from utils.auth_helpers import connexion_requise
 from utils.urls import url_publique
+from services import evenements
 from services.notifications import notifier, notifier_decision_candidature
 from utils import email as mod_email
 
@@ -28,6 +29,32 @@ bp_candidature = Blueprint("candidature", __name__, url_prefix="/api/mentors")
 
 LONGUEUR_MIN_MOTIVATION = 80
 LONGUEUR_MIN_BIO = 40
+
+
+def _secteurs_valides(bruts):
+    """Sépare les identifiants de domaine réels des autres.
+
+    Rend la liste des identifiants qui existent en base, sans doublon et
+    dans l'ordre d'arrivée, et la liste de ceux qu'elle a écartés.
+    """
+    demandes, rejetes = [], []
+    for brut in bruts:
+        try:
+            valeur = int(brut)
+        except (TypeError, ValueError):
+            rejetes.append(brut)
+            continue
+        if valeur not in demandes:
+            demandes.append(valeur)
+    if not demandes:
+        return [], rejetes
+
+    trous = ", ".join(["%s"] * len(demandes))
+    connus = {l["id_secteur"] for l in recuperer_tous(
+        f"SELECT id_secteur FROM secteur WHERE id_secteur IN ({trous})",
+        tuple(demandes))}
+    return ([v for v in demandes if v in connus],
+            rejetes + [v for v in demandes if v not in connus])
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +88,20 @@ def deposer_candidature():
             f"{LONGUEUR_MIN_MOTIVATION} caractères."}), 400
     if not profession:
         return jsonify({"erreur": "Indiquez votre profession actuelle."}), 400
+    if not secteurs:
+        return jsonify({"erreur":
+            "Choisissez au moins un domaine d'expertise."}), 400
+    # Les identifiants de domaine arrivent de la page et n'etaient
+    # verifies que sur leur forme : un entier valide mais absent de la
+    # table passait le controle, puis la cle etrangere refusait
+    # l'insertion. La candidature entiere etait perdue, et la personne
+    # ne lisait qu'une erreur de serveur. On les confronte a la table
+    # avant d'ecrire quoi que ce soit.
+    secteurs, inconnus = _secteurs_valides(secteurs)
+    if inconnus:
+        return jsonify({"erreur":
+            "Un domaine d'expertise choisi n'existe plus. Rechargez la "
+            "page et reprenez votre sélection."}), 400
     if not secteurs:
         return jsonify({"erreur":
             "Choisissez au moins un domaine d'expertise."}), 400
@@ -133,14 +174,11 @@ def deposer_candidature():
             (id_user,),
         )
         for id_secteur in secteurs:
-            try:
-                cur.execute(
-                    "INSERT INTO utilisateur_secteur "
-                    "(id_utilisateur, id_secteur) VALUES (%s, %s)",
-                    (id_user, int(id_secteur)),
-                )
-            except (TypeError, ValueError):
-                continue
+            cur.execute(
+                "INSERT INTO utilisateur_secteur "
+                "(id_utilisateur, id_secteur) VALUES (%s, %s)",
+                (id_user, id_secteur),
+            )
 
         # Parcours : poste actuel puis expériences complémentaires
         cur.execute("DELETE FROM experience WHERE id_utilisateur = %s",
@@ -169,6 +207,10 @@ def deposer_candidature():
     _prevenir_administrateurs(profil, profession, organisation, annees,
                               motivation, lien_pro)
     _accuser_reception(profil)
+    evenements.depuis_requete("candidature", type_cible="utilisateur",
+                              id_cible=id_user,
+                              contexte={"secteurs": len(secteurs),
+                                        "annees": annees})
 
     return jsonify({
         "ok": True,
@@ -318,8 +360,9 @@ def notifier_decision(id_mentor, acceptee, motif=""):
              "Votre candidature a été <b>acceptée</b>. Votre compte porte "
              "maintenant le badge <b>Référent vérifié</b>, visible par tous "
              "les membres de la plateforme.",
-             "Vous pouvez répondre aux questions, être suivi par les "
-             "bénéficiaires et apparaître dans l'annuaire des référents."],
+             "Vous pouvez répondre aux questions, apparaître dans "
+             "l'annuaire des référents et proposer des bourses et des "
+             "opportunités aux bénéficiaires."],
             bouton_texte="Accéder à mon espace référent",
             bouton_lien=lien,
             note_bas="Merci de faire vivre l'entraide sur LaSourcee.",

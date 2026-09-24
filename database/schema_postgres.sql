@@ -64,11 +64,14 @@ CREATE TABLE utilisateur (
     domaine         TEXT,
     -- Libre : aucune liste ne contient l'atelier ou s'apprend un metier.
     etablissement   TEXT,
+    filiere         TEXT,
     cree_le         TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     maj_le          TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     derniere_co     TIMESTAMP,
     -- Derniere action, distincte de la derniere connexion.
     derniere_activite TIMESTAMP,
+    resume_envoye_le TIMESTAMP,
+    resume_examine_le TIMESTAMP,
     FOREIGN KEY (id_pays) REFERENCES pays(id_pays) ON DELETE SET NULL
 );
 
@@ -131,6 +134,7 @@ CREATE TABLE question (
     vues         INTEGER      NOT NULL DEFAULT 0,
     premiere_reponse_le TIMESTAMP,
     resolue_le   TIMESTAMP,
+    id_reponse_retenue INTEGER,
     FOREIGN KEY (id_auteur)  REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE,
     FOREIGN KEY (id_secteur) REFERENCES secteur(id_secteur)         ON DELETE SET NULL
 );
@@ -187,14 +191,17 @@ CREATE TABLE sauvegarde (
     FOREIGN KEY (id_question)    REFERENCES question(id_question)       ON DELETE CASCADE
 );
 
-CREATE TABLE suivi_mentor (
-    id_suiveur  INTEGER NOT NULL,
-    id_mentor   INTEGER NOT NULL,
-    cree_le     TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id_suiveur, id_mentor),
-    CHECK (id_suiveur <> id_mentor),
-    FOREIGN KEY (id_suiveur) REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE,
-    FOREIGN KEY (id_mentor)  REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE
+-- Notes attribuees aux reponses. Les etoiles existaient a l'ecran
+-- sans rien enregistrer : la moyenne d'un referent valait zero pour
+-- tout le monde.
+CREATE TABLE note_reponse (
+    id_reponse      INTEGER NOT NULL,
+    id_utilisateur  INTEGER NOT NULL,
+    valeur          INTEGER NOT NULL CHECK (valeur BETWEEN 1 AND 5),
+    cree_le         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id_reponse, id_utilisateur),
+    FOREIGN KEY (id_reponse)     REFERENCES reponse(id_reponse)         ON DELETE CASCADE,
+    FOREIGN KEY (id_utilisateur) REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE
 );
 
 CREATE TABLE signalement (
@@ -422,3 +429,49 @@ INSERT INTO pays (libelle, code_iso) VALUES
  ('Cameroun','CM'),('Algérie','DZ'),('Tunisie','TN'),('Mali','ML'),
  ('Burkina Faso','BF'),('Togo','TG'),('Niger','NE'),('Madagascar','MG'),
  ('Guinée','GN'),('Autre',NULL);
+
+-- Messages adresses a l'equipe. Les membres n'avaient aucun endroit ou
+-- dire qu'une page ne marchait pas ou qu'un libelle pretait a confusion.
+CREATE TABLE message_equipe (
+    id_message      SERIAL PRIMARY KEY,
+    id_utilisateur  INTEGER,
+    nom             TEXT,
+    email           TEXT,
+    categorie       TEXT    NOT NULL DEFAULT 'autre',
+    message         TEXT    NOT NULL,
+    page            TEXT,
+    navigateur      TEXT,
+    statut          TEXT    NOT NULL DEFAULT 'nouveau',
+    reponse         TEXT,
+    traite_par      INTEGER,
+    traite_le       TEXT,
+    cree_le         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_utilisateur) REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL
+);
+
+CREATE INDEX idx_message_equipe_statut ON message_equipe(statut, cree_le);
+
+-- Bourses, concours, stages. Une annonce a une date limite : c'est ce
+-- qui fait revenir sans qu'on ait rien a publier soi-meme.
+CREATE TABLE opportunite (
+    id_opportunite  SERIAL PRIMARY KEY,
+    id_auteur       INTEGER,
+    titre           TEXT    NOT NULL,
+    categorie       TEXT    NOT NULL DEFAULT 'bourse',
+    organisme       TEXT,
+    description     TEXT    NOT NULL,
+    pays            TEXT,
+    niveau          TEXT,
+    domaine         TEXT,
+    date_limite     TEXT,
+    lien            TEXT,
+    statut          TEXT    NOT NULL DEFAULT 'en_attente',
+    motif_refus     TEXT,
+    decide_par      INTEGER,
+    decide_le       TEXT,
+    vues            INTEGER NOT NULL DEFAULT 0,
+    cree_le         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_auteur) REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL
+);
+
+CREATE INDEX idx_opportunite_statut ON opportunite(statut, date_limite);

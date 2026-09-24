@@ -19,6 +19,9 @@ from utils.auth_helpers import (
     supprimer_cookie_session,
 )
 from utils.urls import url_publique
+from utils.noms import normaliser_nom
+from routes.profil import profil_initial
+from services import evenements
 from utils.securite import (
     mot_de_passe_valide,
     est_bloque,
@@ -59,11 +62,19 @@ def inscription():
             f"Réessayez dans environ {max(1, reste // 60)} minute(s).", 429)
 
     d = request.get_json(silent=True) or {}
-    prenom = (d.get("prenom") or "").strip()
-    nom    = (d.get("nom") or "").strip()
+    # Les noms sont remis en forme avant d'être écrits : accents
+    # recomposés, espaces en trop et caractères invisibles retirés,
+    # casse rétablie quand tout est saisi en majuscules ou en
+    # minuscules. Sans cela la base garde plusieurs écritures du même
+    # nom, dont certaines s'affichent de travers.
+    prenom = normaliser_nom(d.get("prenom"))
+    nom    = normaliser_nom(d.get("nom"))
     email  = (d.get("email") or "").strip().lower()
     mdp    = d.get("mot_de_passe") or ""
     role   = d.get("role") or "etudiant"
+
+    if prenom is None or nom is None:
+        return _erreur("Le prénom et le nom doivent contenir des lettres.")
 
     # Le consentement est exigé, puis enregistré daté et versionné. Un
     # accord dont on ne sait ni quand il a été donné ni à quel texte il
@@ -84,23 +95,67 @@ def inscription():
     if not ok:
         return _erreur(message)
 
-    if recuperer_un("SELECT 1 FROM utilisateur WHERE email = %s LIMIT 1",
-                    (email,)):
-        return _erreur("Cette adresse e-mail est déjà utilisée.", 409)
+    # Une adresse déjà inscrite recevait « Cette adresse e-mail est déjà
+    # utilisée », en 409. On pouvait donc savoir, adresse par adresse, qui
+    # a un compte ici : il suffisait d'essayer de s'inscrire. La connexion
+    # et l'oubli de mot de passe se gardent bien de le dire ; l'inscription
+    # était la porte restée ouverte.
+    #
+    # La réponse est maintenant la même dans les deux cas. Ce n'est pas un
+    # silence : la personne qui possède déjà le compte reçoit un e-mail
+    # qui le lui rappelle et lui indique quoi faire. C'est même plus utile
+    # qu'un message d'erreur, puisque c'est dans sa boîte qu'elle va
+    # regarder après s'être vu dire de confirmer son adresse.
+    #
+    # En mode souple, l'inscription ouvre une session immédiatement : il
+    # n'y a pas de réponse indiscernable à donner, et ce mode ne sert
+    # qu'au développement. Le message d'erreur y reste.
+    existant = recuperer_un(
+        "SELECT id_utilisateur, prenom FROM utilisateur WHERE email = %s LIMIT 1",
+        (email,))
+    if existant:
+        if not current_app.config["VERIFICATION_EMAIL_OBLIGATOIRE"]:
+            return _erreur("Cette adresse e-mail est déjà utilisée.", 409)
+        enregistrer_echec(cle_debit)
+        _prevenir_compte_existant(email, existant.get("prenom") or "")
+        return jsonify({
+            "verification_requise": True,
+            "email_envoye": True,
+            "message": "Un e-mail de confirmation vous a été envoyé.",
+        }), 201
+
+    # Ce que l'accueil guidé a recueilli est écrit dans la même
+    # transaction que le compte. Auparavant, l'interface gardait ces
+    # informations en mémoire et ne les envoyait qu'après la saisie du
+    # code de confirmation : quiconque fermait l'onglet pour aller lire
+    # son e-mail perdait tout, et retrouvait un profil vide qui lui
+    # redemandait ce qu'il venait de saisir.
+    colonnes, secteurs, _ = profil_initial(d.get("profil"))
 
     hache = hacher_mot_de_passe(mdp)
     with curseur(commit=True) as cur:
+        noms_sup = list(colonnes)
         cur.execute(
             """INSERT INTO utilisateur
                   (prenom, nom, email, mot_de_passe, role, email_verifie,
-                   consentement_le, consentement_version, accepte_notifs)
-               VALUES (%s, %s, %s, %s, %s, 0, %s, %s, %s)""",
+                   consentement_le, consentement_version, accepte_notifs"""
+            + "".join(f", {c}" for c in noms_sup)
+            + """)
+               VALUES (%s, %s, %s, %s, %s, 0, %s, %s, %s"""
+            + ", %s" * len(noms_sup) + ")",
             (prenom, nom, email, hache, role,
              datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
              VERSION_CONSENTEMENT,
-             1 if consent.get("notifications") else 0),
+             1 if consent.get("notifications") else 0)
+            + tuple(colonnes[c] for c in noms_sup),
         )
         id_user = cur.lastrowid
+        for id_secteur in secteurs:
+            cur.execute(
+                """INSERT INTO utilisateur_secteur
+                      (id_utilisateur, id_secteur) VALUES (%s, %s)""",
+                (id_user, id_secteur),
+            )
         # Les mentors ont une ligne associée pour leurs détails publics.
         if role == "mentor":
             cur.execute(
@@ -109,6 +164,17 @@ def inscription():
             )
 
     enregistrer_echec(cle_debit)   # ici : compte le débit, pas un échec
+
+    # L'inscription figurait au vocabulaire du journal d'activité sans y
+    # être jamais inscrite : on ne pouvait donc pas répondre à « combien
+    # de comptes cette semaine », qui est la première question qu'on se
+    # pose. Ni le nom ni l'adresse ne partent ici, seulement le rôle
+    # choisi et la complétude du profil de départ.
+    evenements.enregistrer("inscription", id_utilisateur=id_user,
+                           type_cible="utilisateur", id_cible=id_user,
+                           role=role,
+                           contexte={"secteurs": len(secteurs),
+                                     "profil_rempli": bool(colonnes)})
 
     # Envoi de l'e-mail de vérification (jeton 24h)
     email_parti = _envoyer_email_verification(id_user, email, prenom)
@@ -137,6 +203,46 @@ def inscription():
     })
     _poser_cookie(reponse, token)
     return reponse, 201
+
+
+def _prevenir_compte_existant(email: str, prenom: str):
+    """Prévient le titulaire qu'on a tenté de se réinscrire avec son adresse.
+
+    C'est la contrepartie de la réponse indiscernable : sans ce message,
+    quelqu'un qui a oublié qu'il avait un compte attendrait un code qui
+    ne viendrait jamais.
+    """
+    from utils.email import envoyer, gabarit_html
+    bonjour = f"Bonjour {prenom}," if prenom else "Bonjour,"
+    lien = url_publique("/index.html")
+    try:
+        envoyer(
+            email,
+            "Vous avez déjà un compte LaSourcee",
+            f"{bonjour}\n\n"
+            "Quelqu'un vient d'essayer de créer un compte LaSourcee avec\n"
+            "cette adresse. Un compte existe déjà : il n'y en a donc pas\n"
+            "de nouveau, et rien n'a changé.\n\n"
+            "Si c'était vous, connectez-vous simplement. Si vous avez\n"
+            "oublié votre mot de passe, utilisez « Mot de passe oublié »\n"
+            "sur la page de connexion.\n\n"
+            "Si ce n'était pas vous, vous n'avez rien à faire : votre\n"
+            "mot de passe n'a pas été communiqué et reste inchangé.\n\n"
+            "L'équipe LaSourcee",
+            corps_html=gabarit_html(
+                "Vous avez déjà un compte LaSourcee",
+                [bonjour,
+                 "Quelqu'un vient d'essayer de créer un compte avec cette "
+                 "adresse. <b>Un compte existe déjà</b> : il n'y en a pas de "
+                 "nouveau, et rien n'a changé.",
+                 "Si c'était vous, connectez-vous. Mot de passe oublié ? "
+                 "Utilisez le lien prévu sur la page de connexion.",
+                 "Si ce n'était pas vous, vous n'avez rien à faire : votre "
+                 "mot de passe n'a pas été communiqué et reste inchangé."],
+                bouton_texte="Se connecter", bouton_lien=lien),
+        )
+    except Exception:                                   # pragma: no cover
+        logger.exception("Avis de compte existant non envoyé à %s", email)
 
 
 def _envoyer_email_verification(id_user: int, email: str, prenom: str):
@@ -260,6 +366,13 @@ def connexion():
 
     token = creer_session(user["id_utilisateur"],
                           request.headers.get("User-Agent"))
+    # Sans cet évènement, impossible de dire qui revient et qui ne revient
+    # plus : la table des comptes ne connaît que la dernière connexion,
+    # elle écrase donc toutes les précédentes.
+    evenements.enregistrer("connexion",
+                           id_utilisateur=user["id_utilisateur"],
+                           role=user.get("role"),
+                           contexte={"moyen": "mot_de_passe"})
     reponse = jsonify({
         "id_utilisateur": user["id_utilisateur"],
         "role": user["role"],
@@ -575,7 +688,16 @@ def changer_mdp():
         (nouveau_hache, user["id_utilisateur"]),
         commit=True,
     )
-    return jsonify({"ok": True})
+
+    # Les autres appareils sont déconnectés, comme le fait déjà la
+    # réinitialisation. Quelqu'un qui change son mot de passe parce
+    # qu'il a laissé sa session ouverte dans un cybercafé ou une salle
+    # informatique croyait reprendre la main : elle y restait ouverte.
+    jeton = jeton_session_courant()
+    fermees = executer(
+        "DELETE FROM session_web WHERE id_utilisateur = %s AND id_token <> %s",
+        (user["id_utilisateur"], jeton or ""), commit=True) or 0
+    return jsonify({"ok": True, "autres_appareils_deconnectes": fermees})
 
 
 # --- Sessions actives --------------------------------------------------------
@@ -724,16 +846,48 @@ def renvoyer_confirmation():
         "SELECT id_utilisateur, prenom, email_verifie FROM utilisateur "
         "WHERE email = %s AND est_actif = 1", (email,))
     if user and not user["email_verifie"]:
-        # Les jetons precedents sont invalides : deux liens actifs pour
-        # la meme adresse doublent la surface d'attaque sans rien
-        # apporter.
-        executer("DELETE FROM verification_email WHERE id_utilisateur = %s "
-                 "AND verifie_le IS NULL",
-                 (user["id_utilisateur"],), commit=True)
-        _envoyer_email_verification(
-            user["id_utilisateur"], email, user["prenom"])
+        # Le code en cours est renvoye tel quel s'il est encore valable,
+        # au lieu d'etre detruit puis remplace.
+        #
+        # N'importe qui pouvait appeler cette route avec l'adresse de
+        # quelqu'un d'autre : la personne venait de recevoir son code,
+        # le recopiait, et s'entendait repondre « Code incorrect ». Elle
+        # n'avait aucun moyen de comprendre pourquoi.
+        _renvoyer_ou_creer_code(user["id_utilisateur"], email,
+                                user["prenom"])
 
     return reponse_neutre
+
+
+def _renvoyer_ou_creer_code(id_user, email, prenom):
+    """Renvoie le code en cours s'il est encore valable, sinon en crée un.
+
+    Détruire le code précédent à chaque demande donnait à n'importe qui
+    le moyen d'invalider celui d'un autre, sans jamais y avoir accès.
+    """
+    from utils.email import envoyer
+
+    en_cours = recuperer_un(
+        """SELECT code FROM verification_email
+            WHERE id_utilisateur = %s AND verifie_le IS NULL
+              AND code IS NOT NULL AND expire_le > %s
+         ORDER BY expire_le DESC LIMIT 1""",
+        (id_user, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
+
+    if not en_cours:
+        return _envoyer_email_verification(id_user, email, prenom)
+
+    code = str(en_cours["code"])
+    espace = " ".join((code[:3], code[3:]))
+    return envoyer(
+        email, f"Votre code LaSourcee : {espace}",
+        f"Bonjour {prenom},\n\n"
+        f"Voici de nouveau votre code de confirmation : {espace}\n\n"
+        "Il reste valable. Recopiez simplement les six chiffres dans la "
+        "page de confirmation.\n\n"
+        "Si vous n'avez rien demandé, ignorez ce message : votre compte "
+        "n'a pas changé.\n\n"
+        "L'équipe LaSourcee")
 
 
 @bp_auth.post("/confirmation/moi")

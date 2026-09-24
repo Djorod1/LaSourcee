@@ -25,7 +25,6 @@ const etat = {
   ongletProfil: 'questions',
   utilesQ: new Set(),       // ids des questions marquées utiles par moi
   sauvegardees: new Set(),  // ids des questions sauvegardées
-  suivis: new Set(),        // ids des mentors suivis
   rechercheTerme: '',
   sectionActive: 'fil'
 };
@@ -70,8 +69,12 @@ function textePresence(u) {
 
 function avatarHTML(initiales, taille = '', photo = null, mentorVerifie = false) {
   const cls = 'avatar' + (taille ? ' avatar-' + taille : '') + (mentorVerifie ? ' mentor-verifie' : '');
-  if (photo) return `<div class="${cls}"><img src="${photo}" class="photo-avatar" alt=""></div>`;
-  return `<div class="${cls}">${initiales}</div>`;
+  // L'adresse de la photo vient du serveur, mais c'est le membre qui
+  // l'y a mise : insérée telle quelle dans un attribut, une valeur
+  // comme `https://x" onerror="…` en sortait et faisait exécuter ce
+  // qu'on voulait dans le navigateur de tous les autres.
+  if (photo) return `<div class="${cls}"><img src="${echapper(photo)}" class="photo-avatar" alt=""></div>`;
+  return `<div class="${cls}">${echapper(initiales)}</div>`;
 }
 /* Badge mentor vérifié (innovation : couleur vert du logo, lecture immédiate) */
 function badgeMentorVerifie() {
@@ -87,6 +90,21 @@ function echapper(valeur) {
   return String(valeur ?? '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/* Une chaîne à passer en argument d'un gestionnaire écrit dans le HTML.
+
+   Échapper pour le HTML n'échappe pas pour JavaScript : echapper()
+   transforme l'apostrophe en &#39;, que l'analyseur HTML redonne telle
+   quelle à JavaScript. Un nom comme N'Guessan ou M'Baye produisait donc
+   ecrireA(1, 'N'Guessan') — une erreur de syntaxe, et un bouton qui ne
+   faisait rien, sans le moindre message.
+
+   JSON.stringify écrit un littéral valide, guillemets compris ;
+   echapper() le rend ensuite sûr à l'intérieur de l'attribut. À
+   utiliser SANS guillemets autour : chaineJS() fournit les siens. */
+function chaineJS(valeur) {
+  return echapper(JSON.stringify(String(valeur ?? '')));
 }
 
 /* ---------- Jeu d'icônes (SVG en ligne, tracé fin, couleur héritée) ----------
@@ -142,7 +160,7 @@ function naviguerApp(panneau) {
   document.querySelectorAll('.sous-vue').forEach(sv => sv.style.display = 'none');
   const cible = document.getElementById('sv-' + panneau);
   if (cible) cible.style.display = 'block';
-  document.getElementById('menuProfil').classList.remove('ouvert');
+  fermerMenuProfil();
   etat.sectionActive = panneau;
   majNavActif();
 
@@ -154,6 +172,7 @@ function naviguerApp(panneau) {
     window.history.replaceState({}, '', window.location.pathname + vise);
   }
   if (panneau === 'fil') rendreFil();
+  if (panneau === 'opportunites') rendreOpportunites();
   if (panneau === 'profil') rendreProfil();
   if (panneau === 'mentor') rendreEspaceMentor();
   if (panneau === 'messages') rendreMessagerie();
@@ -177,8 +196,12 @@ function majNavActif() {
    AUTHENTIFICATION & ONBOARDING
    ============================================================ */
 function choisirRole(elem, role) {
-  document.querySelectorAll('.carte-role').forEach(c => c.classList.remove('actif'));
+  document.querySelectorAll('.carte-role').forEach(c => {
+    c.classList.remove('actif');
+    c.setAttribute('aria-pressed', 'false');
+  });
   elem.classList.add('actif');
+  elem.setAttribute('aria-pressed', 'true');
   etat.roleChoisi = role;
 }
 /* Connexion par e-mail et mot de passe. Le serveur fait foi. */
@@ -372,7 +395,7 @@ async function demanderReinitialisation() {
 /* Synchronise l'état UI avec l'utilisateur retourné par /api/profil/moi. */
 function appliquerUtilisateur(u) {
   if (!u) return;
-  const initiales = ((u.prenom || '?')[0] + (u.nom || '?')[0]).toUpperCase();
+  const initiales = initialesDe(u.prenom, u.nom);
   etat.utilisateur = {
     id: u.id_utilisateur,
     prenom: u.prenom || '',
@@ -388,12 +411,9 @@ function appliquerUtilisateur(u) {
     // posees a 0 puis jamais mises a jour, si bien qu'un profil de
     // vingt questions affichait « 0 Questions posees ».
     questionsPosees: u.nb_questions || 0,
-    mentorsSuivis: u.nb_suivis || 0,
     nb_questions: u.nb_questions || 0,
     nb_reponses_publiees: u.nb_reponses_publiees || 0,
     nb_utiles_recus: u.nb_utiles_recus || 0,
-    nb_suivis: u.nb_suivis || 0,
-    nb_abonnes: u.nb_abonnes || 0,
     note_moyenne: u.note_moyenne || 0,
     anciennete: u.anciennete || '',
     cree_le: u.cree_le || null,
@@ -410,6 +430,7 @@ function appliquerUtilisateur(u) {
     niveau_etudes: u.niveau_etudes || '',
     domaine: u.domaine || '',
     etablissement: u.etablissement || '',
+    filiere: u.filiere || '',
     telephone: u.telephone || '',
     objectifs: u.objectifs || [],
   };
@@ -475,13 +496,36 @@ async function naviguerEtape(delta) {
    trompaient de champ des qu'on en ajoutait un, sans rien signaler. */
 function infosEtape1() {
   const val = id => (document.getElementById(id)?.value || '').trim();
+  // « Autre domaine » ouvre une saisie libre : aucune liste ne
+  // contiendra tous les métiers, et le choix « Autre » sans nulle part
+  // où préciser revenait à perdre l'information.
+  const domaine = val('ob-domaine') === AUTRE_DOMAINE
+    ? (val('ob-domaine-libre') || AUTRE_DOMAINE)
+    : val('ob-domaine');
   return {
     pays: val('select-pays'),
     niveau_etudes: val('ob-niveau'),
-    domaine: val('ob-domaine'),
+    domaine,
+    filiere: val('ob-filiere'),
     etablissement: val('ob-etablissement'),
+    situation: val('ob-situation'),
+    objectifs: [...document.querySelectorAll('#ob-objectifs input:checked')]
+      .map(c => c.value),
     bio: val('ob-bio'),
   };
+}
+
+/* Intitulé exact de l'option qui ouvre la saisie libre du domaine. Il
+   vient du serveur avec le reste de la liste ; la valeur est répétée
+   ici parce que la page doit savoir la reconnaître avant tout appel. */
+const AUTRE_DOMAINE = 'Autre domaine';
+
+function basculerDomaineLibre() {
+  const champ = document.getElementById('champ-domaine-libre');
+  if (!champ) return;
+  const libre = document.getElementById('ob-domaine')?.value === AUTRE_DOMAINE;
+  champ.style.display = libre ? 'block' : 'none';
+  if (libre) document.getElementById('ob-domaine-libre')?.focus();
 }
 
 /* Vérifie que les informations obligatoires d'une étape sont remplies. */
@@ -491,6 +535,9 @@ function validerEtapeOnboarding(etape) {
     if (!d.pays) { toast('Le pays est obligatoire.', 'erreur'); return false; }
     if (!d.niveau_etudes) { toast('Indiquez votre diplôme le plus élevé.', 'erreur'); return false; }
     if (!d.domaine) { toast('Indiquez votre domaine ou votre métier.', 'erreur'); return false; }
+    if (d.domaine === AUTRE_DOMAINE) {
+      toast('Précisez votre domaine ou votre métier.', 'erreur'); return false;
+    }
   }
   if (etape === 2) {
     const n = document.querySelectorAll('#etape-2 .chip-select.actif').length;
@@ -499,19 +546,18 @@ function validerEtapeOnboarding(etape) {
   return true;
 }
 
-/* Crée le compte, puis conduit à la confirmation ou à l'application.
+/* Crée le compte, avec tout ce que l'accueil guidé a recueilli.
 
-   Le parcours dépend d'un réglage du serveur. Quand la confirmation est
-   obligatoire, l'inscription n'ouvre pas de session : demander le
-   profil dans la foulée recevait un refus, et l'interface renvoyait au
-   formulaire en annonçant un échec, alors que le compte était créé et
-   le code parti. C'est ce qui empêchait de trouver où saisir le code.
+   Ces informations étaient auparavant gardées dans une variable de la
+   page et envoyées seulement après la saisie du code de confirmation.
+   Or ce code arrive par e-mail : on le lit dans une autre application,
+   parfois sur un autre appareil, et l'onglet se ferme entre-temps. La
+   saisie disparaissait alors entièrement, et la personne retrouvait un
+   profil vide qui lui redemandait ce qu'elle venait de remplir.
 
-   Les informations recueillies pendant l'accueil guidé sont donc mises
-   de côté et envoyées après l'ouverture de session, quel que soit le
-   moment où elle survient. */
-let _profilEnAttente = null;
-
+   Tout part donc en une seule requête, écrite en base dans la même
+   transaction que le compte. Il n'y a plus de moment où les données
+   existent quelque part sans être enregistrées. */
 async function finaliserInscription() {
   const prenom = (document.getElementById('prenom-ins')?.value || '').trim();
   const nom = (document.getElementById('nom-ins')?.value || '').trim();
@@ -523,11 +569,28 @@ async function finaliserInscription() {
   const d = infosEtape1();
   const telephone = (document.getElementById('tel-ins')?.value || '').trim();
 
+  // Le serveur reconnaît les pays et les secteurs à leur libellé : la
+  // page n'a plus à retrouver elle-même des identifiants dans un
+  // référentiel chargé à part, dont l'échec passait inaperçu.
+  const profil = {
+    pays: d.pays,
+    niveau_etudes: d.niveau_etudes,
+    domaine: d.domaine,
+    filiere: d.filiere,
+    etablissement: d.etablissement,
+    situation: d.situation,
+    objectifs: d.objectifs,
+    bio: d.bio,
+    secteurs: secteursChoisis,
+    ...(telephone ? { telephone } : {}),
+  };
+
   try {
     const photoOnboarding = etat.utilisateur && etat.utilisateur.photo;
     const creation = await API.post('/auth/inscription', {
       prenom, nom, email, mot_de_passe: mdp,
       role: etat.roleChoisi || 'etudiant',
+      profil,
       consentement: {
         conditions: !!document.getElementById('cons-conditions')?.checked,
         donnees: !!document.getElementById('cons-donnees')?.checked,
@@ -535,21 +598,9 @@ async function finaliserInscription() {
       },
     });
 
-    // Mis de côté, envoyé dès qu'une session existe. Le pays et les
-    // secteurs étaient auparavant recueillis puis perdus.
-    _profilEnAttente = {
-      bio: d.bio,
-      ...(telephone ? { telephone } : {}),
-      niveau_etudes: d.niveau_etudes,
-      domaine: d.domaine,
-      etablissement: d.etablissement,
-      _pays: d.pays,
-      _secteurs: secteursChoisis,
-      _photo: photoOnboarding,
-    };
-
     // Confirmation obligatoire : aucune session n'a été ouverte. On
-    // conduit directement à la saisie du code, sans toucher au profil.
+    // conduit directement à la saisie du code. Le profil, lui, est
+    // déjà enregistré.
     if (creation && creation.verification_requise) {
       if (creation.email_envoye === false) {
         toast("Compte créé, mais le code n'a pas pu être envoyé. "
@@ -561,9 +612,8 @@ async function finaliserInscription() {
 
     // Mode souple : la session est déjà ouverte.
     MODE.utilisateur = await API.get('/profil/moi');
-    await envoyerProfilEnAttente();
     appliquerUtilisateur(MODE.utilisateur);
-    if (photoOnboarding) etat.utilisateur.photo = photoOnboarding;
+    if (photoOnboarding) await enregistrerPhoto(photoOnboarding);
 
     if (creation && creation.email_envoye === false) {
       toast("Compte créé. Le code de confirmation n'a pas pu partir : "
@@ -575,32 +625,6 @@ async function finaliserInscription() {
   } catch (err) {
     toast(err.message || 'Inscription impossible.', 'erreur');
     afficherVue('vue-inscription'); return false;
-  }
-}
-
-/* Envoie au serveur ce que l'accueil guidé avait recueilli. Appelée dès
-   qu'une session existe, c'est-à-dire après la saisie du code quand la
-   confirmation est obligatoire. */
-async function envoyerProfilEnAttente() {
-  if (!_profilEnAttente) return;
-  const p = _profilEnAttente;
-  _profilEnAttente = null;
-  try {
-    const corps = { ...p };
-    delete corps._pays; delete corps._secteurs; delete corps._photo;
-    const id_pays = p._pays ? await _idPaysDepuisLibelle(p._pays) : null;
-    const secteurs = await _idsSecteursDepuisLibelles(p._secteurs || []);
-    if (id_pays) corps.id_pays = id_pays;
-    if (secteurs.length) corps.secteurs = secteurs;
-    if (Object.values(corps).some(Boolean)) {
-      await API.put('/profil/moi', corps);
-      MODE.utilisateur = await API.get('/profil/moi');
-      appliquerUtilisateur(MODE.utilisateur);
-    }
-    if (p._photo) etat.utilisateur.photo = p._photo;
-  } catch (_) {
-    // Le profil se complète depuis les paramètres : mieux vaut laisser
-    // entrer que bloquer sur une information secondaire.
   }
 }
 
@@ -622,24 +646,43 @@ function majEtapeOnboarding() {
   if (avOb && !etat.utilisateur.photo) {
     const p = (document.getElementById('prenom-ins')?.value || '').trim();
     const n = (document.getElementById('nom-ins')?.value || '').trim();
-    avOb.textContent = ((p[0] || '') + (n[0] || '')).toUpperCase();
-  }
-  // Brancher le bouton photo de l'étape 3
-  const etape3 = document.getElementById('etape-3');
-  if (etape3 && !etape3.dataset.cable) {
-    etape3.dataset.cable = '1';
-    const btn = etape3.querySelector('button');
-    if (btn) {
-      btn.onclick = () => declencherSelectionPhoto((dataUrl) => {
-        etat.utilisateur.photo = dataUrl;
-        const av = etape3.querySelector('.avatar');
-        av.innerHTML = `<img src="${dataUrl}" class="photo-avatar" alt="">`;
-        toast('Photo de profil ajoutée.');
-      });
-    }
+    avOb.textContent = initialesDe(p, n);
   }
 }
-function toggleChip(elem) { elem.classList.toggle('actif'); }
+
+/* Photo choisie pendant l'accueil guidé.
+
+   Elle n'était gardée que dans la page : au premier rechargement elle
+   disparaissait, et le profil réclamait de nouveau une photo qui avait
+   pourtant été fournie. Elle est désormais réduite puis envoyée au
+   serveur dès qu'une session existe. */
+function choisirPhotoOnboarding() {
+  declencherSelectionPhoto(async (dataUrl) => {
+    const reduite = await reduireImage(dataUrl);
+    etat.utilisateur.photo = reduite;
+    const av = document.getElementById('avatar-onboarding');
+    if (av) av.innerHTML = `<img src="${reduite}" class="photo-avatar" alt="">`;
+    toast('Photo de profil ajoutée.');
+  });
+}
+/* Bascule une pastille de secteur.
+
+   Ces pastilles étaient des <div> avec un seul onclick : elles ne
+   recevaient pas le focus, ne répondaient ni à Entrée ni à la barre
+   d'espace, et n'annonçaient rien à un lecteur d'écran. Comme l'étape 2
+   de l'inscription exige deux secteurs, quiconque navigue au clavier
+   restait bloqué là, sans aucun moyen d'avancer. Ce sont désormais des
+   boutons, qui portent l'état qu'ils ont. */
+function toggleChip(elem) {
+  const actif = elem.classList.toggle('actif');
+  // Une pastille personnalisée ne peut pas être un bouton : elle contient
+  // déjà la croix de suppression, et un bouton ne s'imbrique pas. C'est
+  // donc son libellé qui est cliquable, et c'est lui qui porte l'état.
+  const porteur = elem.matches('button')
+    ? elem
+    : elem.querySelector('.chip-texte') || elem;
+  porteur.setAttribute('aria-pressed', actif ? 'true' : 'false');
+}
 
 /* Chip "Autre" : ouvre le champ d'ajout de secteurs personnalisés. */
 function ouvrirAjoutSecteur() {
@@ -663,7 +706,11 @@ function ajouterSecteurPerso() {
   const chip = document.createElement('div');
   chip.className = 'chip-select chip-perso actif';
   chip.dataset.perso = '1';
-  chip.innerHTML = `<span onclick="toggleChip(this.parentElement)">${v}</span><button type="button" class="chip-sup" onclick="this.parentElement.remove()" aria-label="Supprimer">×</button>`;
+  chip.innerHTML =
+    `<button type="button" class="chip-texte" aria-pressed="true" `
+    + `onclick="toggleChip(this.parentElement)">${echapper(v)}</button>`
+    + `<button type="button" class="chip-sup" onclick="this.parentElement.remove()" `
+    + `aria-label="Supprimer ${echapper(v)}">×</button>`;
   // Insérer avant le chip "+ Autre"
   const chipAutre = conteneur.querySelector('[data-autre="1"]');
   conteneur.insertBefore(chip, chipAutre);
@@ -671,39 +718,121 @@ function ajouterSecteurPerso() {
   input.focus();
 }
 
-/* Liste exhaustive des pays (FR) pour le sélecteur de l'onboarding. */
-const LISTE_PAYS = [
-  "Afghanistan","Afrique du Sud","Albanie","Algérie","Allemagne","Andorre","Angola","Antigua-et-Barbuda","Arabie saoudite","Argentine","Arménie","Australie","Autriche","Azerbaïdjan",
-  "Bahamas","Bahreïn","Bangladesh","Barbade","Belgique","Belize","Bénin","Bhoutan","Biélorussie","Birmanie (Myanmar)","Bolivie","Bosnie-Herzégovine","Botswana","Brésil","Brunei","Bulgarie","Burkina Faso","Burundi",
-  "Cambodge","Cameroun","Canada","Cap-Vert","Chili","Chine","Chypre","Colombie","Comores","Corée du Nord","Corée du Sud","Costa Rica","Côte d'Ivoire","Croatie","Cuba",
-  "Danemark","Djibouti","Dominique",
-  "Égypte","Émirats arabes unis","Équateur","Érythrée","Espagne","Estonie","Eswatini","États-Unis","Éthiopie",
-  "Fidji","Finlande","France",
-  "Gabon","Gambie","Géorgie","Ghana","Grèce","Grenade","Guatemala","Guinée","Guinée équatoriale","Guinée-Bissau","Guyana",
-  "Haïti","Honduras","Hongrie",
-  "Îles Marshall","Îles Salomon","Inde","Indonésie","Irak","Iran","Irlande","Islande","Israël","Italie",
-  "Jamaïque","Japon","Jordanie",
-  "Kazakhstan","Kenya","Kirghizistan","Kiribati","Koweït",
-  "Laos","Lesotho","Lettonie","Liban","Libéria","Libye","Liechtenstein","Lituanie","Luxembourg",
-  "Macédoine du Nord","Madagascar","Malaisie","Malawi","Maldives","Mali","Malte","Maroc","Maurice","Mauritanie","Mexique","Micronésie","Moldavie","Monaco","Mongolie","Monténégro","Mozambique",
-  "Namibie","Nauru","Népal","Nicaragua","Niger","Nigéria","Norvège","Nouvelle-Zélande",
-  "Oman","Ouganda","Ouzbékistan",
-  "Pakistan","Palaos","Palestine","Panama","Papouasie-Nouvelle-Guinée","Paraguay","Pays-Bas","Pérou","Philippines","Pologne","Portugal",
-  "Qatar",
-  "République centrafricaine","République démocratique du Congo","République dominicaine","République du Congo","République tchèque","Roumanie","Royaume-Uni","Russie","Rwanda",
-  "Saint-Christophe-et-Niévès","Saint-Marin","Saint-Vincent-et-les-Grenadines","Sainte-Lucie","Salvador","Samoa","Sao Tomé-et-Principe","Sénégal","Serbie","Seychelles","Sierra Leone","Singapour","Slovaquie","Slovénie","Somalie","Soudan","Soudan du Sud","Sri Lanka","Suède","Suisse","Suriname","Syrie",
-  "Tadjikistan","Tanzanie","Tchad","Thaïlande","Timor oriental","Togo","Tonga","Trinité-et-Tobago","Tunisie","Turkménistan","Turquie","Tuvalu",
-  "Ukraine","Uruguay",
-  "Vanuatu","Vatican","Venezuela","Viêt Nam",
-  "Yémen",
-  "Zambie","Zimbabwe"
-];
-function remplirSelectPays() {
+/* Pays proposés, servis par le serveur.
+
+   La page portait sa propre liste de deux cent cinquante pays, alors
+   que la table n'en contenait que dix-huit. Choisir le Gabon ou le
+   Rwanda ne correspondait donc à aucune ligne : l'identifiant restait
+   vide et le pays disparaissait du profil sans un mot. La liste
+   affichée et la liste enregistrable sont désormais la même. */
+let _pays = null;
+let _secteurs = null;
+
+async function chargerPays() {
+  if (_pays) return _pays;
+  await chargerReferentielsPublics();
+  return _pays;
+}
+
+/* Secteurs proposés, servis par le serveur.
+
+   Ils étaient écrits en dur à quatre endroits : les pastilles de
+   l'inscription, le filtre du fil, les catégories du formulaire de
+   question, et le panneau du compte. L'administration, elle, permet
+   d'en ajouter, d'en renommer et d'en supprimer. Un secteur créé
+   n'apparaissait donc nulle part, et un secteur renommé ne
+   correspondait plus à ce que la page proposait toujours. Une seule
+   source, celle de la base. */
+async function chargerSecteurs() {
+  if (_secteurs) return _secteurs;
+  await chargerReferentielsPublics();
+  return _secteurs;
+}
+
+let _referentielsEnCours = null;
+
+function chargerReferentielsPublics() {
+  if (_pays && _secteurs) return Promise.resolve();
+  // Un seul appel, même si plusieurs écrans le demandent en même temps
+  // au démarrage : sans cela la page ouvrait trois requêtes identiques.
+  if (!_referentielsEnCours) {
+    _referentielsEnCours = API.get('/profil/referentiels')
+      .then(r => {
+        _pays = (r.pays || []).map(p => p.libelle);
+        _secteurs = (r.secteurs || []).map(s => s.libelle);
+      })
+      .catch(() => { _pays = _pays || []; _secteurs = _secteurs || []; })
+      .finally(() => { _referentielsEnCours = null; });
+  }
+  return _referentielsEnCours;
+}
+
+/* Remplit un conteneur de pastilles avec les secteurs du serveur.
+
+   Les pastilles écrites dans la page servent de repli : si le serveur
+   ne répond pas, on garde ce qui est déjà affiché plutôt que de laisser
+   un vide où l'on ne peut rien choisir. */
+async function remplirChipsSecteurs(conteneur, gestionnaire, enPlus = []) {
+  if (!conteneur || conteneur.dataset.remp === '1') return;
+  const liste = await chargerSecteurs();
+  if (!liste || !liste.length) return;
+  conteneur.dataset.remp = '1';
+  const avant = conteneur.querySelector('[data-autre="1"]') || null;
+  conteneur.querySelectorAll('.chip-select:not([data-autre])')
+    .forEach(c => c.remove());
+  const vus = new Set();
+  liste.concat(enPlus).forEach(libelle => {
+    if (vus.has(libelle)) return;
+    vus.add(libelle);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip-select';
+    b.setAttribute('aria-pressed', 'false');
+    b.textContent = libelle;
+    b.addEventListener('click', () => gestionnaire(b));
+    conteneur.insertBefore(b, avant);
+  });
+}
+
+async function remplirFiltreSecteurs() {
+  const sel = document.getElementById('filtre-secteur');
+  if (!sel || sel.dataset.remp === '1') return;
+  const liste = await chargerSecteurs();
+  if (!liste || !liste.length) return;
+  const choisi = sel.value;
+  sel.dataset.remp = '1';
+  sel.innerHTML = '<option value="">Tous les secteurs</option>'
+    + liste.map(s => `<option${s === choisi ? ' selected' : ''}>${
+        echapper(s)}</option>`).join('');
+}
+
+async function remplirSecteursPage() {
+  await Promise.all([
+    remplirChipsSecteurs(
+      document.querySelector('#etape-2 .chips-select'), toggleChip),
+    // « Autre » n'est pas un secteur de la base : c'est la sortie de
+    // secours pour une question qui n'entre dans aucune case. Elle reste.
+    remplirChipsSecteurs(
+      document.getElementById('chips-cat'), choisirCat, ['Autre']),
+    remplirFiltreSecteurs(),
+  ]);
+}
+
+function optionsPays(choisi) {
+  if (!_pays || !_pays.length) {
+    return '<option value="">Liste indisponible, réessayez</option>';
+  }
+  return '<option value="">Sélectionnez votre pays</option>'
+    + _pays.map(p => `<option value="${echapper(p)}"${
+        p === choisi ? ' selected' : ''}>${echapper(p)}</option>`).join('');
+}
+
+async function remplirSelectPays() {
   const sel = document.getElementById('select-pays');
   if (!sel || sel.dataset.remp === '1') return;
+  await chargerPays();
   sel.dataset.remp = '1';
-  sel.innerHTML = '<option value="">Sélectionnez votre pays</option>' +
-    LISTE_PAYS.map(p => `<option value="${p}">${p}</option>`).join('');
+  sel.innerHTML = optionsPays(sel.value);
 }
 
 /* Remplit les listes du parcours avec les valeurs du serveur.
@@ -711,10 +840,16 @@ function remplirSelectPays() {
    Elles viennent du serveur et ne sont pas ecrites dans la page : la
    liste proposee et la liste acceptee a l'enregistrement ne peuvent
    alors pas diverger, ce qui donnerait un choix refuse apres coup. */
-async function remplirListesParcours() {
-  if (!etat.referentielsProfil) {
+async function remplirListesParcours(pays) {
+  // Les suggestions d'établissement suivent le pays : elles sont donc
+  // rechargées quand il change, et non mises en cache une fois pour
+  // toutes comme le reste des listes.
+  const cible = pays || document.getElementById('select-pays')?.value || '';
+  if (!etat.referentielsProfil || etat.paysReferentiels !== cible) {
     try {
-      etat.referentielsProfil = await API.get('/profil/referentiels-profil');
+      etat.referentielsProfil = await API.get(
+        '/profil/referentiels-profil?pays=' + encodeURIComponent(cible));
+      etat.paysReferentiels = cible;
     } catch (_) { return; }
   }
   const r = etat.referentielsProfil || {};
@@ -727,6 +862,26 @@ async function remplirListesParcours() {
   if (niveau) niveau.innerHTML = options(r.niveaux_etudes, niveau.value);
   const domaine = document.getElementById('ob-domaine');
   if (domaine) domaine.innerHTML = options(r.domaines, domaine.value);
+  const situation = document.getElementById('ob-situation');
+  if (situation) situation.innerHTML = options(r.situations, situation.value);
+
+  // Ce que la personne cherche se demande ici plutôt qu'après coup :
+  // c'est le champ qui rapproche les deux côtés de la plateforme, et
+  // le redemander une fois le compte créé revenait à faire remplir
+  // deux fois le même formulaire.
+  const objectifs = document.getElementById('ob-objectifs');
+  if (objectifs) {
+    const coches = [...objectifs.querySelectorAll('input:checked')]
+      .map(c => c.value);
+    objectifs.innerHTML = (r.objectifs || []).map(o => `
+      <label class="chip-objectif">
+        <input type="checkbox" value="${echapper(o)}"
+               ${coches.includes(o) ? 'checked' : ''}
+               onchange="limiterObjectifsOnboarding()" />
+        <span>${echapper(o)}</span>
+      </label>`).join('');
+    limiterObjectifsOnboarding();
+  }
 
   // Suggestions, pas contrainte : le champ reste libre pour qui apprend
   // son metier dans un atelier qu'aucune liste ne contiendra.
@@ -735,9 +890,27 @@ async function remplirListesParcours() {
     liste.innerHTML = (r.etablissements || [])
       .map(e => `<option value="${echapper(e)}"></option>`).join('');
   }
+  basculerDomaineLibre();
+}
+
+/* Au-delà de quatre objectifs, un profil ne dit plus rien de précis :
+   les cases restantes se désactivent au lieu de refuser à l'envoi. */
+function limiterObjectifsOnboarding() {
+  const cases = [...document.querySelectorAll('#ob-objectifs input')];
+  const coches = cases.filter(c => c.checked);
+  cases.forEach(c => {
+    c.disabled = !c.checked && coches.length >= LIMITE_OBJECTIFS;
+    c.closest('.chip-objectif')?.classList.toggle('coche', c.checked);
+  });
+  const aide = document.getElementById('ob-objectifs-aide');
+  if (aide) {
+    aide.textContent = coches.length >= LIMITE_OBJECTIFS
+      ? `${coches.length} sur ${LIMITE_OBJECTIFS}, le maximum.`
+      : `${coches.length} choix sur ${LIMITE_OBJECTIFS} possibles. Facultatif.`;
+  }
 }
 async function seDeconnecter() {
-  document.getElementById('menuProfil').classList.remove('ouvert');
+  fermerMenuProfil();
   // On déconnecte l'interface même si l'appel réseau échoue
   try { await API.post('/auth/deconnexion', {}); } catch (_) {}
   SESSION.utilisateur = null;
@@ -762,19 +935,64 @@ function declencherSelectionPhoto(callback) {
   };
   inp.click();
 }
-function televerserPhotoCompte() {
-  declencherSelectionPhoto((dataUrl) => {
-    etat.utilisateur.photo = dataUrl;
+/* Ramène une image à la taille d'un avatar.
+
+   Une photo de téléphone pèse plusieurs méga-octets ; convertie en
+   texte pour être stockée, elle en pèse un tiers de plus. Réduite à
+   320 pixels de côté, elle tient en quelques dizaines de kilo-octets,
+   ce qui la rend enregistrable et rend l'affichage instantané. La
+   partie centrale est conservée : un portrait cadré au milieu reste
+   reconnaissable, un portrait déformé ne l'est plus. */
+const COTE_AVATAR = 320;
+
+function reduireImage(dataUrl) {
+  return new Promise((resoudre) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const cote = Math.min(img.width, img.height);
+        const toile = document.createElement('canvas');
+        toile.width = toile.height = COTE_AVATAR;
+        const ctx = toile.getContext('2d');
+        ctx.drawImage(img,
+          (img.width - cote) / 2, (img.height - cote) / 2, cote, cote,
+          0, 0, COTE_AVATAR, COTE_AVATAR);
+        resoudre(toile.toDataURL('image/jpeg', 0.82));
+      } catch (_) {
+        resoudre(dataUrl);   // navigateur sans canvas : on garde l'original
+      }
+    };
+    img.onerror = () => resoudre(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+/* Enregistre la photo côté serveur et rafraîchit tous les endroits où
+   elle apparaît. */
+async function enregistrerPhoto(dataUrl) {
+  etat.utilisateur.photo = dataUrl;
+  const navAv = document.getElementById('avatar-nav');
+  const filAv = document.getElementById('avatar-fil');
+  if (navAv) navAv.innerHTML = `<img src="${dataUrl}" class="photo-avatar" alt="">`;
+  if (filAv) filAv.innerHTML = `<img src="${dataUrl}" class="photo-avatar" alt="">`;
+  rendreSidebarProfil();
+  if (etat.sectionActive === 'profil') { profilCible = null; rendreProfil(); }
+
+  if (!MODE.api) return;
+  try {
+    await API.put('/profil/moi', { photo_url: dataUrl });
+    if (MODE.utilisateur) MODE.utilisateur.photo_url = dataUrl;
     toast('Photo mise à jour.');
+  } catch (err) {
+    toast(err.message || "La photo n'a pas pu être enregistrée.", 'erreur');
+  }
+}
+
+function televerserPhotoCompte() {
+  declencherSelectionPhoto(async (dataUrl) => {
+    await enregistrerPhoto(await reduireImage(dataUrl));
     const panParam = document.querySelector('#menu-param button.actif');
     if (panParam) changerPanParam(panParam, 'compte');
-    const navAv = document.getElementById('avatar-nav');
-    const filAv = document.getElementById('avatar-fil');
-    if (navAv) navAv.innerHTML = `<img src="${dataUrl}" class="photo-avatar" alt="">`;
-    if (filAv) filAv.innerHTML = `<img src="${dataUrl}" class="photo-avatar" alt="">`;
-    rendreSidebarProfil();
-    // Mettre à jour la page profil (cercle au-dessus du nom) si on y est
-    if (etat.sectionActive === 'profil') { profilCible = null; rendreProfil(); }
   });
 }
 
@@ -830,24 +1048,42 @@ function rendreSidebarProfil() {
     <button class="btn btn-secondaire btn-petit btn-bloc" onclick="naviguerApp('profil')">Voir mon profil</button>
     <div class="profil-stats">
       <div><strong>${u.questionsPosees}</strong><span>Questions posées</span></div>
-      <div><strong>${u.mentorsSuivis}</strong><span>Référents suivis</span></div>
+      <div><strong>${u.nb_reponses_publiees || 0}</strong><span>Réponses apportées</span></div>
     </div>`;
   document.getElementById('mes-secteurs').innerHTML =
     u.secteurs.map((s, i) => `<span class="tag ${['','tag-ambre','tag-vert','tag-violet'][i%4]}">${echapper(s)}</span>`).join('');
+  // Ce bloc s'intitulait « Référents suivis » et montrait les quatre
+  // premiers référents de l'annuaire, que personne n'avait suivis. On
+  // y voyait donc un inconnu presenté comme quelqu'un qu'on suit. Il
+  // propose désormais ce qu'il a toujours montré : des référents à
+  // découvrir, choisis dans les secteurs de la personne.
+  const miens = new Set(u.secteurs || []);
+  const proches = mentors.filter(m => miens.has(m.secteur));
   document.getElementById('mentors-suivis').innerHTML =
-    mentors.slice(0, 4).map(m => `
-      <div class="suivi-item" onclick="ouvrirProfilMentor(${m.id})">
+    (proches.length ? proches : mentors).slice(0, 4).map(m => `
+      <div class="suivi-item" role="button" tabindex="0"
+           onclick="ouvrirProfilMentor(${m.id})">
         ${avatarHTML(m.initiales, 's')}
         <div class="info"><strong>${echapper(m.prenom + ' ' + m.nom)}</strong><span>${echapper(m.secteur)}</span></div>
-      </div>`).join('');
+      </div>`).join('')
+    || '<p class="note-param">Aucun référent pour le moment.</p>';
 }
 
 /* ============================================================
    FIL D'ACTUALITÉ
    ============================================================ */
+/* Le tri désactivait toutes les pastilles `.onglet` de la page, pas
+   seulement les siennes : les onglets des opportunités et ceux de la
+   modération, présents dans le même document, perdaient leur état au
+   passage. On se limite au groupe auquel appartient l'onglet cliqué. */
 function changerTri(elem, tri) {
-  document.querySelectorAll('.onglet').forEach(o => o.classList.remove('actif'));
+  const groupe = elem.closest('.onglets') || document;
+  groupe.querySelectorAll('.onglet').forEach(o => {
+    o.classList.remove('actif');
+    if (o.hasAttribute('role')) o.setAttribute('aria-selected', 'false');
+  });
   elem.classList.add('actif');
+  if (elem.hasAttribute('role')) elem.setAttribute('aria-selected', 'true');
   etat.tri = tri;
   rendreFil();
 }
@@ -867,11 +1103,11 @@ async function chargerFilDepuisApi() {
       corps: q.corps,
       secteur: q.secteur || 'Autre',
       auteur: `${q.prenom || ''} ${q.nom || ''}`.trim() || 'Anonyme',
-      initiales: ((q.prenom || '?')[0] + (q.nom || '?')[0]).toUpperCase(),
+      initiales: initialesDe(q.prenom, q.nom),
       idAuteur: q.id_utilisateur || q.id_auteur || null,
       photoAuteur: q.photo_url || null,
       pays: q.pays || '',
-      temps: _tempsRelatif(q.publiee_le),
+      publiee_le: q.publiee_le,
       utile: q.nb_utiles || 0,
       repCount: q.nb_reponses || 0,
       reponses: [],
@@ -894,7 +1130,7 @@ async function chargerMentorsDepuisApi() {
       id: m.id_utilisateur,
       prenom: m.prenom || '',
       nom: m.nom || '',
-      initiales: ((m.prenom || '?')[0] + (m.nom || '?')[0]).toUpperCase(),
+      initiales: initialesDe(m.prenom, m.nom),
       secteur: (m.secteurs && m.secteurs[0] && m.secteurs[0].libelle) || 'Autre',
       secteurs: (m.secteurs || []).map(s => s.libelle),
       pays: m.pays || '',
@@ -928,10 +1164,38 @@ async function chargerMentorsDepuisApi() {
 function _dateServeur(valeur) {
   if (!valeur) return null;
   if (valeur instanceof Date) return valeur;
-  let t = String(valeur).trim().replace(' ', 'T');
+  const brut = String(valeur).trim();
+
+  // Le serveur rend désormais de l'ISO 8601, mais une route oubliée
+  // pourrait encore renvoyer le format HTTP (« Wed, 23 Sep 2026 22:20:01
+  // GMT »). Le remaniement ci-dessous le détruirait, et la date
+  // disparaîtrait sans un mot. On le laisse donc passer tel quel :
+  // Date() le lit nativement.
+  if (!/^\d{4}-\d{2}-\d{2}/.test(brut)) {
+    const direct = new Date(brut);
+    return isNaN(direct.getTime()) ? null : direct;
+  }
+
+  let t = brut.replace(' ', 'T');
   if (!/[Zz]|[+-]\d{2}:?\d{2}$/.test(t)) t += 'Z';
   const d = new Date(t);
   return isNaN(d.getTime()) ? null : d;
+}
+
+/* Une ou deux lettres pour l'avatar, calculées comme côté serveur.
+
+   L'ancienne formule prenait le premier caractère brut : un prénom
+   commençant par une apostrophe ou un accent décomposé donnait un
+   avatar illisible, et « ? » s'affichait pour un nom manquant. */
+function initialesDe(prenom, nom) {
+  const lettres = [];
+  for (const partie of [prenom || '', nom || '']) {
+    const propre = partie.normalize('NFC');
+    for (const c of propre) {
+      if (/\p{L}/u.test(c)) { lettres.push(c.toUpperCase()); break; }
+    }
+  }
+  return lettres.join('').slice(0, 2);
 }
 
 /* Date et heure, dans le fuseau de la personne qui regarde. Une action
@@ -946,20 +1210,50 @@ function formatHorodatage(valeur, avecSecondes = false) {
   });
 }
 
+/* Date seule, pour un repère qui n'a pas besoin de l'heure : la date
+   d'inscription, une date limite de candidature. */
 function formatDate(valeur) {
   const d = _dateServeur(valeur);
   return d ? d.toLocaleDateString('fr-FR') : '';
 }
 
+/* Date longue, pour une ligne isolée qu'on lit plutôt qu'on ne compare :
+   « 23 septembre 2026 » se retient, « 23/09/2026 » se déchiffre. */
+function formatDateLongue(valeur) {
+  const d = _dateServeur(valeur);
+  if (!d) return '';
+  return d.toLocaleDateString('fr-FR',
+    { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+/* Ancienneté dite en français. Passé une semaine, elle donne la date
+   ET l'heure : « il y a 3 j » puis plus rien d'exploitable au-delà
+   obligeait à deviner à quel moment de la journée les choses s'étaient
+   produites, ce qui compte dès qu'on recoupe deux évènements. */
 function _tempsRelatif(dateIso) {
   const d = _dateServeur(dateIso);
   if (!d) return '';
   const sec = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (sec < 0) return formatHorodatage(d);
   if (sec < 60) return "à l'instant";
-  if (sec < 3600) return `il y a ${Math.floor(sec/60)} min`;
-  if (sec < 86400) return `il y a ${Math.floor(sec/3600)} h`;
-  if (sec < 86400 * 7) return `il y a ${Math.floor(sec/86400)} j`;
-  return formatDate(d);
+  if (sec < 3600) return `il y a ${Math.floor(sec / 60)} min`;
+  if (sec < 86400) return `il y a ${Math.floor(sec / 3600)} h`;
+  if (sec < 86400 * 7) return `il y a ${Math.floor(sec / 86400)} j`;
+  return formatHorodatage(d);
+}
+
+/* Balise <time> complète : ce qui se lit, et l'instant exact au survol.
+
+   Une ancienneté seule (« il y a 3 j ») se comprend d'un coup d'œil mais
+   ne se recoupe avec rien ; un horodatage seul se recoupe mais ne se lit
+   pas. Les deux voyagent donc ensemble, le second en infobulle, et
+   l'attribut datetime reste lisible par une machine. */
+function baliseTemps(valeur, { relatif = true, classe = '' } = {}) {
+  const d = _dateServeur(valeur);
+  if (!d) return '';
+  const texte = relatif ? _tempsRelatif(d) : formatHorodatage(d);
+  return `<time datetime="${d.toISOString()}"${classe ? ` class="${classe}"` : ''
+    } title="${echapper(formatHorodatage(d, true))}">${echapper(texte)}</time>`;
 }
 
 function rendreFil() {
@@ -971,7 +1265,12 @@ function rendreFil() {
     liste = liste.filter(q => q.titre.toLowerCase().includes(t) || q.corps.toLowerCase().includes(t) || q.secteur.toLowerCase().includes(t));
   }
   if (etat.tri === 'populaire') liste.sort((a, b) => b.utile - a.utile);
-  if (etat.tri === 'sansrep') liste = liste.filter(q => q.reponses.length === 0);
+  // Le fil ne rapporte que le NOMBRE de reponses : la liste q.reponses
+  // y est toujours vide, et ce filtre laissait donc tout passer.
+  // L'onglet « Sans reponse » donnait exactement la meme liste que
+  // « Les plus recentes », ce qui envoyait les referents chercher ou
+  // ils ne servaient a rien.
+  if (etat.tri === 'sansrep') liste = liste.filter(q => !q.repCount);
 
   const conteneur = document.getElementById('fil-questions');
   const banniere = etat.rechercheTerme
@@ -995,7 +1294,7 @@ function carteQuestionHTML(q) {
         ${avatarLien(q.idAuteur, q.initiales, 's', q.photoAuteur, false, q.auteur)}
         <div class="info"><strong class="nom-cliquable" ${q.idAuteur
           ? `onclick="ouvrirProfilUtilisateur(${q.idAuteur})"` : ''
-          }>${echapper(q.auteur)}</strong> · <span>${echapper(q.pays)}</span><time>${echapper(q.temps)}</time></div>
+          }>${echapper(q.auteur)}</strong> · <span>${echapper(q.pays)}</span>${baliseTemps(q.publiee_le)}</div>
         <button class="btn-fantome btn-petit" title="Signaler" aria-label="Signaler" onclick="signaler(${q.id})">${ic('drapeau','ic ic-s')}</button>
       </div>
       <h3 class="q-titre" style="cursor:pointer;" onclick="ouvrirQuestion(${q.id})">${echapper(q.titre)}</h3>
@@ -1037,8 +1336,40 @@ async function basculerUtileQ(id) {
       toast(err.message || 'Action impossible.', 'erreur');
     }
   } else {
-    toast(etat.utilesQ.has(id) ? 'En favoris.' : 'Retiré des favoris.');
+    // Hors ligne, rien n'est enregistre : l'annoncer comme un succes
+    // ferait croire a une action retenue, et la surprise viendrait au
+    // rechargement suivant.
+    if (etaitMarque) { etat.utilesQ.add(id); q.utile++; }
+    else             { etat.utilesQ.delete(id); q.utile = Math.max(0, q.utile - 1); }
+    rendreCourant();
+    toast("Serveur indisponible : cette action n'a pas été enregistrée.",
+          'erreur');
   }
+}
+
+/* Une réponse du serveur, mise à la forme de l'interface, avec son fil
+   éventuel. La colonne id_parent_reponse existait depuis l'origine mais
+   rien ne l'exploitait : un échange en trois temps se lisait comme
+   trois réponses indépendantes à la question de départ. */
+function adapterReponse(r) {
+  return {
+    id: r.id_reponse,
+    idAuteur: r.id_utilisateur,
+    auteur: `${r.prenom || ''} ${r.nom || ''}`.trim() || 'Membre',
+    init: initialesDe(r.prenom, r.nom),
+    photo: r.photo_url || null,
+    mentor: r.role === 'mentor',
+    verifie: !!r.verifie,
+    contenu: r.contenu || '',
+    date: r.cree_le,
+    utile: r.nb_utiles || 0,
+    monUtile: !!r.mon_utile,
+    note: r.note_moyenne || 0,
+    nbNotes: r.nb_notes || 0,
+    maNote: r.ma_note || 0,
+    retenue: !!r.retenue,
+    sousReponses: (r.sous_reponses || []).map(adapterReponse),
+  };
 }
 
 async function basculerSauver(id) {
@@ -1060,7 +1391,10 @@ async function basculerSauver(id) {
       toast(err.message || 'Action impossible.', 'erreur');
     }
   } else {
-    toast(etat.sauvegardees.has(id) ? 'Question sauvegardée.' : 'Retirée de vos sauvegardes.');
+    if (etait) etat.sauvegardees.add(id); else etat.sauvegardees.delete(id);
+    rendreCourant();
+    toast("Serveur indisponible : cette action n'a pas été enregistrée.",
+          'erreur');
   }
 }
 
@@ -1072,7 +1406,14 @@ function rendreCourant() {
 }
 
 /* ----- Ouvrir une question en pleine vue ----- */
-function ouvrirQuestion(id) {
+/* Ouvre une question avec ses réponses.
+
+   Le fil ne rapporte que le nombre de réponses, jamais leur contenu :
+   la liste locale était donc toujours vide, et cette page annonçait
+   « 3 réponse(s) » au-dessus de « Aucune réponse pour le moment ».
+   Aucune réponse publiée n'a jamais été lisible. Le détail est
+   maintenant demandé au serveur à chaque ouverture. */
+async function ouvrirQuestion(id) {
   const q = questions.find(x => x.id === id); if (!q) return;
   document.querySelectorAll('.sous-vue').forEach(sv => sv.style.display = 'none');
   const sv = document.getElementById('sv-question');
@@ -1080,13 +1421,49 @@ function ouvrirQuestion(id) {
   sv.dataset.qid = id;
   etat.sectionActive = 'question';
   majNavActif();
+  window.scrollTo(0, 0);
+
+  if (MODE.api) {
+    const zone = document.getElementById('contenu-question');
+    if (zone && !q.reponses.length) {
+      zone.innerHTML = '<p class="note-param">Chargement de la question…</p>';
+    }
+    try {
+      const d = await API.get('/questions/' + id);
+      q.corps = d.corps ?? q.corps;
+      q.utile = d.nb_utiles ?? q.utile;
+      q.idAuteur = d.id_auteur ?? q.idAuteur;
+      q.statut = d.statut;
+      q.reponseRetenue = d.id_reponse_retenue || null;
+      q.repCount = (d.reponses || []).reduce(
+        (n, r) => n + 1 + ((r.sous_reponses || []).length), 0);
+      q.reponses = (d.reponses || []).map(r => adapterReponse(r));
+      if (d.mon_utile) etat.utilesQ.add(id); else etat.utilesQ.delete(id);
+      if (d.sauvegardee) etat.sauvegardees.add(id);
+      else etat.sauvegardees.delete(id);
+    } catch (err) {
+      toast(err.message || "Cette question n'a pas pu être chargée.", 'erreur');
+    }
+    if (etat.sectionActive !== 'question'
+        || parseInt(sv.dataset.qid, 10) !== id) return;
+  }
+
   const utileActif = etat.utilesQ.has(q.id) ? ' actif' : '';
   const saveActif = etat.sauvegardees.has(q.id) ? ' actif' : '';
   const peutRepondre = estMentor();
+  // Une zone de texte, et non une ligne unique : une réponse utile
+  // tient en plusieurs paragraphes, et la touche Entrée y va à la
+  // ligne au lieu de publier une phrase à moitié écrite.
   const zoneRep = peutRepondre
-    ? `<div style="display:flex; gap:8px; margin-top:12px;">
-         <input type="text" placeholder="Écrire une réponse…" id="rep-input-${q.id}" />
-         <button class="btn btn-primaire btn-petit" onclick="ajouterReponse(${q.id})">Envoyer</button>
+    ? `<div class="composeur-reponse">
+         <textarea id="rep-input-${q.id}" rows="3" maxlength="4000"
+                   placeholder="Écrire une réponse… (Entrée pour aller à la ligne)"
+                   oninput="ajusterHauteur(this)"
+                   onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){event.preventDefault(); ajouterReponse(${q.id});}"></textarea>
+         <div class="composeur-pied">
+           <span class="aide-champ">Ctrl + Entrée pour publier.</span>
+           <button class="btn btn-primaire btn-petit" onclick="ajouterReponse(${q.id})">Publier ma réponse</button>
+         </div>
        </div>`
     : `<div class="carte" style="margin-top:12px; background:var(--fond); font-size:13px; color:var(--texte-doux); display:flex; gap:8px; align-items:center;">
          ${ic('marque','ic ic-s')} Seuls les référents peuvent répondre aux questions. Devenez référent pour partager votre expertise.
@@ -1097,10 +1474,10 @@ function ouvrirQuestion(id) {
         ${avatarLien(q.idAuteur, q.initiales, 's', q.photoAuteur, false, q.auteur)}
         <div class="info"><strong class="nom-cliquable" ${q.idAuteur
           ? `onclick="ouvrirProfilUtilisateur(${q.idAuteur})"` : ''
-          }>${echapper(q.auteur)}</strong> · <span>${echapper(q.pays)}</span><time>${echapper(q.temps)}</time></div>
+          }>${echapper(q.auteur)}</strong> · <span>${echapper(q.pays)}</span>${baliseTemps(q.publiee_le)}</div>
       </div>
       <h2 class="q-titre">${echapper(q.titre)}</h2>
-      <p class="q-corps">${echapper(q.corps)}</p>
+      <p class="q-corps-entier texte-libre">${echapper(q.corps)}</p>
       <div class="q-tags"><span class="tag">${echapper(q.secteur)}</span></div>
       <div class="q-pied">
         <button class="btn-utile${utileActif}" onclick="basculerUtileQ(${q.id})" aria-label="En favoris" title="En favoris">${iconePouce(etat.utilesQ.has(q.id))}<span class="cnt">${q.utile}</span><span class="lbl">En favoris</span></button>
@@ -1108,36 +1485,157 @@ function ouvrirQuestion(id) {
       </div>
       <div class="reponses" style="display:flex; flex-direction:column;">
         <h4 style="margin:14px 0 8px;">${q.reponses.length} réponse(s)</h4>
-        ${q.reponses.map(r => reponseHTML(r)).join('') || '<p style="color:var(--texte-doux); font-size:14px;">Aucune réponse pour le moment.</p>'}
+        ${q.reponses.map(r => reponseHTML(r, q.id)).join('') || '<p style="color:var(--texte-doux); font-size:14px;">Aucune réponse pour le moment.</p>'}
         ${zoneRep}
       </div>
     </article>`;
-  window.scrollTo(0, 0);
 }
 
-function reponseHTML(r) {
+/* Fait grandir une zone de texte avec son contenu, sans jamais faire
+   apparaître deux barres de défilement imbriquées. */
+function ajusterHauteur(champ) {
+  champ.style.height = 'auto';
+  champ.style.height = Math.min(champ.scrollHeight, 420) + 'px';
+}
+
+function reponseHTML(r, qid, imbriquee = false) {
   const cls = r.mentor ? 'reponse mentor' : 'reponse';
   const badge = r.verifie
     ? `<span class="badge-verifie">${ic('check','ic ic-s')} Référent vérifié</span>`
     : (r.mentor ? `<span class="badge-mentor badge-role">${ic('trophee','ic ic-s')} Référent</span>` : '');
-  const etoiles = r.mentor ? `<span class="etoiles" title="Notez cette réponse">
-    ${[1,2,3,4,5].map(i => `<span class="${i <= (r.etoiles||0) ? '' : 'vide'}" onclick="noter(this, ${i})">★</span>`).join('')}
+  // Les étoiles enregistrent désormais une note réelle. Personne ne
+  // note sa propre réponse, et la moyenne reçue s'affiche à côté.
+  const sienne = etat.utilisateur && r.idAuteur === etat.utilisateur.id;
+  const etoiles = r.mentor ? `<span class="etoiles"
+      title="${sienne ? 'Notes reçues' : 'Notez cette réponse'}"
+      data-rep="${r.id}">
+    ${[1,2,3,4,5].map(i => `<span class="${
+      i <= Math.round(r.maNote || r.note || 0) ? '' : 'vide'}"${
+      sienne ? '' : ` role="button" tabindex="0" aria-label="Noter ${i} sur 5"`
+        + ` onclick="noterReponse(${r.id}, ${i}, this)"`}>★</span>`).join('')}
+    ${r.nbNotes ? `<span class="etoiles-bilan">${r.note} sur ${r.nbNotes} avis</span>`
+                : '<span class="etoiles-bilan">Aucun avis</span>'}
   </span>` : '';
-  const sous = (r.sousReponses||[]).map(sr => `
-    <div class="reponse-imbriquee">
-      <div class="r-entete">${avatarHTML(sr.init, 's')}<div class="info"><strong>${echapper(sr.auteur)}</strong></div></div>
-      <p>${echapper(sr.contenu)}</p>
-    </div>`).join('');
+  // Seul l'auteur de la question désigne ce qui l'a aidé : un
+  // administrateur qui trancherait à sa place déciderait de ce qui a
+  // servi à quelqu'un d'autre.
+  const monQuestion = etat.utilisateur && qid
+    && questions.find(x => x.id === qid)?.idAuteur === etat.utilisateur.id;
+  const bandeau = r.retenue
+    ? `<div class="bandeau-retenue">${ic('check','ic ic-s')} Réponse retenue
+         par l'auteur de la question</div>`
+    : '';
+  const choix = (monQuestion && !imbriquee)
+    ? `<button class="btn-lien${r.retenue ? ' actif' : ''}"
+               onclick="retenirReponse(${qid}, ${r.id})">${
+        r.retenue ? 'Ne plus retenir' : "C'est cette réponse qui m'a aidé"}</button>`
+    : '';
+  const repondre = (!imbriquee && etat.utilisateur)
+    ? `<button class="btn-lien" onclick="ouvrirFilReponse(${qid}, ${r.id}, this)">
+         Répondre</button>`
+    : '';
+  const sous = (r.sousReponses || [])
+    .map(sr => reponseHTML(sr, qid, true)).join('');
+
   return `
-    <div class="${cls}">
-      <div class="r-entete">${avatarHTML(r.init, 's')}<div class="info"><strong>${echapper(r.auteur)}</strong> ${badge}</div></div>
-      <p>${echapper(r.contenu)}</p>
-      <div class="actions">
-        <button class="btn-utile" onclick="utileR(this)" aria-label="En favoris" title="En favoris">${iconePouce(false)}<span class="cnt">${r.utile}</span><span class="lbl">En favoris</span></button>
-        ${etoiles}
+    <div class="${cls}${r.retenue ? ' retenue' : ''}${
+      imbriquee ? ' reponse-imbriquee' : ''}" data-rep="${r.id}">
+      ${bandeau}
+      <div class="r-entete">
+        ${avatarLien(r.idAuteur, r.init, 's', r.photo, r.verifie, r.auteur)}
+        <div class="info"><strong class="nom-cliquable"${r.idAuteur
+          ? ` onclick="ouvrirProfilUtilisateur(${r.idAuteur})"` : ''
+          }>${echapper(r.auteur)}</strong> ${badge}
+          ${baliseTemps(r.date, { relatif: false })}</div>
       </div>
+      <p class="texte-libre">${echapper(r.contenu)}</p>
+      <div class="actions">
+        <button class="btn-utile${r.monUtile ? ' actif' : ''}"
+                onclick="utileR(this, ${r.id})"
+                aria-label="En favoris" title="En favoris">${
+          iconePouce(!!r.monUtile)}<span class="cnt">${r.utile}</span><span class="lbl">En favoris</span></button>
+        ${etoiles}
+        ${repondre}
+        ${choix}
+      </div>
+      <div class="fil-reponse" id="fil-rep-${r.id}"></div>
       ${sous}
     </div>`;
+}
+
+/* Ouvre une zone de saisie sous une réponse, pour lui répondre à elle
+   plutôt qu'à la question. Une seule à la fois : deux champs ouverts
+   font écrire dans le mauvais. */
+function ouvrirFilReponse(qid, idParent, bouton) {
+  document.querySelectorAll('.fil-reponse').forEach(z => {
+    if (z.id !== 'fil-rep-' + idParent) z.innerHTML = '';
+  });
+  const zone = document.getElementById('fil-rep-' + idParent);
+  if (!zone) return;
+  if (zone.innerHTML) { zone.innerHTML = ''; return; }
+  zone.innerHTML = `<div class="composeur-reponse">
+    <textarea id="sous-rep-${idParent}" rows="2" maxlength="4000"
+              placeholder="Répondre à cette réponse…"
+              oninput="ajusterHauteur(this)"
+              onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){event.preventDefault(); envoyerSousReponse(${qid}, ${idParent}, this);}"></textarea>
+    <div class="composeur-pied">
+      <span class="aide-champ">Ctrl + Entrée pour envoyer.</span>
+      <button class="btn btn-primaire btn-petit"
+              onclick="envoyerSousReponse(${qid}, ${idParent}, this)">Envoyer</button>
+    </div>
+  </div>`;
+  zone.querySelector('textarea')?.focus();
+}
+
+async function envoyerSousReponse(qid, idParent, element) {
+  const champ = document.getElementById('sous-rep-' + idParent);
+  const contenu = (champ?.value || '').trim();
+  if (!contenu) return toast('Écrivez votre réponse.', 'erreur');
+  if (!MODE.api) return toast('Serveur indisponible.', 'erreur');
+  try {
+    await API.post('/reponses', { id_question: qid, contenu,
+                                  id_parent_reponse: idParent });
+    toast('Réponse envoyée.');
+    await ouvrirQuestion(qid);
+  } catch (err) {
+    toast(err.message || 'Publication impossible.', 'erreur');
+  }
+}
+
+/* L'auteur de la question désigne la réponse qui l'a aidé. Sans cela,
+   dix réponses se valent à l'écran, et celui qui arrive plus tard avec
+   la même question doit toutes les lire pour deviner laquelle a servi. */
+async function retenirReponse(qid, idReponse) {
+  if (!MODE.api) return toast('Serveur indisponible.', 'erreur');
+  try {
+    const r = await API.post(`/questions/${qid}/retenir`,
+                             { id_reponse: idReponse });
+    toast(r.retenue ? 'Réponse retenue. Votre question passe en résolue.'
+                    : 'Choix annulé.');
+    await ouvrirQuestion(qid);
+  } catch (err) {
+    toast(err.message || 'Action impossible.', 'erreur');
+  }
+}
+
+/* Enregistre une note de un à cinq sur une réponse. */
+async function noterReponse(idReponse, valeur, etoile) {
+  if (!MODE.api) return toast('Serveur indisponible.', 'erreur');
+  const groupe = etoile.closest('.etoiles');
+  try {
+    const r = await API.post(`/reponses/${idReponse}/note`, { valeur });
+    [...groupe.querySelectorAll('span')].forEach((s, i) => {
+      if (s.classList.contains('etoiles-bilan')) return;
+      s.classList.toggle('vide', i >= valeur);
+    });
+    const bilan = groupe.querySelector('.etoiles-bilan');
+    if (bilan) {
+      bilan.textContent = `${r.note_moyenne} sur ${r.nb_notes} avis`;
+    }
+    toast(`Note enregistrée : ${valeur} sur 5.`);
+  } catch (err) {
+    toast(err.message || "La note n'a pas pu être enregistrée.", 'erreur');
+  }
 }
 
 async function utileR(btn, idReponse) {
@@ -1153,27 +1651,35 @@ async function utileR(btn, idReponse) {
   const n = parseInt(cnt.textContent, 10) || 0;
   cnt.textContent = actif ? n + 1 : Math.max(0, n - 1);
 
-  if (MODE.api && idReponse) {
-    try {
-      await API.post(`/reponses/${idReponse}/utile`, {});
-      toast(actif ? 'En favoris.' : 'Retiré des favoris.');
-    } catch (err) {
-      btn.classList.toggle('actif');
-      cnt.textContent = n;
-      toast(err.message || 'Action impossible.', 'erreur');
-    }
-  } else {
+  // Sans identifiant, l'appel ne pouvait pas partir : le bouton
+  // changeait d'état et annonçait « En favoris » sans rien enregistrer.
+  if (!idReponse) {
+    btn.classList.toggle('actif');
+    cnt.textContent = n;
+    return toast("Cette réponse n'a pas pu être identifiée.", 'erreur');
+  }
+  if (!MODE.api) {
+    btn.classList.toggle('actif');
+    cnt.textContent = n;
+    return toast('Serveur indisponible.', 'erreur');
+  }
+  try {
+    await API.post(`/reponses/${idReponse}/utile`, {});
     toast(actif ? 'En favoris.' : 'Retiré des favoris.');
+  } catch (err) {
+    btn.classList.toggle('actif');
+    cnt.textContent = n;
+    toast(err.message || 'Action impossible.', 'erreur');
   }
 }
-function noter(elem, n) {
-  const conteneur = elem.parentElement;
-  [...conteneur.children].forEach((c, i) => c.classList.toggle('vide', i >= n));
-  toast(`Note attribuée : ${n}/5.`);
-}
+
 async function signaler(id) {
-  const motif = window.prompt('Motif du signalement (optionnel) :', '') || '';
-  if (motif === null) return;  // annulé
+  // window.prompt rend null quand on annule. Le « || '' » transformait
+  // ce null en chaine vide avant le test : la condition ne pouvait donc
+  // jamais etre vraie, et « Annuler » signalait quand meme.
+  const saisie = window.prompt('Motif du signalement (optionnel) :', '');
+  if (saisie === null) return;
+  const motif = saisie.trim();
   if (MODE.api) {
     try {
       await API.post(`/questions/${id}/signaler`, { motif });
@@ -1193,14 +1699,24 @@ async function ajouterReponse(id) {
   if (!contenu) return toast('Écrivez votre réponse.', 'erreur');
 
   if (MODE.api) {
+    const bouton = document.querySelector(
+      `#rep-input-${id} ~ .composeur-pied .btn-primaire`);
+    if (bouton) { bouton.disabled = true; bouton.textContent = 'Publication…'; }
     try {
       await API.post('/reponses', { id_question: id, contenu });
-      toast('Réponse publiée.');
+      // Le champ n'est vidé qu'une fois la publication acquise : le
+      // vider avant perdait le texte quand l'envoi échouait.
       inp.value = '';
+      ajusterHauteur(inp);
+      toast('Réponse publiée.');
       await chargerFilDepuisApi();
-      ouvrirQuestion(id);
+      await ouvrirQuestion(id);
       return;
     } catch (err) {
+      if (bouton) {
+        bouton.disabled = false;
+        bouton.textContent = 'Publier ma réponse';
+      }
       return toast(err.message || 'Publication impossible.', 'erreur');
     }
   }
@@ -1220,65 +1736,13 @@ function rendreColonneDroite() {
       <li><a href="#" onclick="event.preventDefault(); ouvrirQuestion(${q.id})">${echapper(q.titre)}</a>
       <span>${q.utile} en favoris · ${q.repCount} réponses</span></li>`).join('');
   document.getElementById('mentors-suggeres').innerHTML =
-    mentors.slice(0, 4).map(m => {
-      const suivi = etat.suivis.has(m.id);
-      return `<li><div class="mentor-sugg">
+    mentors.slice(0, 4).map(m => `
+      <li><div class="mentor-sugg">
         ${avatarHTML(m.initiales)}
         <div class="info"><strong>${echapper(m.prenom + ' ' + m.nom)}</strong><span>${echapper(m.secteur)}</span></div>
-        <button class="btn btn-fantome btn-petit" onclick="basculerSuivre(${m.id})">${suivi ? ic('check','ic ic-s') + ' Suivi' : '+ Suivre'}</button>
-      </div></li>`;
-    }).join('');
-}
-
-async function basculerSuivre(mentorId) {
-  const m = mentors.find(x => x.id === mentorId); if (!m) return;
-  const etait = etat.suivis.has(mentorId);
-  if (etait) etat.suivis.delete(mentorId); else etat.suivis.add(mentorId);
-  rendreColonneDroite();
-
-  if (MODE.api) {
-    try {
-      const r = await API.post(`/mentors/${mentorId}/suivre`, {});
-      if (typeof r?.suivi === 'boolean') {
-        if (r.suivi) etat.suivis.add(mentorId); else etat.suivis.delete(mentorId);
-        rendreColonneDroite();
-      }
-      toast(r?.suivi
-        ? `Vous suivez désormais ${m.prenom}. Vous serez notifié(e) de ses réponses.`
-        : `Vous ne suivez plus ${m.prenom}.`);
-    } catch (err) {
-      if (etait) etat.suivis.add(mentorId); else etat.suivis.delete(mentorId);
-      rendreColonneDroite();
-      toast(err.message || 'Action impossible.', 'erreur');
-    }
-  } else {
-    toast(etat.suivis.has(mentorId)
-      ? `Vous suivez désormais ${m.prenom}. Vous serez notifié(e) de ses réponses.`
-      : `Vous ne suivez plus ${m.prenom}.`);
-  }
-}
-
-/* Quand un mentor répond, notifier tous ses abonnés */
-function notifierAbonnesMentor(nomMentor, questionId, titreQ) {
-  // Si l'utilisateur courant suit un mentor portant ce nom, il reçoit une notif
-  mentors.forEach(m => {
-    if (`${m.prenom} ${m.nom}` === nomMentor && etat.suivis.has(m.id)) {
-      notifications.unshift({
-        texte: `${nomMentor} (que vous suivez) a répondu à « ${titreQ} »`,
-        temps: "à l'instant", nonLu: true, questionId
-      });
-    }
-  });
-  rendreNotifications();
-}
-
-/* Hook : quand un mentor de la démo "ajoute" une réponse via l'admin/etc. — exposé pour usage futur */
-function mentorRepondAQuestion(mentorId, questionId, contenu) {
-  const m = mentors.find(x => x.id === mentorId); const q = questions.find(x => x.id === questionId);
-  if (!m || !q) return;
-  q.reponses.push({ auteur:`${m.prenom} ${m.nom}`, init:m.initiales, mentorId:m.id, mentor:true, verifie:m.verifie, contenu, utile:0 });
-  q.repCount++;
-  notifierAbonnesMentor(`${m.prenom} ${m.nom}`, q.id, q.titre);
+        <button class="btn btn-fantome btn-petit"
+                onclick="ouvrirProfilMentor(${m.id})">Voir</button>
+      </div></li>`).join('');
 }
 
 /* ============================================================
@@ -1291,9 +1755,13 @@ function majCompteur() {
   document.getElementById('compteur').textContent = v.length;
 }
 function choisirCat(elem) {
-  document.querySelectorAll('#chips-cat .chip-select').forEach(c => c.classList.remove('actif'));
+  document.querySelectorAll('#chips-cat .chip-select').forEach(c => {
+    c.classList.remove('actif');
+    c.setAttribute('aria-pressed', 'false');
+  });
   elem.classList.add('actif');
-  etat.categorieChoisie = elem.textContent;
+  elem.setAttribute('aria-pressed', 'true');
+  etat.categorieChoisie = elem.textContent.trim();
 }
 
 /* Évalue le titre saisi et propose des questions similaires existantes */
@@ -1377,7 +1845,7 @@ function rendreProfil() {
   entete.innerHTML = `
     <div class="col-avatar">
       <span class="${u.photo ? 'avatar-agrandissable' : ''}"
-            ${u.photo ? `onclick="ouvrirPhoto('${echapper(u.photo)}', '${echapper(u.prenom + ' ' + u.nom)}')"
+            ${u.photo ? `onclick="ouvrirPhoto(${chaineJS(u.photo)}, ${chaineJS(u.prenom + ' ' + u.nom)})"
             title="Voir la photo en grand" role="button" tabindex="0"` : ''}>
         ${avatarHTML(u.initiales, 'xl', u.photo, estMentorVerifie)}
       </span>
@@ -1398,7 +1866,6 @@ function rendreProfil() {
         ${u.secteurs.map(s => `<span class="tag">${echapper(s)}</span>`).join('')}
       </div>
       ${u.bio ? `<p class="bio-profil">${echapper(u.bio)}</p>` : ''}
-      ${blocParcoursProfil(u)}
     </div>
     <div class="col-actions">
       <button class="btn btn-secondaire" onclick="televerserPhotoCompte()">${ic('appareil')} Photo</button>
@@ -1411,41 +1878,91 @@ function rendreProfil() {
   const chiffres = statistiquesProfil(u);
   stats.style.display = chiffres ? '' : 'none';
   stats.innerHTML = chiffres;
-  document.getElementById('tabs-profil').innerHTML = `
-    <div class="tab-profil actif" onclick="ongletProfil(this, 'questions')">Mes questions</div>
-    <div class="tab-profil" onclick="ongletProfil(this, 'sauvees')">Questions sauvegardées</div>
-    <div class="tab-profil" onclick="ongletProfil(this, 'mentors')">Référents suivis</div>`;
-  ongletProfil(document.querySelector('.tab-profil.actif'), 'questions');
+  const onglets = document.getElementById('tabs-profil');
+  onglets.style.display = '';
+  onglets.innerHTML = `
+    <button type="button" class="tab-profil actif" role="tab" aria-selected="true"
+            onclick="ongletProfil(this, 'activite')">Mon activité</button>
+    <button type="button" class="tab-profil" role="tab" aria-selected="false"
+            onclick="ongletProfil(this, 'apropos')">À propos</button>
+    <button type="button" class="tab-profil" role="tab" aria-selected="false"
+            onclick="ongletProfil(this, 'sauvees')">Questions sauvegardées</button>`;
+  ongletProfil(onglets.querySelector('.tab-profil.actif'), 'activite');
 }
+
 function ongletProfil(elem, t) {
   document.querySelectorAll('.tab-profil').forEach(o => o.classList.remove('actif'));
   elem.classList.add('actif');
   const c = document.getElementById('contenu-profil');
-  if (t === 'questions') {
-    // La complétion précède les publications : c'est ce qui manque au
-    // profil qui décide de l'accueil réservé à ce qu'on y publie.
-    c.innerHTML = carteCompletionProfil()
-      + detailsProfil(etat.utilisateur)
-      + questions.slice(0,3).map(q => carteQuestionHTML(q)).join('');
-  } else if (t === 'sauvees') {
+  const u = MODE.utilisateur || etat.utilisateur;
+  if (t === 'activite') {
+    // La complétion précède l'activité : c'est ce qui manque au profil
+    // qui décide de l'accueil réservé à ce qu'on y publie.
+    c.innerHTML = carteCompletionProfil() + blocActivite(u, true);
+  } else if (t === 'apropos') {
+    c.innerHTML = blocParcoursProfil(MODE.utilisateur || etat.utilisateur)
+      || '<div class="carte"><p class="desc">Renseignez votre parcours depuis vos paramètres : c\'est lui qui décide des référents qu\'on vous propose.</p></div>';
+  } else {
     const liste = questions.filter(q => etat.sauvegardees.has(q.id));
     c.innerHTML = liste.length
       ? liste.map(q => carteQuestionHTML(q)).join('')
       : `<div class="etat-vide carte"><div class="illu">${ic('marque','ic ic-l')}</div><h3>Aucune question sauvegardée</h3><p>Sauvegardez les questions intéressantes pour les retrouver ici.</p></div>`;
-  } else {
-    const ids = [...etat.suivis];
-    const suiv = ids.length ? mentors.filter(m => etat.suivis.has(m.id)) : mentors.slice(0, 4);
-    c.innerHTML = `<div class="carte"><div class="carte-titre">Mes référents suivis</div>${suiv.map(m => `
-      <div class="suivi-item" onclick="ouvrirProfilMentor(${m.id})">
-        ${avatarHTML(m.initiales)}
-        <div class="info"><strong>${echapper(m.prenom + ' ' + m.nom)}</strong><span>${echapper(m.secteur + ' · ' + m.pays)}</span></div>
-      </div>`).join('')}</div>`;
   }
+}
+
+/* Activité récente : ce qui a été demandé, ce qui a été répondu.
+
+   Un profil qui n'annonce que des chiffres ne dit rien de la personne :
+   on ne sait ni ce qu'elle cherche ni ce qu'elle sait. Ces deux listes
+   sont ce qui permet de décider si l'on s'adresse à elle. */
+function blocActivite(u, moi = false) {
+  if (!u) return '';
+  const questionsRecentes = u.dernieres_questions || [];
+  const reponsesRecentes = u.dernieres_reponses || [];
+
+  const blocQuestions = questionsRecentes.length ? `
+    <div class="carte bloc-activite">
+      <div class="carte-titre">${moi ? 'Mes questions' : 'Ses questions'}</div>
+      ${questionsRecentes.map(q => `
+        <div class="ligne-activite" role="button" tabindex="0" onclick="ouvrirQuestion(${q.id_question})">
+          <strong>${echapper(q.titre)}</strong>
+          <span class="meta-activite">
+            ${echapper(q.secteur || 'Sans secteur')} ·
+            ${baliseTemps(q.publiee_le)} ·
+            ${q.nb_reponses} réponse${q.nb_reponses > 1 ? 's' : ''}
+            ${q.statut === 'resolue' ? '· <span class="tag tag-vert">résolue</span>' : ''}
+          </span>
+        </div>`).join('')}
+    </div>` : '';
+
+  const blocReponses = reponsesRecentes.length ? `
+    <div class="carte bloc-activite">
+      <div class="carte-titre">${moi ? 'Mes réponses' : 'Ses réponses'}</div>
+      ${reponsesRecentes.map(r => `
+        <div class="ligne-activite" role="button" tabindex="0" onclick="ouvrirQuestion(${r.id_question})">
+          <strong>${echapper(r.titre)}</strong>
+          <p class="extrait-activite">${echapper(r.extrait || '')}</p>
+          <span class="meta-activite">
+            ${baliseTemps(r.cree_le)} ·
+            ${r.nb_utiles} en favoris
+            ${r.retenue ? '· <span class="tag tag-vert">retenue par l\'auteur</span>' : ''}
+          </span>
+        </div>`).join('')}
+    </div>` : '';
+
+  if (!blocQuestions && !blocReponses) {
+    return `<div class="etat-vide carte">
+      <div class="illu">${ic('bulle','ic ic-l')}</div>
+      <h3>${moi ? "Vous n'avez encore rien publié" : "Rien de publié pour le moment"}</h3>
+      <p>${moi ? 'Votre première question trouve souvent sa réponse dans la journée.'
+               : 'Cette personne n\'a pas encore posé de question ni répondu.'}</p>
+    </div>`;
+  }
+  return blocQuestions + blocReponses;
 }
 
 function rendreProfilMentor(m) {
   const dispoLabel = { disponible:'Disponible', occupe:'Occupé', absent:'Absent' }[m.dispo];
-  const suivi = etat.suivis.has(m.id);
   document.getElementById('entete-profil').innerHTML = `
     <div class="col-avatar">
       ${avatarHTML(m.initiales, 'xl', null, m.verifie)}
@@ -1461,8 +1978,13 @@ function rendreProfilMentor(m) {
       ${m.bio ? `<p class="bio-profil">${echapper(m.bio)}</p>` : ''}
     </div>
     <div class="col-actions">
-      <button class="btn ${suivi ? 'btn-secondaire' : 'btn-primaire'}" onclick="basculerSuivre(${m.id}); profilCible = mentors.find(x => x.id === ${m.id}); rendreProfilMentor(profilCible);">${suivi ? ic('check','ic ic-s') + ' Suivi' : '+ Suivre'}</button>
+      <span id="zone-ecrire"></span>
+      <button class="btn btn-secondaire" onclick="retourFil()">Retour au fil</button>
     </div>`;
+  // Le bouton « Suivre » n'apportait rien : il n'ouvrait aucun
+  // échange et les abonnements n'alimentaient aucun fil. C'est
+  // écrire qui manquait, et la règle dit si c'est permis.
+  majBoutonEcrire(m.id, `${m.prenom} ${m.nom}`);
   const stats = document.getElementById('stats-profil');
   stats.style.display = '';
   stats.innerHTML = `
@@ -1479,8 +2001,10 @@ function rendreProfilMentor(m) {
       <span class="stat-label">Sur LaSourcee</span>
     </div>`;
   document.getElementById('tabs-profil').innerHTML = `
-    <div class="tab-profil actif" onclick="ongletMentor(this, 'apropos')">À propos</div>
-    <div class="tab-profil" onclick="ongletMentor(this, 'reponses')">Réponses récentes</div>`;
+    <button type="button" class="tab-profil actif" role="tab" aria-selected="true"
+            onclick="ongletMentor(this, 'apropos')">À propos</button>
+    <button type="button" class="tab-profil" role="tab" aria-selected="false"
+            onclick="ongletMentor(this, 'reponses')">Réponses récentes</button>`;
   ongletMentor(document.querySelector('.tab-profil.actif'), 'apropos');
 }
 function ongletMentor(elem, t) {
@@ -1494,7 +2018,7 @@ function ongletMentor(elem, t) {
       <div style="margin-top:14px;"><button class="btn btn-fantome btn-petit" onclick="profilCible = null; rendreProfil()">← Retour à mon profil</button></div>`;
   } else {
     const reps = questions.flatMap(q => q.reponses.filter(r => r.auteur.includes(m.prenom)).map(r => ({...r, question: q.titre, qid: q.id})));
-    c.innerHTML = reps.length ? reps.map(r => `<div class="carte" style="margin-bottom:12px; cursor:pointer;" onclick="ouvrirQuestion(${r.qid})"><strong>Sur :</strong> ${echapper(r.question)}<p style="margin-top:8px; color:var(--texte-doux);">${echapper(r.contenu)}</p></div>`).join('')
+    c.innerHTML = reps.length ? reps.map(r => `<div class="carte" style="margin-bottom:12px; cursor:pointer;" role="button" tabindex="0" onclick="ouvrirQuestion(${r.qid})"><strong>Sur :</strong> ${echapper(r.question)}<p style="margin-top:8px; color:var(--texte-doux);">${echapper(r.contenu)}</p></div>`).join('')
       : `<div class="etat-vide carte"><div class="illu">${ic('bulle','ic ic-l')}</div><h3>Pas de réponse récente</h3></div>`;
   }
 }
@@ -1564,11 +2088,15 @@ function rendreEspaceMentor() {
   const aTraiter = questions
     .filter(q => u.secteurs.includes(q.secteur) && q.reponses.length === 0)
     .slice(0, 5);
+  // Ce compteur parcourait les questions chargées dans la page et
+  // retenait les réponses dont le nom d'auteur « contenait » le prénom
+  // du référent. Il valait donc zéro tant que le fil n'était pas chargé,
+  // ne voyait jamais que la première page, et attribuait à Marie les
+  // réponses de Marie-Claire. Le serveur compte déjà, sur la base
+  // entière : c'est ce chiffre-là qu'on montre.
   const stats = {
-    reponses: questions.reduce((n, q) =>
-      n + q.reponses.filter(r => r.auteur.includes(u.prenom)).length, 0),
+    reponses: u.nb_reponses_publiees || 0,
     secteurs: u.secteurs.length,
-    abonnes: u.mentorsSuivis,
   };
 
   c.innerHTML = `
@@ -1586,7 +2114,6 @@ function rendreEspaceMentor() {
     <div class="kpi-grid" style="margin-bottom:18px;">
       <div class="kpi-carte"><div class="kpi-icone">${ic('bulle')}</div><div class="label">Réponses publiées</div><div class="valeur">${stats.reponses}</div></div>
       <div class="kpi-carte"><div class="kpi-icone">${ic('etiquette')}</div><div class="label">Secteurs couverts</div><div class="valeur">${stats.secteurs}</div></div>
-      <div class="kpi-carte"><div class="kpi-icone">${ic('groupe')}</div><div class="label">Abonnés</div><div class="valeur">${stats.abonnes}</div></div>
     </div>
 
     <div class="carte">
@@ -1686,8 +2213,8 @@ async function devenirMentor() {
         <label>Domaines d'expertise <span class="obligatoire">*</span></label>
         <div class="chips-select" id="cm-secteurs">
           ${secteurs.map(s => `
-            <div class="chip-select" data-id="${s.id_secteur}"
-                 onclick="this.classList.toggle('actif')">${echapper(s.libelle)}</div>
+            <button type="button" class="chip-select" data-id="${s.id_secteur}"
+                 aria-pressed="false" onclick="toggleChip(this)">${echapper(s.libelle)}</button>
           `).join('') || '<p style="color:var(--texte-doux);font-size:13px;">Liste indisponible.</p>'}
         </div>
       </div>
@@ -1775,15 +2302,16 @@ function _alerteCandidature(message) {
    ============================================================ */
 function basculerNotifs() {
   document.getElementById('panneauNotifs').classList.toggle('ouvert');
-  document.getElementById('menuProfil').classList.remove('ouvert');
+  fermerMenuProfil();
   etat.sectionActive = etat.sectionActive === 'notifs' ? 'fil' : 'notifs';
   majNavActif();
 }
 function rendreNotifications() {
   document.getElementById('liste-notifs').innerHTML = notifications.map((n, i) => `
-    <div class="notif-item ${n.nonLu?'non-lu':''} ${n.questionId ? 'cliquable' : ''}" onclick="cliquerNotif(${i})">
+    <div class="notif-item ${n.nonLu?'non-lu':''} ${n.questionId ? 'cliquable' : ''}"
+         role="button" tabindex="0" onclick="cliquerNotif(${i})">
       <div class="notif-icone">${ic('cloche','ic ic-s')}</div>
-      <div><p>${echapper(n.texte)}</p><time>${echapper(n.temps)}</time></div>
+      <div><p>${echapper(n.texte)}</p>${baliseTemps(n.cree_le)}</div>
     </div>`).join('');
   majBadgeNotifs();
 }
@@ -1800,12 +2328,24 @@ function majBadgeNotifs() {
   b.style.display = n ? 'flex' : 'none'; b.textContent = n;
 }
 async function toutMarquerLu() {
+  const avant = notifications.map(n => n.nonLu);
   notifications.forEach(n => n.nonLu = false);
   rendreNotifications();
-  if (MODE.api) {
-    try { await API.post('/notifications/tout-lu', {}); } catch (_) { /* tolère */ }
+  if (!MODE.api) {
+    return toast('Serveur indisponible.', 'erreur');
   }
-  toast('Toutes les notifications ont été marquées comme lues.');
+  try {
+    await API.post('/notifications/tout-lu', {});
+    toast('Toutes les notifications ont été marquées comme lues.');
+  } catch (err) {
+    // L'echec etait avale et le message de succes tombait quand meme :
+    // les notifications revenaient non lues au rechargement suivant,
+    // sans que rien ne l'ait annonce.
+    notifications.forEach((n, i) => n.nonLu = avant[i]);
+    rendreNotifications();
+    toast(err.message || "Les notifications n'ont pas pu être marquées.",
+          'erreur');
+  }
 }
 
 /* Recharge les notifications depuis le backend (silencieux). */
@@ -1816,7 +2356,7 @@ async function chargerNotificationsDepuisApi() {
     notifications.length = 0;
     liste.forEach(n => notifications.push({
       texte: n.texte,
-      temps: _tempsRelatif(n.cree_le),
+      cree_le: n.cree_le,
       nonLu: !n.est_lue,
       questionId: n.lien_question || null,
     }));
@@ -1827,9 +2367,21 @@ async function chargerNotificationsDepuisApi() {
 /* ============================================================
    MENU PROFIL
    ============================================================ */
+/* Le menu du profil se ferme depuis cinq endroits différents. Chacun
+   retirait la classe dans son coin, si bien que le bouton qui l'ouvre
+   continuait d'annoncer un menu ouvert dès qu'on le fermait autrement
+   qu'en recliquant dessus. Une seule porte de sortie, désormais. */
+function fermerMenuProfil() {
+  document.getElementById('menuProfil')?.classList.remove('ouvert');
+  document.getElementById('bouton-menu-profil')
+    ?.setAttribute('aria-expanded', 'false');
+}
+
 function basculerMenuProfil() {
-  document.getElementById('menuProfil').classList.toggle('ouvert');
+  const ouvert = document.getElementById('menuProfil').classList.toggle('ouvert');
   document.getElementById('panneauNotifs').classList.remove('ouvert');
+  document.getElementById('bouton-menu-profil')
+    ?.setAttribute('aria-expanded', ouvert ? 'true' : 'false');
 }
 
 /* ============================================================
@@ -1874,23 +2426,23 @@ async function _rechercherVraiment(terme) {
   let html = '';
   if ((r.mentors || []).length) {
     html += '<h5>Référents</h5>';
-    html += r.mentors.map(m => `<div class="res-item"
+    html += r.mentors.map(m => `<div class="res-item" role="button" tabindex="0"
         onclick="ouvrirProfilUtilisateur(${m.id_utilisateur}); fermerRecherche();">
-        ${avatarHTML(((m.prenom||'?')[0] + (m.nom||'?')[0]).toUpperCase(), 's', m.photo_url)}
+        ${avatarHTML(initialesDe(m.prenom, m.nom), 's', m.photo_url)}
         <span>${echapper((m.prenom || '') + ' ' + (m.nom || ''))}</span>
       </div>`).join('');
   }
   if ((r.questions || []).length) {
     html += '<h5>Questions</h5>';
-    html += r.questions.map(q => `<div class="res-item"
+    html += r.questions.map(q => `<div class="res-item" role="button" tabindex="0"
         onclick="ouvrirQuestion(${q.id_question}); fermerRecherche();">
         <span>${echapper(q.titre)}</span>
       </div>`).join('');
   }
   if ((r.secteurs || []).length) {
     html += '<h5>Secteurs</h5>';
-    html += r.secteurs.map(s => `<div class="res-item"
-        onclick="filtrerParSecteur('${echapper(s.libelle)}'); fermerRecherche();">
+    html += r.secteurs.map(s => `<div class="res-item" role="button" tabindex="0"
+        onclick="filtrerParSecteur(${chaineJS(s.libelle)}); fermerRecherche();">
         <span class="tag">${echapper(s.libelle)}</span>
       </div>`).join('');
   }
@@ -1935,7 +2487,10 @@ function changerPanParam(elem, p) {
   elem.classList.add('actif');
   const c = document.getElementById('contenu-param');
   if (p === 'compte') {
-    chargerReferentielsProfil().then(() => {
+    // Les pays viennent du serveur : le panneau attend la liste plutôt
+    // que de s'afficher avec un sélecteur vide.
+    Promise.all([chargerReferentielsProfil(), chargerPays(),
+                 chargerSecteurs()]).then(() => {
       c.innerHTML = panneauCompte();
       // L'état de la limite se calcule au rendu, pas au premier clic :
       // sinon quelqu'un arrivant avec quatre objectifs déjà cochés
@@ -1950,10 +2505,14 @@ function changerPanParam(elem, p) {
 
 function panneauCompte() {
   const u = etat.utilisateur;
-  const secteursDefaut = ['Technologie','Médecine','Droit','Finance','Arts','Éducation','Ingénierie','Entrepreneuriat'];
+  // La liste vient de la base, où l'administration la tient à jour. Le
+  // repli n'est là que si le serveur n'a pas répondu : mieux vaut huit
+  // secteurs figés qu'un panneau sans aucun choix.
+  const secteursDefaut = (_secteurs && _secteurs.length) ? _secteurs
+    : ['Technologie', 'Médecine', 'Droit', 'Finance',
+       'Arts', 'Éducation', 'Ingénierie', 'Entrepreneuriat'];
   const secteursPerso = (u.secteurs || []).filter(s => !secteursDefaut.includes(s));
-  const optsPays = LISTE_PAYS.map(p =>
-    `<option value="${echapper(p)}"${p === u.pays ? ' selected' : ''}>${echapper(p)}</option>`).join('');
+  const optsPays = optionsPays(u.pays);
   return `<div class="section-param">
     <h2>Mon compte</h2>
     <div class="champs-cote">
@@ -1963,7 +2522,7 @@ function panneauCompte() {
     <div class="champ"><label>E-mail</label><input id="pc-email" type="email" value="${echapper(u.email || (u.prenom.toLowerCase() + '.' + u.nom.toLowerCase() + '@email.com'))}" /></div>
     <div class="champs-cote">
       <div class="champ"><label for="pc-pays">Pays</label>
-        <select id="pc-pays"><option value="">Sélectionnez votre pays</option>${optsPays}</select>
+        <select id="pc-pays">${optsPays}</select>
       </div>
       <div class="champ"><label for="pc-tel">Téléphone <span class="facultatif">visible de vous seul</span></label>
         <input id="pc-tel" type="tel" inputmode="tel" autocomplete="tel"
@@ -2010,6 +2569,14 @@ function panneauCompte() {
         </select>
       </div>
     </div>
+    <div class="champ"><label for="pc-filiere">Filière ou spécialité</label>
+      <input id="pc-filiere" maxlength="120"
+             value="${echapper(u.filiere || '')}"
+             placeholder="Génie logiciel, comptabilité, soudure à l'arc…" />
+      <p class="aide-champ">Le domaine dit le secteur, la filière dit ce que
+        vous faites exactement. C'est elle qui vous rapproche des référents
+        qui font la même chose.</p>
+    </div>
     <div class="champ"><label for="pc-etablissement">Établissement ou lieu de formation</label>
       <input id="pc-etablissement" list="liste-etablissements-pc" maxlength="120"
              value="${echapper(u.etablissement || '')}"
@@ -2018,7 +2585,8 @@ function panneauCompte() {
         ${(etat.referentielsProfil?.etablissements || []).map(e =>
           `<option value="${echapper(e)}"></option>`).join('')}
       </datalist>
-      <p class="aide-champ">Saisissez librement si votre établissement n'est pas proposé.</p>
+      <p class="aide-champ">Les propositions suivent le pays choisi. Saisissez
+        librement : aucune liste ne contient tous les établissements du monde.</p>
     </div>
     <div class="champs-cote">
       <div class="champ"><label for="pc-langues">Langues parlées</label>
@@ -2044,10 +2612,10 @@ function panneauCompte() {
     <div class="champ"><label>Secteurs d'intérêt</label>
       <div class="chips-select" id="pc-chips">
         ${secteursDefaut.map(s =>
-          `<div class="chip-select ${u.secteurs.includes(s)?'actif':''}" onclick="toggleChip(this)">${s}</div>`).join('')}
+          `<button type="button" class="chip-select ${u.secteurs.includes(s)?'actif':''}" aria-pressed="${u.secteurs.includes(s)?'true':'false'}" onclick="toggleChip(this)">${echapper(s)}</button>`).join('')}
         ${secteursPerso.map(s =>
-          `<div class="chip-select chip-perso actif" data-perso="1"><span onclick="toggleChip(this.parentElement)">${echapper(s)}</span><button type="button" class="chip-sup" onclick="this.parentElement.remove()" aria-label="Supprimer">×</button></div>`).join('')}
-        <div class="chip-select" data-autre="1" onclick="document.getElementById('pc-autre-wrap').style.display=''; document.getElementById('pc-autre-input').focus();">+ Autre</div>
+          `<div class="chip-select chip-perso actif" data-perso="1"><button type="button" class="chip-texte" aria-pressed="true" onclick="toggleChip(this.parentElement)">${echapper(s)}</button><button type="button" class="chip-sup" onclick="this.parentElement.remove()" aria-label="Supprimer ${echapper(s)}">×</button></div>`).join('')}
+        <button type="button" class="chip-select" data-autre="1" onclick="document.getElementById('pc-autre-wrap').style.display=''; document.getElementById('pc-autre-input').focus();">+ Autre</button>
       </div>
       <div id="pc-autre-wrap" style="display:none; margin-top:10px;">
         <div style="display:flex; gap:8px;">
@@ -2073,7 +2641,11 @@ function ajouterSecteurPersoParam() {
   const chip = document.createElement('div');
   chip.className = 'chip-select chip-perso actif';
   chip.dataset.perso = '1';
-  chip.innerHTML = `<span onclick="toggleChip(this.parentElement)">${echapper(v)}</span><button type="button" class="chip-sup" onclick="this.parentElement.remove()" aria-label="Supprimer">×</button>`;
+  chip.innerHTML =
+    `<button type="button" class="chip-texte" aria-pressed="true" `
+    + `onclick="toggleChip(this.parentElement)">${echapper(v)}</button>`
+    + `<button type="button" class="chip-sup" onclick="this.parentElement.remove()" `
+    + `aria-label="Supprimer ${echapper(v)}">×</button>`;
   const chipAutre = conteneur.querySelector('[data-autre="1"]');
   conteneur.insertBefore(chip, chipAutre);
   input.value = '';
@@ -2095,13 +2667,14 @@ async function sauverCompte() {
   const niveauEtudes = document.getElementById('pc-niveau')?.value || '';
   const domaine = document.getElementById('pc-domaine')?.value || '';
   const etablissement = (document.getElementById('pc-etablissement')?.value || '').trim();
+  const filiere = (document.getElementById('pc-filiere')?.value || '').trim();
   const secteurs = [...document.querySelectorAll('#pc-chips .chip-select.actif')]
     .map(c => c.textContent.trim().replace(/\s*×$/, '').replace(/^\+\s*Autre$/, ''))
     .filter(Boolean);
   if (!prenom || !nom) { toast('Prénom et nom obligatoires.', 'erreur'); return; }
   etat.utilisateur.prenom = prenom;
   etat.utilisateur.nom = nom;
-  etat.utilisateur.initiales = (prenom[0] + nom[0]).toUpperCase();
+  etat.utilisateur.initiales = initialesDe(prenom, nom);
   etat.utilisateur.email = email;
   etat.utilisateur.pays = pays;
   etat.utilisateur.bio = bio;
@@ -2115,6 +2688,7 @@ async function sauverCompte() {
   etat.utilisateur.niveau_etudes = niveauEtudes;
   etat.utilisateur.domaine = domaine;
   etat.utilisateur.etablissement = etablissement;
+  etat.utilisateur.filiere = filiere;
   // Rafraîchir la navigation immédiatement (retour visuel)
   const navAv = document.getElementById('avatar-nav');
   if (navAv && !etat.utilisateur.photo) navAv.textContent = etat.utilisateur.initiales;
@@ -2135,6 +2709,7 @@ async function sauverCompte() {
       niveau_etudes: niveauEtudes,
       domaine,
       etablissement,
+      filiere,
       // Les secteurs étaient relevés puis oubliés : la requête ne les
       // portait pas, et les cases cochées revenaient à leur état
       // précédent au rechargement de la page.
@@ -2190,13 +2765,15 @@ const PREFERENCES_NOTIF = [
   ['reponse_question', 'Nouvelle réponse à mes questions'],
   ['reactions',        'Réactions sur mes publications'],
   ['questions_secteur','Nouvelles questions dans mes secteurs'],
-  ['reponses_suivis',  'Réponses des référents que je suis'],
+  ['resume_activite',  "Résumé de l'activité, au plus tous les deux jours"],
   ['infolettre',       'Infolettre hebdomadaire'],
 ];
 
-/* Le courriel ne reprend que les trois premières : recevoir un message
-   pour chaque réaction saturerait la boîte de n'importe qui. */
-const PREFERENCES_EMAIL = PREFERENCES_NOTIF.slice(0, 3);
+/* Le courriel ne reprend pas les réactions : recevoir un message pour
+   chacune saturerait la boîte de n'importe qui. Le résumé, lui, n'a de
+   sens que par courriel : il s'adresse à qui ne revient pas. */
+const PREFERENCES_EMAIL = PREFERENCES_NOTIF.filter(
+  ([cle]) => cle !== 'reactions');
 
 function panneauNotifsParam() {
   return `<div class="section-param"><h2>Notifications</h2>
@@ -2389,11 +2966,11 @@ async function chargerSessions() {
       <div class="ligne-session">
         <div>
           <strong>${echapper(s.appareil)}</strong>
-          <div class="desc">Ouverte ${_tempsRelatif(s.cree_le)}</div>
+          <div class="desc">Ouverte ${baliseTemps(s.cree_le)}</div>
         </div>
         ${s.courante
           ? '<span class="tag tag-vert">Session courante</span>'
-          : `<button class="btn btn-fantome btn-petit" onclick="revoquerSession('${echapper(s.reference)}')">Déconnecter</button>`}
+          : `<button class="btn btn-fantome btn-petit" onclick="revoquerSession(${chaineJS(s.reference)})">Déconnecter</button>`}
       </div>`).join('');
   } catch (err) {
     zone.innerHTML = `<p class="desc">Sessions indisponibles : ${echapper(err.message || '')}</p>`;
@@ -2589,6 +3166,8 @@ async function changerPanAdmin(elem, p) {
     else if (p === 'mentors')  c.innerHTML = await adminMentors();
     else if (p === 'signalements') c.innerHTML = await adminSignalements();
     else if (p === 'categories')   c.innerHTML = await adminCategories();
+    else if (p === 'opportunites') c.innerHTML = await adminOpportunites();
+    else if (p === 'assistance')   c.innerHTML = await adminAssistance();
     else if (p === 'audit')        c.innerHTML = await adminAudit();
     else if (p === 'diagnostic')   c.innerHTML = await adminDiagnostic();
     else if (p === 'administrateurs') c.innerHTML = await adminAdministrateurs();
@@ -2628,60 +3207,129 @@ function _rendreDashboardAdmin(d) {
       <p style="font-size:1.5rem; font-family:'DM Serif Display',serif;">${d.comptes_suspendus || 0}</p>
     </div>`;
 }
+/* Gestion des comptes. La liste vient du serveur page par page : la
+   charger entière puis filtrer dans le navigateur marchait tant qu'il y
+   avait deux cents comptes, et cessait de marcher au deux cent unième,
+   sans que rien ne le signale. */
+let _users = { page: 1, q: '', role: '', actif: '', total: 0, pages: 1 };
+
 async function adminUsers() {
-  const liste = await API.get('/admin/utilisateurs?limite=200');
-  etat.adminUtilisateurs = liste;
+  await chargerUtilisateursAdmin();
   return `<h2 style="margin-bottom:6px;">Gestion des comptes</h2>
-    <p class="desc" style="margin-bottom:14px;">${liste.length} compte(s) enregistré(s).</p>
+    <p class="desc" id="bilan-users" style="margin-bottom:14px;"></p>
     <div class="barre-filtre">
-      <input type="search" id="filtre-users" placeholder="Rechercher un nom, une adresse, un rôle…"
-             oninput="filtrerUtilisateurs(this.value)" aria-label="Rechercher un compte" />
+      <input type="search" id="filtre-users" placeholder="Nom, prénom ou adresse e-mail"
+             value="${echapper(_users.q)}"
+             oninput="chercherUtilisateurs(this.value)" aria-label="Rechercher un compte" />
       <select id="filtre-role" onchange="filtrerUtilisateurs()" aria-label="Filtrer par rôle">
         <option value="">Tous les rôles</option>
         ${Object.entries(LIBELLES_ROLES).map(([v, l]) =>
-          `<option value="${v}">${echapper(l)}</option>`).join('')}
+          `<option value="${v}"${v === _users.role ? ' selected' : ''}>${echapper(l)}</option>`).join('')}
+      </select>
+      <select id="filtre-actif" onchange="filtrerUtilisateurs()" aria-label="Filtrer par état">
+        <option value="">Actifs et suspendus</option>
+        <option value="1"${_users.actif === '1' ? ' selected' : ''}>Actifs seulement</option>
+        <option value="0"${_users.actif === '0' ? ' selected' : ''}>Suspendus seulement</option>
       </select>
     </div>
-    <div id="tableau-users">${tableauUtilisateurs(liste)}</div>`;
+    <div id="tableau-users">${tableauUtilisateurs(etat.adminUtilisateurs || [])}</div>`;
+}
+
+async function chargerUtilisateursAdmin() {
+  const p = new URLSearchParams({ page: _users.page, limite: 50 });
+  if (_users.q) p.set('q', _users.q);
+  if (_users.role) p.set('role', _users.role);
+  if (_users.actif) p.set('actif', _users.actif);
+  try {
+    const r = await API.get('/admin/utilisateurs?' + p.toString());
+    etat.adminUtilisateurs = r.utilisateurs || [];
+    _users.total = r.total || 0;
+    _users.pages = r.pages || 1;
+    _users.page = r.page || 1;
+  } catch (err) {
+    etat.adminUtilisateurs = [];
+    toast(err.message || 'Comptes indisponibles.', 'erreur');
+  }
+}
+
+async function rafraichirUtilisateurs() {
+  await chargerUtilisateursAdmin();
+  const zone = document.getElementById('tableau-users');
+  if (zone) zone.innerHTML = tableauUtilisateurs(etat.adminUtilisateurs || []);
+  const bilan = document.getElementById('bilan-users');
+  if (bilan) {
+    bilan.textContent = _users.total
+      ? `${_users.total} compte(s), page ${_users.page} sur ${_users.pages}.`
+      : 'Aucun compte ne correspond.';
+  }
+}
+
+/* La recherche part au serveur, mais pas à chaque frappe : une requête
+   par caractère saturerait la connexion pour un résultat que personne
+   n'a le temps de lire. */
+let _minuteurUsers = null;
+function chercherUtilisateurs(terme) {
+  clearTimeout(_minuteurUsers);
+  _minuteurUsers = setTimeout(() => {
+    _users.q = (terme || '').trim();
+    _users.page = 1;
+    rafraichirUtilisateurs();
+  }, 300);
+}
+
+function filtrerUtilisateurs() {
+  _users.role = document.getElementById('filtre-role')?.value || '';
+  _users.actif = document.getElementById('filtre-actif')?.value || '';
+  _users.page = 1;
+  rafraichirUtilisateurs();
+}
+
+function pageUtilisateurs(delta) {
+  const vise = _users.page + delta;
+  if (vise < 1 || vise > _users.pages) return;
+  _users.page = vise;
+  rafraichirUtilisateurs();
 }
 
 function tableauUtilisateurs(liste) {
   if (!liste.length) {
     return `<div class="carte"><p class="desc">Aucun compte ne correspond.</p></div>`;
   }
+  const pagination = _users.pages > 1 ? `<nav class="pagination-admin">
+      <button class="btn btn-secondaire btn-petit"${_users.page <= 1 ? ' disabled' : ''}
+              onclick="pageUtilisateurs(-1)">← Précédents</button>
+      <span>Page ${_users.page} sur ${_users.pages}</span>
+      <button class="btn btn-secondaire btn-petit"${_users.page >= _users.pages ? ' disabled' : ''}
+              onclick="pageUtilisateurs(1)">Suivants →</button>
+    </nav>` : '';
   return `<div class="cadre-tableau"><table class="tableau">
-      <thead><tr><th>Nom</th><th>E-mail</th><th>Rôle</th><th>Statut</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Nom</th><th>E-mail</th><th>Rôle</th><th>Inscription</th><th>Dernière visite</th><th>Statut</th><th>Actions</th></tr></thead>
       <tbody>${liste.map(u => `<tr>
-        <td><strong>${echapper(u.prenom)} ${echapper(u.nom)}</strong></td>
-        <td>${echapper(u.email)}</td>
+        <td><strong class="nom-cliquable" onclick="ouvrirProfilUtilisateur(${u.id_utilisateur})">${echapper(u.prenom)} ${echapper(u.nom)}</strong></td>
+        <td>${echapper(u.email)}${u.email_verifie ? '' : ' <span class="tag tag-rose">non confirmée</span>'}</td>
         <td><span class="badge-role ${u.role==='mentor'?'badge-mentor':''}">${echapper(libelleRole(u.role))}</span></td>
+        <td class="horodatage">${baliseTemps(u.cree_le, { relatif: false })}</td>
+        <td class="horodatage">${u.derniere_co ? baliseTemps(u.derniere_co) : '·'}</td>
         <td><span class="tag ${u.est_actif?'tag-vert':'tag-rose'}">${u.est_actif?'actif':'suspendu'}</span></td>
         <td>
           ${u.est_actif
             ? `<button class="btn btn-secondaire btn-petit" onclick="adminAction('suspendre',${u.id_utilisateur})">Suspendre</button>`
             : `<button class="btn btn-secondaire btn-petit" onclick="adminAction('reactiver',${u.id_utilisateur})">Réactiver</button>`}
           <button class="btn btn-fantome btn-petit" onclick="adminOuvrirRole(${u.id_utilisateur})">Rôle</button>
+          <button class="btn btn-fantome btn-petit" onclick="voirJournalCompte(${u.id_utilisateur})">Journal</button>
           <button class="btn btn-danger btn-petit" onclick="adminAction('supprimer',${u.id_utilisateur})">Supprimer</button>
         </td></tr>`).join('')}</tbody>
-    </table></div>`;
+    </table></div>${pagination}`;
 }
 
-/* Filtrage dans le navigateur : la liste tient en mémoire, et une
-   requête au serveur à chaque frappe n'apporterait rien. */
-function filtrerUtilisateurs(terme) {
-  const champ = document.getElementById('filtre-users');
-  const role = document.getElementById('filtre-role')?.value || '';
-  const q = (terme !== undefined ? terme : (champ?.value || '')).trim().toLowerCase();
-  const zone = document.getElementById('tableau-users');
-  if (!zone) return;
-
-  const filtree = (etat.adminUtilisateurs || []).filter(u => {
-    if (role && u.role !== role) return false;
-    if (!q) return true;
-    return [u.prenom, u.nom, u.email, libelleRole(u.role)]
-      .filter(Boolean).join(' ').toLowerCase().includes(q);
-  });
-  zone.innerHTML = tableauUtilisateurs(filtree);
+/* Ouvre le journal d'audit filtré sur un compte : « qui a fait quoi à
+   cette personne, et quand » est la seule question qu'on pose vraiment
+   à un journal, et elle demandait jusqu'ici de tout parcourir. */
+function voirJournalCompte(idUser) {
+  _audit = { ..._audit, page: 1, cible: idUser, action: '' };
+  const onglet = document.querySelector('.menu-admin button[data-adm=audit]');
+  if (onglet) changerPanAdmin(onglet, 'audit');
+  else toast("Vous n'avez pas accès au journal d'administration.", 'erreur');
 }
 
 /* Action générique sur un utilisateur (suspendre / réactiver / supprimer). */
@@ -2769,7 +3417,7 @@ async function adminMentors() {
        aucun badge. Vérifiez le parcours annoncé avant de valider.</p>
     <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap:14px;">
       ${att.map(m => {
-        const init = ((m.prenom||'?')[0] + (m.nom||'?')[0]).toUpperCase();
+        const init = initialesDe(m.prenom, m.nom);
         const poste = [m.profession, m.organisation].filter(Boolean).join(', ');
         const parcours = [m.niveau_etudes, m.domaine, m.etablissement]
           .filter(Boolean).map(echapper).join(' · ');
@@ -2786,7 +3434,7 @@ async function adminMentors() {
           ${parcours ? `<dt>Parcours</dt><dd>${parcours}</dd>` : ''}
           ${m.lien_pro ? `<dt>Profil professionnel</dt><dd>
              <a href="${echapper(m.lien_pro)}" target="_blank" rel="noopener noreferrer nofollow">Ouvrir le lien</a></dd>` : ''}
-          ${m.depose_le ? `<dt>Déposée le</dt><dd>${echapper(formatHorodatage(m.depose_le))}</dd>` : ''}
+          ${m.depose_le ? `<dt>Déposée le</dt><dd>${baliseTemps(m.depose_le, { relatif: false })}</dd>` : ''}
         </dl>
         ${m.motivation ? `<div class="bloc-motivation">
             <strong>Motivation</strong>
@@ -2861,9 +3509,12 @@ async function adminSignalements(statut) {
     <p class="desc" style="margin-bottom:14px;">Chaque décision est tracée,
        notifiée à l'auteur quand elle le concerne, et confirmée à la
        personne qui a signalé.</p>
-    <div class="onglets onglets-scroll" style="margin-bottom:16px;">
-      ${onglets.map(([c, l]) => `<div class="onglet ${c === _filtreSignalements ? 'actif' : ''}"
-        onclick="rechargerSignalements('${c}')">${l}</div>`).join('')}
+    <div class="onglets onglets-scroll" role="tablist" aria-label="Filtrer les signalements"
+         style="margin-bottom:16px;">
+      ${onglets.map(([c, l]) => `<button type="button" role="tab"
+        class="onglet ${c === _filtreSignalements ? 'actif' : ''}"
+        aria-selected="${c === _filtreSignalements ? 'true' : 'false'}"
+        onclick="rechargerSignalements('${c}')">${l}</button>`).join('')}
     </div>`;
 
   if (!liste.length) {
@@ -2924,7 +3575,7 @@ function carteSignalement(s) {
       ? `<div class="signalement-decision">Décision : <strong>${
            echapper(libelleAction(s.action) || s.statut)}</strong>${
            s.admin_prenom ? ` par ${echapper(s.admin_prenom + ' ' + s.admin_nom)}` : ''}${
-           s.traite_le ? ` le ${echapper(formatHorodatage(s.traite_le))}` : ''}</div>`
+           s.traite_le ? ` le ${baliseTemps(s.traite_le, { relatif: false })}` : ''}</div>`
       : `<div class="signalement-actions">
           ${DECISIONS_SIGNALEMENT.map(d => `<button
              class="btn ${d.classe} btn-petit" title="${echapper(d.aide)}"
@@ -2970,7 +3621,9 @@ async function adminCategories() {
         ${liste.map(s => `
           <span class="tag" style="display:inline-flex; align-items:center; gap:6px;">
             ${echapper(s.libelle)}
-            <span style="cursor:pointer; font-weight:700;" onclick="supprimerCat(${s.id_secteur},'${echapper(s.libelle)}')">×</span>
+            <button type="button" class="tag-sup"
+                    aria-label="Supprimer ${echapper(s.libelle)}"
+                    onclick="supprimerCat(${s.id_secteur},${chaineJS(s.libelle)})">×</button>
           </span>`).join('')}
       </div>
       <div style="display:flex; gap:8px;">
@@ -2997,24 +3650,81 @@ async function ajouterCat() {
   } catch (err) { toast(err.message, 'erreur'); }
 }
 
+/* Journal d'administration, filtrable et paginé. Deux cents lignes sans
+   filtre ne répondaient plus à la seule question qu'on pose vraiment à
+   un journal : qui a fait quoi à ce compte, et quand. */
+let _audit = { page: 1, action: '', acteur: null, cible: null, actions: [] };
+
 async function adminAudit() {
-  if (!MODE.api) return `<div class="carte"><p style="color:var(--texte-doux);">Ce module est disponible lorsque le serveur LaSourcee est connecté.</p></div>`;
-  const liste = await API.get('/admin/audit?limite=50');
-  if (!liste.length) {
-    return `<h2 style="margin-bottom:18px;">Journal d'audit</h2>
-      <div class="carte"><p style="color:var(--texte-doux);">Aucune action enregistrée.</p></div>`;
+  if (!MODE.api) {
+    return `<div class="carte"><p class="desc">Ce module est disponible
+      lorsque le serveur LaSourcee est connecté.</p></div>`;
   }
-  return `<h2 style="margin-bottom:18px;">Journal d'audit (${liste.length} dernières actions)</h2>
+  const p = new URLSearchParams({ page: _audit.page, limite: 50 });
+  if (_audit.action) p.set('action', _audit.action);
+  if (_audit.cible) p.set('cible', _audit.cible);
+  if (_audit.acteur) p.set('acteur', _audit.acteur);
+  const r = await API.get('/admin/audit?' + p.toString());
+  const entrees = r.entrees || [];
+  _audit.actions = r.actions || [];
+  _audit.pages = r.pages || 1;
+
+  const filtres = `<div class="barre-filtre">
+      <select onchange="filtrerAudit('action', this.value)" aria-label="Filtrer par action">
+        <option value="">Toutes les actions</option>
+        ${_audit.actions.map(a =>
+          `<option value="${echapper(a)}"${a === _audit.action ? ' selected' : ''}>${echapper(a)}</option>`).join('')}
+      </select>
+      ${_audit.cible ? `<button class="btn btn-secondaire btn-petit"
+          onclick="filtrerAudit('cible', '')">Retirer le filtre sur le compte n° ${_audit.cible}</button>` : ''}
+    </div>`;
+
+  if (!entrees.length) {
+    return `<h2 style="margin-bottom:12px;">Journal d'administration</h2>
+      ${filtres}
+      <div class="carte"><p class="desc">Aucune action ne correspond.</p></div>`;
+  }
+
+  const pagination = _audit.pages > 1 ? `<nav class="pagination-admin">
+      <button class="btn btn-secondaire btn-petit"${_audit.page <= 1 ? ' disabled' : ''}
+              onclick="pageAudit(-1)">← Précédentes</button>
+      <span>Page ${_audit.page} sur ${_audit.pages}</span>
+      <button class="btn btn-secondaire btn-petit"${_audit.page >= _audit.pages ? ' disabled' : ''}
+              onclick="pageAudit(1)">Suivantes →</button>
+    </nav>` : '';
+
+  return `<h2 style="margin-bottom:6px;">Journal d'administration</h2>
+    <p class="desc" style="margin-bottom:14px;">${r.total} action(s)
+       enregistrée(s). Chaque ligne porte son auteur, son heure exacte et
+       l'adresse depuis laquelle elle a été faite.</p>
+    ${filtres}
     <div class="cadre-tableau"><table class="tableau">
-      <thead><tr><th>Date</th><th>Acteur</th><th>Action</th><th>Cible</th><th>Détails</th></tr></thead>
-      <tbody>${liste.map(a => `<tr>
-        <td class="horodatage">${formatHorodatage(a.cree_le, true)}</td>
-        <td>${echapper(a.prenom + ' ' + a.nom)}</td>
+      <thead><tr><th>Date et heure</th><th>Acteur</th><th>Action</th><th>Cible</th><th>Détails</th><th>Adresse IP</th></tr></thead>
+      <tbody>${entrees.map(a => `<tr>
+        <td class="horodatage">${baliseTemps(a.cree_le, { relatif: false })}</td>
+        <td><span class="nom-cliquable" role="button" tabindex="0" onclick="filtrerAudit('acteur', ${a.id_acteur})">${echapper((a.prenom || '') + ' ' + (a.nom || ''))}</span></td>
         <td><span class="tag">${echapper(a.action)}</span></td>
-        <td>${a.type_cible ? echapper(a.type_cible) + ' #' + a.id_cible : '·'}</td>
+        <td>${a.type_cible ? echapper(a.type_cible) + ' n° ' + a.id_cible : '·'}</td>
         <td style="font-size:12px; color:var(--texte-doux);">${echapper(a.details || '')}</td>
+        <td style="font-size:12px; color:var(--texte-doux);">${echapper(a.ip || '·')}</td>
       </tr>`).join('')}</tbody>
-    </table></div>`;
+    </table></div>${pagination}`;
+}
+
+function filtrerAudit(cle, valeur) {
+  _audit[cle] = valeur || null;
+  if (cle === 'action') _audit.action = valeur || '';
+  _audit.page = 1;
+  changerPanAdmin(document.querySelector('.menu-admin button[data-adm=audit]'),
+                  'audit');
+}
+
+function pageAudit(delta) {
+  const vise = _audit.page + delta;
+  if (vise < 1 || vise > (_audit.pages || 1)) return;
+  _audit.page = vise;
+  changerPanAdmin(document.querySelector('.menu-admin button[data-adm=audit]'),
+                  'audit');
 }
 
 /* ============================================================
@@ -3046,7 +3756,7 @@ function toast(message, type = 'succes') {
    ============================================================ */
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.nav-profil') && !e.target.closest('.menu-profil'))
-    document.getElementById('menuProfil')?.classList.remove('ouvert');
+    fermerMenuProfil();
   if (!e.target.closest('[onclick*="basculerNotifs"]') && !e.target.closest('.panneau-notifs'))
     document.getElementById('panneauNotifs')?.classList.remove('ouvert');
   if (!e.target.closest('.nav-recherche'))
@@ -3069,6 +3779,9 @@ const MESSAGES_RETOUR = {
     "LinkedIn n'a pas transmis votre adresse e-mail. Autorisez le "
     + 'partage de l\'adresse, ou créez un compte avec un mot de passe.',
   linkedin: 'La connexion LinkedIn a échoué. Réessayez dans un instant.',
+  compte_suspendu:
+    "Ce compte a été fermé par l'administration de LaSourcee. "
+    + "Écrivez à l'équipe si vous pensez qu'il s'agit d'une erreur.",
   access_denied: 'Connexion annulée.',
 };
 
@@ -3100,6 +3813,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Contacte le serveur et charge la session courante
   await initialiserApi();
   if (!MODE.api) afficherServeurIndisponible();
+
+  // Les secteurs affichés à l'inscription, dans le filtre du fil et dans
+  // le formulaire de question viennent de la base : ce sont ceux que
+  // l'administration tient à jour, pas une liste figée dans la page.
+  if (MODE.api) remplirSecteursPage();
 
   // Charge la configuration OAuth publique (Client ID Google + flag LinkedIn)
   try {
@@ -3407,6 +4125,7 @@ async function chargerStatistiques() {
     membres: document.getElementById('stat-membres'),
     questions: document.getElementById('stat-questions'),
     reponses: document.getElementById('stat-reponses'),
+    delai: document.getElementById('stat-delai'),
   };
   if (!cases.membres) return;
 
@@ -3424,6 +4143,22 @@ async function chargerStatistiques() {
   cases.membres.textContent = _formaterNombre(s.membres);
   cases.questions.textContent = _formaterNombre(s.questions);
   cases.reponses.textContent = _formaterNombre(s.reponses);
+
+  // Tant que trop peu de questions ont trouvé réponse, le délai dirait
+  // surtout le hasard des premières : on retire la vignette plutôt que
+  // d'annoncer un chiffre qui ne veut rien dire.
+  if (cases.delai) {
+    const h = s.delai_premiere_reponse_heures;
+    const vignette = cases.delai.closest('.hero-stat');
+    if (h === null || h === undefined) {
+      if (vignette) vignette.style.display = 'none';
+    } else {
+      if (vignette) vignette.style.display = '';
+      cases.delai.textContent = h < 1 ? "moins d'une heure"
+        : h < 24 ? `${Math.round(h)} h`
+        : `${Math.round(h / 24)} j`;
+    }
+  }
 
   // Une plateforme qui vient d'ouvrir affiche forcément de petits
   // nombres. Les présenter comme « une communauté grandissante »
@@ -3849,16 +4584,16 @@ function ouvrirConfirmationAdresse(email) {
           <label for="code-confirmation">Code reçu par e-mail</label>
           <input id="code-confirmation" class="saisie-code" inputmode="numeric"
                  autocomplete="one-time-code" maxlength="6" placeholder="000000"
-                 onkeydown="if(event.key==='Enter') validerCodeConfirmation('${echapper(email)}', this)" />
+                 onkeydown="if(event.key==='Enter') validerCodeConfirmation(${chaineJS(email)}, this)" />
           <p class="aide-champ">Le message contient aussi un lien, si vous
              préférez. Code et lien valables vingt-quatre heures.</p>
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
           <button class="btn btn-primaire" id="btn-code"
-                  onclick="validerCodeConfirmation('${echapper(email)}', this)">
+                  onclick="validerCodeConfirmation(${chaineJS(email)}, this)">
             Valider mon adresse</button>
           <button class="btn btn-secondaire" id="btn-renvoi"
-                  onclick="renvoyerConfirmation('${echapper(email)}')">
+                  onclick="renvoyerConfirmation(${chaineJS(email)})">
             Renvoyer le message</button>
         </div>
         <p class="desc" style="margin-top:10px;">Pensez à regarder dans les
@@ -3951,7 +4686,7 @@ function majRappelConfirmation() {
       '<span><strong>Adresse non confirmée.</strong> '
       + 'Saisissez le code reçu par e-mail pour sécuriser votre compte.</span>'
       + '<button class="btn btn-petit" onclick="ouvrirConfirmationAdresse('
-      + `'${echapper(u.email)}')">Saisir mon code</button>`;
+      + `${chaineJS(u.email)})">Saisir mon code</button>`;
   }
   if (!existant) document.body.prepend(bandeau);
 }
@@ -3998,6 +4733,10 @@ async function releverNotifications() {
     // Un échec de relève ne doit rien interrompre : le prochain
     // passage réessaiera.
   }
+  // La pastille des conversations n'était calculée qu'une fois, au
+  // chargement de la session. Quelqu'un qui écrivait pendant qu'on
+  // était là n'apparaissait nulle part avant un rechargement complet.
+  chargerCompteurMessages();
 }
 
 function majPastilleNotifications(nb) {
@@ -4077,31 +4816,6 @@ function ligneIdentiteProfil(u) {
   return `<div class="profil-identite">${morceaux.join(' · ')}</div>`;
 }
 
-function detailsProfil(u) {
-  const lignes = [];
-  if (u.objectif) {
-    lignes.push(['Recherche', echapper(u.objectif)]);
-  }
-  if (u.niveau_etudes) {
-    lignes.push(['Niveau d\'études', echapper(u.niveau_etudes)]);
-  }
-  if (u.etablissement) {
-    lignes.push(['Formation', echapper(u.etablissement)]);
-  }
-  if (u.langues) {
-    lignes.push(['Langues', echapper(u.langues)]);
-  }
-  if (u.profil_pro) {
-    lignes.push(['Profil professionnel',
-      `<a href="${echapper(u.profil_pro)}" target="_blank" rel="noopener noreferrer">Consulter</a>`]);
-  }
-  if (!lignes.length) return '';
-  return `<div class="carte profil-details">
-    ${lignes.map(([cle, val]) =>
-      `<div class="profil-detail"><span>${cle}</span><strong>${val}</strong></div>`).join('')}
-  </div>`;
-}
-
 /* ============================================================
    ADMINISTRATEURS, DROITS ET EXPORTS
    ============================================================ */
@@ -4127,6 +4841,7 @@ async function ajusterMenuAdmin() {
     // Le tableau de bord reste ouvert : il ne montre que des totaux.
     const requis = { users: 'utilisateurs', mentors: 'referents',
                      signalements: 'signalements', categories: 'categories',
+                     opportunites: 'opportunites', assistance: 'assistance',
                      audit: 'audit', diagnostic: 'diagnostic',
                      administrateurs: 'administrateurs', export: 'export' }[p];
     b.hidden = !!requis && !droits.includes(requis);
@@ -4228,7 +4943,7 @@ async function adminAdministrateurs() {
               est_super ? 'super administrateur' : 'administrateur'}</span>
             ${a.est_actif ? '' : '<span class="tag tag-suspendu">suspendu</span>'}
             ${a.derniere_co ? `<span class="desc">vu le ${
-              echapper(formatHorodatage(a.derniere_co))}</span>` : ''}
+              formatHorodatage(a.derniere_co)}</span>` : ''}
           </div>
         </div>
         ${est_super
@@ -4423,6 +5138,28 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') fermerPhoto();
 });
 
+/* Tout ce qui se dit bouton se comporte comme un bouton.
+
+   Plusieurs éléments portaient role="button" et tabindex="0" sans le
+   gestionnaire de clavier qui va avec : ils prenaient le focus, se
+   présentaient comme des boutons à un lecteur d'écran, et ne faisaient
+   rien quand on appuyait sur Entrée. Promettre puis ne pas tenir est
+   pire que ne rien promettre. D'autres, cliquables, n'étaient pas
+   annonçables du tout : onglets de profil, résultats de recherche,
+   notifications, lignes d'activité.
+
+   Un seul écouteur délégué vaut mieux qu'un onkeydown recopié à chaque
+   endroit : celui qui ajoute un élément demain n'a plus à y penser. */
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+  const cible = e.target;
+  if (!cible || cible.getAttribute('role') !== 'button') return;
+  if (cible.tagName === 'BUTTON' || cible.tagName === 'A') return;
+  if (cible.getAttribute('aria-disabled') === 'true') return;
+  e.preventDefault();          // la barre d'espace ferait défiler la page
+  cible.click();
+});
+
 /* Avatar cliquable : il ouvre le profil de la personne, et la photo en
    grand si l'on clique dessus alors que le profil est déjà ouvert. */
 function avatarLien(id, initiales, taille, photo, verifie, nom) {
@@ -4477,7 +5214,8 @@ function blocParcoursProfil(u) {
     { titre: 'Parcours', lignes: [
         ["Niveau d'études", u.niveau_etudes],
         ['Domaine ou métier', u.domaine],
-        ['Formation', u.etablissement],
+        ['Filière ou spécialité', u.filiere],
+        ['Établissement', u.etablissement],
         // Ancien champ libre : affiché seulement si le parcours
         // structuré est vide, sinon la même chose s'écrirait deux fois.
         ...((!u.niveau_etudes && !u.domaine && u.etudes)
@@ -4535,15 +5273,14 @@ function iconeRole(role) {
    un profil consulté par quelqu'un d'autre. */
 function rendreProfilAutre(u) {
   const nomComplet = `${u.prenom || ''} ${u.nom || ''}`.trim();
-  const initiales = ((u.prenom || '?')[0] + (u.nom || '?')[0]).toUpperCase();
+  const initiales = initialesDe(u.prenom, u.nom);
   const verifie = !!u.est_verifie;
-  const suivi = etat.suivis.has(u.id_utilisateur);
 
   const entete = document.getElementById('entete-profil');
   entete.innerHTML = `
     <div class="col-avatar">
       <span class="${u.photo_url ? 'avatar-agrandissable' : ''}"
-            ${u.photo_url ? `onclick="ouvrirPhoto('${echapper(u.photo_url)}', '${echapper(nomComplet)}')"
+            ${u.photo_url ? `onclick="ouvrirPhoto(${chaineJS(u.photo_url)}, ${chaineJS(nomComplet)})"
             title="Voir la photo en grand" role="button" tabindex="0"` : ''}>
         ${avatarHTML(initiales, 'xl', u.photo_url, verifie)}
       </span>
@@ -4558,20 +5295,16 @@ function rendreProfilAutre(u) {
           : ''}
         ${u.pays ? `<span>${ic('position','ic ic-s')} ${echapper(u.pays)}</span>` : ''}
         ${u.cree_le ? `<span>Membre depuis le ${
-          echapper(formatDate(u.cree_le))}</span>` : ''}
+          formatDateLongue(u.cree_le)}</span>` : ''}
       </div>
       <div class="tags-profil">
         ${(u.secteurs || []).map(s =>
           `<span class="tag">${echapper(s.libelle || s)}</span>`).join('')}
       </div>
       ${u.bio ? `<p class="bio-profil">${echapper(u.bio)}</p>` : ''}
-      ${blocParcoursProfil(u)}
     </div>
     <div class="col-actions">
       <span id="zone-ecrire"></span>
-      ${u.role === 'mentor' ? `<button class="btn ${suivi ? 'btn-secondaire' : 'btn-primaire'}"
-        onclick="basculerSuiviProfil(${u.id_utilisateur}, this)">${
-        suivi ? 'Suivi' : 'Suivre'}</button>` : ''}
       <button class="btn btn-secondaire" onclick="retourFil()">Retour au fil</button>
     </div>`;
 
@@ -4585,32 +5318,41 @@ function rendreProfilAutre(u) {
   // qui repondra par un refus fait passer une regle pour une panne.
   majBoutonEcrire(u.id_utilisateur, nomComplet);
 
-  const onglets = document.getElementById('onglets-profil');
-  if (onglets) onglets.style.display = 'none';
-  const contenu = document.getElementById('contenu-profil');
-  if (contenu) contenu.innerHTML = '';
+  // L'identifiant cherché ici n'existait pas dans la page : les
+  // onglets du profil précédent restaient affichés, et cliquer dessus
+  // montrait MES questions sur le profil de quelqu'un d'autre.
+  const onglets = document.getElementById('tabs-profil');
+  if (onglets) {
+    onglets.style.display = '';
+    onglets.innerHTML = `
+      <button type="button" class="tab-profil actif" role="tab" aria-selected="true"
+              onclick="ongletProfilAutre(this, 'activite')">Activité</button>
+      <button type="button" class="tab-profil" role="tab" aria-selected="false"
+              onclick="ongletProfilAutre(this, 'apropos')">À propos</button>`;
+    _profilAffiche = u;
+    ongletProfilAutre(onglets.querySelector('.tab-profil.actif'), 'activite');
+  }
+}
+
+/* Le profil affiché en ce moment, pour que ses onglets sachent de qui
+   ils parlent sans le redemander au serveur. */
+let _profilAffiche = null;
+
+function ongletProfilAutre(elem, t) {
+  document.querySelectorAll('.tab-profil').forEach(o => o.classList.remove('actif'));
+  elem.classList.add('actif');
+  const c = document.getElementById('contenu-profil');
+  if (!c) return;
+  c.innerHTML = (t === 'apropos')
+    ? (blocParcoursProfil(_profilAffiche || {})
+       || '<div class="carte"><p class="desc">Cette personne n\'a pas encore renseigné son parcours.</p></div>')
+    : blocActivite(_profilAffiche, false);
 }
 
 function retourFil() {
   profilPublic = null;
   profilCible = null;
   naviguerApp('fil');
-}
-
-async function basculerSuiviProfil(id, bouton) {
-  // Une seule route, qui bascule : c'est elle qui dit l'état obtenu.
-  // Le déduire ici ferait diverger le bouton de la réalité dès qu'un
-  // autre onglet aurait agi entre-temps.
-  bouton.disabled = true;
-  try {
-    const r = await API.post(`/mentors/${id}/suivre`, {});
-    if (r.suivi) { etat.suivis.add(id); bouton.textContent = 'Suivi';
-                   bouton.className = 'btn btn-secondaire'; }
-    else { etat.suivis.delete(id); bouton.textContent = 'Suivre';
-           bouton.className = 'btn btn-primaire'; }
-  } catch (err) {
-    toast(err.message || 'Action impossible.', 'erreur');
-  } finally { bouton.disabled = false; }
 }
 
 /* Plusieurs objectifs, mais pas tous. Au-delà de quatre, le profil ne
@@ -4672,7 +5414,7 @@ async function rendreMessagerie() {
     <button class="conversation ${c.id_conversation === _conversationOuverte ? 'active' : ''}"
             onclick="ouvrirConversation(${c.id_conversation}, '${echapper((c.prenom || '') + ' ' + (c.nom || ''))}')">
       <span class="avatar-presence">
-        ${avatarHTML(((c.prenom||'?')[0] + (c.nom||'?')[0]).toUpperCase(), 's', c.photo_url)}
+        ${avatarHTML(initialesDe(c.prenom, c.nom), 's', c.photo_url)}
         ${pastillePresence(c.en_ligne, c.derniere_activite)}
       </span>
       <span class="conversation-texte">
@@ -4705,7 +5447,7 @@ async function ouvrirConversation(id, nom) {
       ${messages.length
         ? messages.map(m => `<div class="message ${m.id_expediteur === moi ? 'de-moi' : ''}">
             <p>${echapper(m.contenu)}</p>
-            <time>${echapper(formatHorodatage(m.envoye_le))}</time>
+            ${baliseTemps(m.envoye_le)}
           </div>`).join('')
         : '<p class="desc">Aucun message. Écrivez le premier.</p>'}
     </div>
@@ -4828,9 +5570,12 @@ async function validerCodeInscription(bouton) {
     if (r && r.session_ouverte) {
       MODE.utilisateur = await API.get('/profil/moi').catch(() => null);
       if (MODE.utilisateur) appliquerUtilisateur(MODE.utilisateur);
-      // Ce que l'accueil guidé avait recueilli part maintenant : il n'y
-      // avait pas de session au moment de l'inscription.
-      await envoyerProfilEnAttente();
+      // La photo choisie à l'accueil n'a pas pu partir plus tôt : il
+      // n'y avait pas encore de session.
+      const enAttente = etat.utilisateur && etat.utilisateur.photo;
+      if (enAttente && !enAttente.startsWith('http')) {
+        await enregistrerPhoto(enAttente);
+      }
     }
     if (etat.utilisateur) etat.utilisateur.email_verifie = true;
     majRappelConfirmation();
@@ -4984,7 +5729,6 @@ function statistiquesProfil(u) {
       items.push(bloc(u.note_moyenne + ' ★', 'Note moyenne', true));
     }
     if (u.anciennete) items.push(bloc(u.anciennete, 'Expérience'));
-    if (u.nb_abonnes) items.push(bloc(u.nb_abonnes, 'Abonnés'));
   } else if (role === 'admin' || role === 'super_admin') {
     // Un administrateur n'a ni réponses ni note : lui en afficher
     // reviendrait à le juger sur une activité qui n'est pas la sienne.
@@ -4995,7 +5739,6 @@ function statistiquesProfil(u) {
     if (u.nb_reponses_publiees) {
       items.push(bloc(u.nb_reponses_publiees, 'Réponses apportées'));
     }
-    if (u.nb_suivis) items.push(bloc(u.nb_suivis, 'Référents suivis'));
     if (!items.length && u.cree_le) {
       // Un compte tout neuf : plutôt que trois zéros, la date d'arrivée.
       items.push(bloc(formatDate(u.cree_le), 'Membre depuis'));
@@ -5016,7 +5759,7 @@ async function majBoutonEcrire(id, nom) {
     const r = await API.get('/messagerie/peut-ecrire/' + id);
     if (r.autorise) {
       zone.innerHTML = `<button class="btn btn-primaire"
-        onclick="ecrireA(${id}, '${echapper(nom)}')">Écrire</button>`;
+        onclick="ecrireA(${id}, ${chaineJS(nom)})">Écrire</button>`;
     } else if (r.motif) {
       zone.innerHTML = `<p class="aide-champ" style="max-width:280px;">${
         echapper(r.motif)}</p>`;
@@ -5024,4 +5767,399 @@ async function majBoutonEcrire(id, nom) {
       zone.innerHTML = '';
     }
   } catch (_) { zone.innerHTML = ''; }
+}
+
+/* ============================================================
+   BOURSES ET OPPORTUNITÉS
+   ------------------------------------------------------------
+   Le fil de questions vit au rythme de qui ose demander. Une bourse a
+   une date limite : c'est ce qui fait revenir sur le site sans avoir
+   rien à publier soi-même, et ce qui donne une raison de s'inscrire à
+   qui n'a pas encore de question à poser.
+
+   L'équipe publie directement ; un référent propose et l'équipe relit.
+   Une date limite fausse coûte plus cher qu'une annonce tardive, parce
+   que quelqu'un aura construit un projet dessus.
+   ============================================================ */
+
+let _opportunites = { liste: [], categories: {}, filtre: '', closes: false };
+
+async function rendreOpportunites() {
+  const zone = document.getElementById('liste-opportunites');
+  if (!zone) return;
+  if (!MODE.api) {
+    zone.innerHTML = etatVideOpportunites('Serveur indisponible.',
+      'Les annonces reviendront dès que la connexion sera rétablie.');
+    return;
+  }
+  zone.innerHTML = '<p class="note-param">Chargement des annonces…</p>';
+  try {
+    const params = new URLSearchParams();
+    if (_opportunites.filtre) params.set('categorie', _opportunites.filtre);
+    if (_opportunites.closes) params.set('closes', '1');
+    const r = await API.get('/opportunites?' + params.toString());
+    _opportunites.liste = r.opportunites || [];
+    _opportunites.categories = r.categories || {};
+    _opportunites.nbCloses = r.nb_closes || 0;
+    _opportunites.peutProposer = !!r.peut_proposer;
+    _opportunites.publieDirectement = !!r.publie_directement;
+  } catch (err) {
+    zone.innerHTML = etatVideOpportunites("Les annonces n'ont pas pu être chargées.",
+      echapper(err.message || 'Réessayez dans un instant.'));
+    return;
+  }
+
+  const bouton = document.getElementById('btn-proposer-opportunite');
+  if (bouton) bouton.hidden = !_opportunites.peutProposer;
+  rendreFiltresOpportunites();
+
+  if (!_opportunites.liste.length) {
+    zone.innerHTML = etatVideOpportunites('Aucune annonce pour le moment.',
+      _opportunites.peutProposer
+        ? "Vous connaissez une bourse, un concours ou un stage ? Proposez-le."
+        : "Vous en connaissez une ? Écrivez à l'équipe, elle la reprendra.");
+    return;
+  }
+  zone.innerHTML = _opportunites.liste.map(carteOpportunite).join('')
+    + (!_opportunites.closes && _opportunites.nbCloses
+        ? `<button class="btn btn-secondaire btn-bloc"
+                   onclick="_opportunites.closes = true; rendreOpportunites();">
+             Voir les ${_opportunites.nbCloses} annonce(s) dont la date est passée
+           </button>`
+        : '');
+}
+
+function etatVideOpportunites(titre, texte) {
+  return `<div class="etat-vide carte">
+    <div class="illu">${ic('etincelle','ic ic-l')}</div>
+    <h3>${echapper(titre)}</h3><p>${texte}</p></div>`;
+}
+
+function rendreFiltresOpportunites() {
+  const zone = document.getElementById('filtres-opportunites');
+  if (!zone) return;
+  const entrees = Object.entries(_opportunites.categories);
+  zone.innerHTML = `<button class="onglet${_opportunites.filtre ? '' : ' actif'}"
+      onclick="filtrerOpportunites('')">Toutes</button>`
+    + entrees.map(([cle, libelle]) => `<button class="onglet${
+        _opportunites.filtre === cle ? ' actif' : ''}"
+        onclick="filtrerOpportunites(${chaineJS(cle)})">${echapper(libelle)}</button>`).join('');
+}
+
+function filtrerOpportunites(categorie) {
+  _opportunites.filtre = categorie;
+  _opportunites.closes = false;
+  rendreOpportunites();
+}
+
+/* Nombre de jours restants, dit en français plutôt qu'en date brute :
+   « dans 5 jours » se comprend d'un coup d'œil, « 2026-10-14 » non. */
+function echeance(dateLimite) {
+  if (!dateLimite) return { texte: 'Sans date limite annoncée', urgence: '' };
+  const jour = String(dateLimite).slice(0, 10);
+  const reste = Math.round(
+    (new Date(jour + 'T12:00:00') - new Date()) / 86400000);
+  if (reste < 0) return { texte: 'Date passée', urgence: 'passee' };
+  if (reste === 0) return { texte: "Dernier jour", urgence: 'urgent' };
+  if (reste === 1) return { texte: 'Demain', urgence: 'urgent' };
+  if (reste <= 7) return { texte: `Dans ${reste} jours`, urgence: 'urgent' };
+  if (reste <= 30) return { texte: `Dans ${reste} jours`, urgence: 'proche' };
+  return { texte: 'Le ' + formatDate(jour), urgence: '' };
+}
+
+function carteOpportunite(o) {
+  const e = echeance(o.date_limite);
+  const auteur = `${o.prenom || ''} ${o.nom || ''}`.trim();
+  const officiel = o.role === 'admin' || o.role === 'super_admin';
+  return `<article class="carte carte-opportunite${o.cloturee ? ' close' : ''}">
+    <div class="opp-entete">
+      <span class="tag tag-ambre">${echapper(o.categorie_libelle || '')}</span>
+      <span class="opp-echeance ${e.urgence}">${echapper(e.texte)}</span>
+    </div>
+    <h3>${echapper(o.titre)}</h3>
+    ${o.organisme ? `<p class="opp-organisme">${echapper(o.organisme)}</p>` : ''}
+    <p class="texte-libre opp-description">${echapper(o.description)}</p>
+    <div class="opp-criteres">
+      ${o.pays ? `<span>${ic('position','ic ic-s')} ${echapper(o.pays)}</span>` : ''}
+      ${o.niveau ? `<span>${ic('diplome','ic ic-s')} ${echapper(o.niveau)}</span>` : ''}
+      ${o.domaine ? `<span>${ic('marque','ic ic-s')} ${echapper(o.domaine)}</span>` : ''}
+    </div>
+    <div class="opp-pied">
+      <span class="opp-source">${officiel
+        ? 'Publiée par LaSourcee'
+        : (auteur ? 'Proposée par ' + echapper(auteur) : 'Publiée par LaSourcee')}</span>
+      ${o.lien ? `<a class="btn btn-primaire btn-petit" href="${echapper(o.lien)}"
+         target="_blank" rel="noopener noreferrer nofollow">Voir l'offre</a>` : ''}
+    </div>
+  </article>`;
+}
+
+async function ouvrirFormulaireOpportunite() {
+  const select = document.getElementById('opp-categorie');
+  if (select && !select.options.length) {
+    try {
+      const r = await API.get('/opportunites/referentiels');
+      select.innerHTML = (r.categories || []).map(c =>
+        `<option value="${echapper(c.cle)}">${echapper(c.libelle)}</option>`).join('');
+    } catch (_) { /* la liste par défaut du serveur s'appliquera */ }
+  }
+  const avert = document.getElementById('opp-avertissement');
+  if (avert) {
+    avert.textContent = _opportunites.publieDirectement
+      ? "Votre annonce paraîtra aussitôt : vous engagez la parole de LaSourcee."
+      : "L'équipe relit votre proposition avant sa mise en ligne. Vérifiez "
+        + "la date limite et le lien : c'est là que les erreurs coûtent le plus.";
+  }
+  ouvrirModal('modalOpportunite');
+}
+
+async function envoyerOpportunite(bouton) {
+  const val = id => (document.getElementById(id)?.value || '').trim();
+  const corps = {
+    titre: val('opp-titre'),
+    categorie: val('opp-categorie'),
+    organisme: val('opp-organisme'),
+    description: val('opp-description'),
+    pays: val('opp-pays'),
+    niveau: val('opp-niveau'),
+    domaine: val('opp-domaine'),
+    date_limite: val('opp-limite'),
+    lien: val('opp-lien'),
+  };
+  const libelle = bouton.textContent;
+  bouton.disabled = true; bouton.textContent = 'Envoi…';
+  try {
+    const r = await API.post('/opportunites', corps);
+    toast(r.message || 'Annonce envoyée.');
+    fermerModal('modalOpportunite');
+    ['opp-titre','opp-organisme','opp-description','opp-pays','opp-niveau',
+     'opp-domaine','opp-limite','opp-lien'].forEach(id => {
+      const champ = document.getElementById(id);
+      if (champ) champ.value = '';
+    });
+    rendreOpportunites();
+  } catch (err) {
+    toast(err.message || "L'annonce n'a pas pu être envoyée.", 'erreur');
+  } finally {
+    bouton.disabled = false; bouton.textContent = libelle;
+  }
+}
+
+/* ============================================================
+   CONTACTER L'ÉQUIPE
+   ------------------------------------------------------------
+   Un problème qu'on ne peut pas signaler ne disparaît pas : il fait
+   partir la personne, et l'équipe ne sait jamais pourquoi. La page
+   d'où l'on écrit part avec le message, ce qui évite l'aller-retour
+   « sur quelle page ? » qui décourage la moitié des signalements.
+   ============================================================ */
+
+async function ouvrirContactEquipe(categorie) {
+  fermerMenuProfil();
+  const select = document.getElementById('eq-categorie');
+  if (select && !select.options.length) {
+    try {
+      const r = await API.get('/equipe/categories');
+      select.innerHTML = (r.categories || []).map(c =>
+        `<option value="${echapper(c.cle)}">${echapper(c.libelle)}</option>`).join('');
+    } catch (_) { /* le serveur retiendra « autre » */ }
+  }
+  if (select && categorie) select.value = categorie;
+
+  // Sans compte, on demande une adresse : quelqu'un qui n'arrive pas à
+  // se connecter est précisément celui qui a le plus besoin d'écrire.
+  const identite = document.getElementById('eq-identite');
+  if (identite) identite.hidden = !!(etat.utilisateur && etat.utilisateur.email);
+
+  const contexte = document.getElementById('eq-contexte');
+  if (contexte) {
+    contexte.textContent = 'Nous joindrons à votre message la page où vous '
+      + 'êtes (« ' + (etat.sectionActive || 'accueil') + ' ») et votre '
+      + 'navigateur, pour retrouver le problème plus vite.';
+  }
+  ouvrirModal('modalEquipe');
+}
+
+async function envoyerMessageEquipe(bouton) {
+  const message = (document.getElementById('eq-message')?.value || '').trim();
+  if (message.length < 10) {
+    return toast('Décrivez ce que vous avez constaté en quelques mots.',
+                 'erreur');
+  }
+  const corps = {
+    categorie: document.getElementById('eq-categorie')?.value || 'autre',
+    message,
+    page: etat.sectionActive || 'accueil',
+  };
+  if (!(etat.utilisateur && etat.utilisateur.email)) {
+    corps.nom = (document.getElementById('eq-nom')?.value || '').trim();
+    corps.email = (document.getElementById('eq-email')?.value || '').trim();
+  }
+  const libelle = bouton.textContent;
+  bouton.disabled = true; bouton.textContent = 'Envoi…';
+  try {
+    const r = await API.post('/equipe/message', corps);
+    toast(r.message || 'Message envoyé.');
+    fermerModal('modalEquipe');
+    const champ = document.getElementById('eq-message');
+    if (champ) champ.value = '';
+  } catch (err) {
+    toast(err.message || "Le message n'a pas pu partir.", 'erreur');
+  } finally {
+    bouton.disabled = false; bouton.textContent = libelle;
+  }
+}
+
+/* ============================================================
+   ADMINISTRATION — RELECTURE DES ANNONCES
+   ------------------------------------------------------------
+   Une annonce proposée par un référent passe par ici avant d'être
+   visible. Ce n'est pas de la défiance : une bourse annoncée avec une
+   mauvaise date limite coûte plus cher qu'une bourse non annoncée,
+   parce que quelqu'un aura construit un projet dessus.
+   ============================================================ */
+
+async function adminOpportunites() {
+  const liste = await API.get('/opportunites/a-relire');
+  majCompteurAdmin('compteur-opportunites', liste.length);
+
+  const enTete = `<div class="carte">
+    <div class="carte-titre">Bourses et opportunités</div>
+    <p class="desc">Les annonces que vous publiez paraissent aussitôt.
+       Celles proposées par les référents attendent ici votre relecture.</p>
+    <button class="btn btn-primaire btn-petit"
+            onclick="ouvrirFormulaireOpportunite()">Publier une annonce</button>
+  </div>`;
+
+  if (!liste.length) {
+    return enTete + `<div class="etat-vide carte">
+      <div class="illu">${ic('check','ic ic-l')}</div>
+      <h3>Rien à relire</h3>
+      <p>Aucune proposition en attente.</p></div>`;
+  }
+
+  return enTete + liste.map(o => {
+    const e = echeance(o.date_limite);
+    const auteur = `${o.prenom || ''} ${o.nom || ''}`.trim() || 'Un référent';
+    return `<div class="message-equipe nouveau" data-opp="${o.id_opportunite}">
+      <div class="msg-entete">
+        <strong>${echapper(o.titre)}</strong>
+        <span class="opp-echeance ${e.urgence}">${echapper(e.texte)}</span>
+      </div>
+      <div class="msg-meta">Proposée par ${echapper(auteur)} ·
+        ${baliseTemps(o.cree_le)}
+        ${o.organisme ? ' · ' + echapper(o.organisme) : ''}</div>
+      <p class="msg-corps texte-libre">${echapper(o.description)}</p>
+      ${o.lien ? `<p class="msg-meta"><a href="${echapper(o.lien)}"
+         target="_blank" rel="noopener noreferrer nofollow">Vérifier le lien officiel</a></p>` : ''}
+      <div class="msg-actions">
+        <button class="btn btn-primaire btn-petit"
+                onclick="deciderOpportunite(${o.id_opportunite}, 'publiee', this)">Publier</button>
+        <button class="btn btn-secondaire btn-petit"
+                onclick="deciderOpportunite(${o.id_opportunite}, 'refusee', this)">Refuser</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function deciderOpportunite(id, statut, bouton) {
+  let motif = '';
+  if (statut === 'refusee') {
+    motif = (window.prompt(
+      "Pourquoi cette annonce n'est-elle pas retenue ? Le référent verra "
+      + 'ce motif et pourra corriger.', '') || '').trim();
+    if (!motif) return toast('Un refus sans motif ne permet pas de corriger.',
+                             'erreur');
+  }
+  bouton.disabled = true;
+  try {
+    await API.post(`/opportunites/${id}/decision`, { statut, motif });
+    toast(statut === 'publiee' ? 'Annonce publiée.' : 'Annonce refusée.');
+    const panneau = document.querySelector('.menu-admin button.actif');
+    if (panneau) changerPanAdmin(panneau, 'opportunites');
+  } catch (err) {
+    bouton.disabled = false;
+    toast(err.message || 'Décision impossible.', 'erreur');
+  }
+}
+
+/* ============================================================
+   ADMINISTRATION — MESSAGES À L'ÉQUIPE
+   ============================================================ */
+
+const LIBELLES_STATUT_MESSAGE = {
+  nouveau: 'Nouveau', en_cours: 'En cours', traite: 'Traité',
+};
+
+async function adminAssistance() {
+  const r = await API.get('/equipe/messages');
+  const messages = r.messages || [];
+  majCompteurAdmin('compteur-assistance', r.nouveaux || 0);
+
+  const enTete = `<div class="carte">
+    <div class="carte-titre">Messages à l'équipe</div>
+    <p class="desc">Ce que les membres signalent : pannes, informations
+       fausses, idées. ${r.nouveaux || 0} message(s) non traité(s).</p>
+  </div>`;
+
+  if (!messages.length) {
+    return enTete + `<div class="etat-vide carte">
+      <div class="illu">${ic('bulle','ic ic-l')}</div>
+      <h3>Aucun message</h3>
+      <p>Personne n'a encore écrit à l'équipe.</p></div>`;
+  }
+
+  return enTete + messages.map(m => {
+    const qui = `${m.prenom || ''} ${m.nom_compte || ''}`.trim()
+      || m.nom || 'Personne non connectée';
+    return `<div class="message-equipe ${m.statut}">
+      <div class="msg-entete">
+        <strong>${echapper(m.categorie_libelle || 'Autre chose')}</strong>
+        <span class="tag">${echapper(LIBELLES_STATUT_MESSAGE[m.statut] || m.statut)}</span>
+      </div>
+      <div class="msg-meta">
+        ${m.id_utilisateur
+          ? `<a href="#" onclick="event.preventDefault(); ouvrirProfilUtilisateur(${m.id_utilisateur})">${echapper(qui)}</a>`
+          : echapper(qui)}
+        ${m.email ? ' · ' + echapper(m.email) : ''}
+        · ${baliseTemps(m.cree_le)}
+        ${m.page ? ' · depuis « ' + echapper(m.page) + ' »' : ''}
+      </div>
+      <p class="msg-corps texte-libre">${echapper(m.message)}</p>
+      ${m.reponse ? `<p class="msg-meta">Réponse envoyée : ${echapper(m.reponse)}
+        ${m.traite_prenom ? ', par ' + echapper(m.traite_prenom) : ''}</p>` : ''}
+      ${m.statut === 'traite' ? '' : `<div class="msg-actions">
+        <textarea id="rep-eq-${m.id_message}" rows="2"
+                  placeholder="Réponse envoyée à la personne (facultatif)"></textarea>
+        <button class="btn btn-secondaire btn-petit"
+                onclick="traiterMessageEquipe(${m.id_message}, 'en_cours', this)">Je m'en occupe</button>
+        <button class="btn btn-primaire btn-petit"
+                onclick="traiterMessageEquipe(${m.id_message}, 'traite', this)">Marquer traité</button>
+      </div>`}
+    </div>`;
+  }).join('');
+}
+
+async function traiterMessageEquipe(id, statut, bouton) {
+  const champ = document.getElementById('rep-eq-' + id);
+  bouton.disabled = true;
+  try {
+    await API.post(`/equipe/messages/${id}/traiter`,
+                   { statut, reponse: (champ?.value || '').trim() });
+    toast(statut === 'traite' ? 'Message traité.' : 'Message pris en charge.');
+    const panneau = document.querySelector('.menu-admin button.actif');
+    if (panneau) changerPanAdmin(panneau, 'assistance');
+  } catch (err) {
+    bouton.disabled = false;
+    toast(err.message || 'Action impossible.', 'erreur');
+  }
+}
+
+/* Petit compteur sur un onglet d'administration, masqué à zéro : un
+   « 0 » permanent finit par ne plus être lu du tout. */
+function majCompteurAdmin(id, nombre) {
+  const pastille = document.getElementById(id);
+  if (!pastille) return;
+  pastille.textContent = nombre;
+  pastille.hidden = !nombre;
 }

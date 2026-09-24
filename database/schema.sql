@@ -70,12 +70,15 @@ CREATE TABLE utilisateur (
     domaine          VARCHAR(60)  NULL,
     -- Libre : aucune liste ne contient l'atelier où s'apprend un métier.
     etablissement    VARCHAR(120) NULL,
+    filiere          VARCHAR(120) NULL,
     cree_le          DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     maj_le           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
                                   ON UPDATE CURRENT_TIMESTAMP,
     derniere_co      DATETIME     NULL,
     -- Dernière action, distincte de la dernière connexion.
     derniere_activite DATETIME    NULL,
+    resume_envoye_le DATETIME NULL,
+    resume_examine_le DATETIME NULL,
     PRIMARY KEY (id_utilisateur),
     UNIQUE KEY uq_utilisateur_email (email),
     KEY idx_utilisateur_role (role),
@@ -151,6 +154,7 @@ CREATE TABLE question (
     vues             INT UNSIGNED NOT NULL DEFAULT 0,
     premiere_reponse_le DATETIME  NULL,
     resolue_le       DATETIME     NULL,
+    id_reponse_retenue INT UNSIGNED NULL,
     PRIMARY KEY (id_question),
     KEY idx_question_auteur  (id_auteur),
     KEY idx_question_secteur (id_secteur, publiee_le),
@@ -223,16 +227,20 @@ CREATE TABLE sauvegarde (
         REFERENCES question(id_question) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
-CREATE TABLE suivi_mentor (
-    id_suiveur       INT UNSIGNED NOT NULL,
-    id_mentor        INT UNSIGNED NOT NULL,
+-- Notes attribuees aux reponses. Les etoiles existaient a l'ecran
+-- sans rien enregistrer : la moyenne d'un referent valait zero pour
+-- tout le monde.
+CREATE TABLE note_reponse (
+    id_reponse       INT UNSIGNED NOT NULL,
+    id_utilisateur   INT UNSIGNED NOT NULL,
+    valeur           TINYINT UNSIGNED NOT NULL,
     cree_le          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (id_suiveur, id_mentor),
-    CONSTRAINT fk_suivi_suiveur FOREIGN KEY (id_suiveur)
-        REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE,
-    CONSTRAINT fk_suivi_mentor  FOREIGN KEY (id_mentor)
-        REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE,
-    CONSTRAINT ck_suivi_pair    CHECK (id_suiveur <> id_mentor)
+    PRIMARY KEY (id_reponse, id_utilisateur),
+    CONSTRAINT ck_note_valeur   CHECK (valeur BETWEEN 1 AND 5),
+    CONSTRAINT fk_note_reponse  FOREIGN KEY (id_reponse)
+        REFERENCES reponse(id_reponse) ON DELETE CASCADE,
+    CONSTRAINT fk_note_user     FOREIGN KEY (id_utilisateur)
+        REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE signalement (
@@ -431,4 +439,52 @@ CREATE TABLE evenement (
     KEY idx_evenement_user (id_utilisateur, cree_le),
     CONSTRAINT fk_evt_user FOREIGN KEY (id_utilisateur)
         REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- Messages adresses a l'equipe. Les membres n'avaient aucun endroit ou
+-- dire qu'une page ne marchait pas ou qu'un libelle pretait a confusion.
+CREATE TABLE message_equipe (
+    id_message       INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    id_utilisateur   INT UNSIGNED NULL,
+    nom              VARCHAR(120) NULL,
+    email            VARCHAR(160) NULL,
+    categorie        VARCHAR(30)  NOT NULL DEFAULT 'autre',
+    message          TEXT         NOT NULL,
+    page             VARCHAR(200) NULL,
+    navigateur       VARCHAR(200) NULL,
+    statut           VARCHAR(20)  NOT NULL DEFAULT 'nouveau',
+    reponse          TEXT         NULL,
+    traite_par       INT UNSIGNED NULL,
+    traite_le        DATETIME     NULL,
+    cree_le          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id_message),
+    KEY idx_message_equipe_statut (statut, cree_le),
+    CONSTRAINT fk_msg_equipe_user FOREIGN KEY (id_utilisateur)
+        REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- Bourses, concours, stages. Une annonce a une date limite : c'est ce
+-- qui fait revenir sans qu'on ait rien a publier soi-meme.
+CREATE TABLE opportunite (
+    id_opportunite   INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    id_auteur        INT UNSIGNED NULL,
+    titre            VARCHAR(160) NOT NULL,
+    categorie        VARCHAR(30)  NOT NULL DEFAULT 'bourse',
+    organisme        VARCHAR(120) NULL,
+    description      TEXT         NOT NULL,
+    pays             VARCHAR(120) NULL,
+    niveau           VARCHAR(120) NULL,
+    domaine          VARCHAR(120) NULL,
+    date_limite      DATE         NULL,
+    lien             VARCHAR(400) NULL,
+    statut           VARCHAR(20)  NOT NULL DEFAULT 'en_attente',
+    motif_refus      VARCHAR(400) NULL,
+    decide_par       INT UNSIGNED NULL,
+    decide_le        DATETIME     NULL,
+    vues             INT UNSIGNED NOT NULL DEFAULT 0,
+    cree_le          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id_opportunite),
+    KEY idx_opportunite_statut (statut, date_limite),
+    CONSTRAINT fk_opp_auteur FOREIGN KEY (id_auteur)
+        REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL
 ) ENGINE=InnoDB;

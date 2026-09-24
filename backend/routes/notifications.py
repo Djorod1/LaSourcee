@@ -17,7 +17,7 @@ def lister():
                   est_lue, cree_le
              FROM notification
             WHERE id_destinataire = %s
-         ORDER BY cree_le DESC
+         ORDER BY cree_le DESC, id_notification DESC
             LIMIT 50""",
         (g.utilisateur["id_utilisateur"],),
     ))

@@ -19,6 +19,7 @@ Vercel, Neon, Supabase et Render) suffit : elle contient l'hôte, le
 port, l'utilisateur, le mot de passe et la base.
 """
 
+import logging
 import os
 import re
 import sqlite3
@@ -26,6 +27,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from flask import g, current_app
+
+logger = logging.getLogger("lasourcee.db")
 
 
 # ----- Détection du moteur ------------------------------------------------
@@ -157,6 +160,11 @@ def _ouvrir_connexion():
         chemin.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(chemin), isolation_level="DEFERRED")
         conn.row_factory = sqlite3.Row
+        # Une base écrite par un autre outil peut contenir des octets
+        # qui ne sont pas de l'UTF-8 valide. Par défaut la lecture de
+        # la ligne entière échoue en erreur serveur ; ici le caractère
+        # fautif est remplacé et la page continue de s'afficher.
+        conn.text_factory = lambda octets: octets.decode("utf-8", "replace")
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
         return conn, "sqlite"
@@ -186,6 +194,17 @@ def _ouvrir_connexion():
                     dbname=cfg["DB_NAME"], row_factory=extras,
                 )
         conn.autocommit = False
+        # L'encodage client était laissé au réglage du serveur. Sur un
+        # hébergement dont la locale est « C », il vaut SQL_ASCII : les
+        # accents partent alors en base comme des octets bruts et
+        # reviennent en caractères illisibles. On le fixe.
+        try:
+            if version == 2:
+                conn.set_client_encoding("UTF8")
+            else:
+                conn.execute("SET client_encoding TO 'UTF8'")
+        except Exception as exc:       # pragma: no cover - dépend du serveur
+            logger.warning("Encodage client PostgreSQL inchangé : %s", exc)
         return conn, "postgres"
 
     # ---- MySQL ----------------------------------------------------------
@@ -330,6 +349,10 @@ COLONNES_ATTENDUES = [
     ("utilisateur", "niveau_etudes", "TEXT"),
     ("utilisateur", "domaine", "TEXT"),
     ("utilisateur", "etablissement", "TEXT"),
+    # La filiere precise ce que le domaine laisse large :
+    # « Informatique et numerique » ne dit pas si l'on fait du reseau
+    # ou du developpement, et c'est justement ce qui permet d'orienter.
+    ("utilisateur", "filiere", "TEXT"),
     ("utilisateur", "doit_changer_mdp", "INTEGER NOT NULL DEFAULT 0"),
     ("utilisateur", "email_verifie", "INTEGER NOT NULL DEFAULT 0"),
     # Dossier de candidature d'un référent. Il ne partait que par
@@ -351,6 +374,13 @@ COLONNES_ATTENDUES = [
     # mise à jour du profil échouerait en erreur serveur.
     ("utilisateur", "telephone", "TEXT"),
     ("utilisateur", "derniere_activite", "TEXT"),
+    # Date du dernier resume periodique, qui sert aussi de curseur :
+    # sans elle, chaque passage reexaminerait les memes comptes.
+    ("utilisateur", "resume_envoye_le", "TEXT"),
+    # Deux dates : « examine » avance a chaque passage et sert de
+    # curseur de file, « envoye » ne bouge que quand un message
+    # part et ouvre la fenetre des nouveautes.
+    ("utilisateur", "resume_examine_le", "TEXT"),
     # Consentement daté et versionné. Un accord dont on ne sait ni
     # quand il a été donné ni à quel texte il se rapportait ne
     # prouve rien.
@@ -363,6 +393,11 @@ COLONNES_ATTENDUES = [
     ("question", "vues", "INTEGER NOT NULL DEFAULT 0"),
     ("question", "premiere_reponse_le", "TEXT"),
     ("question", "resolue_le", "TEXT"),
+    # La reponse que l'auteur de la question a retenue. Sans elle,
+    # dix reponses se valent a l'ecran, et celui qui arrive avec la
+    # meme question doit toutes les lire pour deviner laquelle a
+    # servi.
+    ("question", "id_reponse_retenue", "INTEGER"),
     ("verification_email", "code", "TEXT"),
     ("verification_email", "tentatives", "INTEGER NOT NULL DEFAULT 0"),
     ("signalement", "action", "TEXT"),
@@ -410,6 +445,125 @@ TABLES_ATTENDUES = [
             "ON evenement(id_utilisateur, cree_le)",
         ],
     }),
+    # Notes attribuees aux reponses. Les etoiles existaient a l'ecran
+    # depuis l'origine sans rien enregistrer : la moyenne affichee sur
+    # les profils de referents valait zero pour tout le monde.
+    ("note_reponse", {
+        "sqlite": """CREATE TABLE note_reponse (
+            id_reponse      INTEGER NOT NULL,
+            id_utilisateur  INTEGER NOT NULL,
+            valeur          INTEGER NOT NULL CHECK (valeur BETWEEN 1 AND 5),
+            cree_le         TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id_reponse, id_utilisateur),
+            FOREIGN KEY (id_reponse)
+                REFERENCES reponse(id_reponse) ON DELETE CASCADE,
+            FOREIGN KEY (id_utilisateur)
+                REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE)""",
+        "postgres": """CREATE TABLE note_reponse (
+            id_reponse      INTEGER NOT NULL,
+            id_utilisateur  INTEGER NOT NULL,
+            valeur          INTEGER NOT NULL CHECK (valeur BETWEEN 1 AND 5),
+            cree_le         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id_reponse, id_utilisateur),
+            FOREIGN KEY (id_reponse)
+                REFERENCES reponse(id_reponse) ON DELETE CASCADE,
+            FOREIGN KEY (id_utilisateur)
+                REFERENCES utilisateur(id_utilisateur) ON DELETE CASCADE)""",
+        "index": [
+            "CREATE INDEX idx_note_reponse ON note_reponse(id_reponse)",
+        ],
+    }),
+    # Observations et problemes signales par les membres. Ils n'avaient
+    # aucun endroit ou le dire : ni formulaire, ni adresse, et un
+    # probleme qu'on ne peut pas signaler finit par faire partir la
+    # personne sans qu'on sache pourquoi.
+    ("message_equipe", {
+        "sqlite": """CREATE TABLE message_equipe (
+            id_message      INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_utilisateur  INTEGER,
+            nom             TEXT,
+            email           TEXT,
+            categorie       TEXT    NOT NULL DEFAULT 'autre',
+            message         TEXT    NOT NULL,
+            page            TEXT,
+            navigateur      TEXT,
+            statut          TEXT    NOT NULL DEFAULT 'nouveau',
+            reponse         TEXT,
+            traite_par      INTEGER,
+            traite_le       TEXT,
+            cree_le         TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (id_utilisateur)
+                REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL)""",
+        "postgres": """CREATE TABLE message_equipe (
+            id_message      SERIAL PRIMARY KEY,
+            id_utilisateur  INTEGER,
+            nom             TEXT,
+            email           TEXT,
+            categorie       TEXT    NOT NULL DEFAULT 'autre',
+            message         TEXT    NOT NULL,
+            page            TEXT,
+            navigateur      TEXT,
+            statut          TEXT    NOT NULL DEFAULT 'nouveau',
+            reponse         TEXT,
+            traite_par      INTEGER,
+            traite_le       TEXT,
+            cree_le         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (id_utilisateur)
+                REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL)""",
+        "index": [
+            "CREATE INDEX idx_message_equipe_statut "
+            "ON message_equipe(statut, cree_le)",
+        ],
+    }),
+    # Bourses, concours, stages et formations. Le fil de questions vit
+    # au rythme de qui ose demander ; une bourse a une date limite, et
+    # c'est ce qui fait revenir.
+    ("opportunite", {
+        "sqlite": """CREATE TABLE opportunite (
+            id_opportunite  INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_auteur       INTEGER,
+            titre           TEXT    NOT NULL,
+            categorie       TEXT    NOT NULL DEFAULT 'bourse',
+            organisme       TEXT,
+            description     TEXT    NOT NULL,
+            pays            TEXT,
+            niveau          TEXT,
+            domaine         TEXT,
+            date_limite     TEXT,
+            lien            TEXT,
+            statut          TEXT    NOT NULL DEFAULT 'en_attente',
+            motif_refus     TEXT,
+            decide_par      INTEGER,
+            decide_le       TEXT,
+            vues            INTEGER NOT NULL DEFAULT 0,
+            cree_le         TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (id_auteur)
+                REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL)""",
+        "postgres": """CREATE TABLE opportunite (
+            id_opportunite  SERIAL PRIMARY KEY,
+            id_auteur       INTEGER,
+            titre           TEXT    NOT NULL,
+            categorie       TEXT    NOT NULL DEFAULT 'bourse',
+            organisme       TEXT,
+            description     TEXT    NOT NULL,
+            pays            TEXT,
+            niveau          TEXT,
+            domaine         TEXT,
+            date_limite     TEXT,
+            lien            TEXT,
+            statut          TEXT    NOT NULL DEFAULT 'en_attente',
+            motif_refus     TEXT,
+            decide_par      INTEGER,
+            decide_le       TEXT,
+            vues            INTEGER NOT NULL DEFAULT 0,
+            cree_le         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (id_auteur)
+                REFERENCES utilisateur(id_utilisateur) ON DELETE SET NULL)""",
+        "index": [
+            "CREATE INDEX idx_opportunite_statut "
+            "ON opportunite(statut, date_limite)",
+        ],
+    }),
 ]
 
 
@@ -434,51 +588,83 @@ def _colonnes_existantes(cur, moteur, table):
     return {l["column_name"] for l in cur.fetchall()}
 
 
+def _plan_colonnes(cur, moteur):
+    """Colonnes déjà présentes, par table, en une lecture par table.
+
+    L'ancienne version interrogeait ``information_schema`` une fois par
+    colonne attendue : dix-neuf requêtes identiques pour la seule table
+    ``utilisateur``, trente-sept en tout, à chaque démarrage à froid.
+    Sur une plateforme sans serveur, un démarrage à froid arrive à
+    n'importe quelle visite, et ces requêtes s'ajoutent au temps
+    d'attente de quelqu'un qui ouvre simplement la page.
+    """
+    tables = {t for t, _, _ in COLONNES_ATTENDUES}
+    return {t: _colonnes_existantes(cur, moteur, t) for t in tables}
+
+
 def completer_colonnes(app):
     """Ajoute les colonnes manquantes à une base déjà en service.
 
     Ne lève jamais : une base momentanément injoignable ou un droit
     insuffisant ne doivent pas empêcher le site de répondre. L'anomalie
     est journalisée, et la route concernée signalera l'absence.
+
+    Chaque instruction a sa propre transaction. Elles partageaient la
+    même, et PostgreSQL refuse tout ce qui suit une erreur dans une
+    transaction : « current transaction is aborted ». Une seule entrée
+    fautive suffisait donc à faire échouer toutes les suivantes, et même
+    à annuler celles déjà passées — le journal annonçait « colonne
+    ajoutée » pour une colonne qui ne l'était plus au moment du
+    rollback. Une base restait indéfiniment en retard sur le code,
+    pendant que les traces affirmaient le contraire.
     """
     import logging
     logger = logging.getLogger("lasource")
+
+    def _isoler(libelle, action):
+        """Exécute une instruction seule, et dit si elle a tenu."""
+        try:
+            with curseur(commit=True) as cur:
+                action(cur)
+            return True
+        except Exception as exc:
+            logger.warning("%s : %s", libelle, exc)
+            return False
 
     try:
         with app.app_context():
             moteur = app.config.get("DB_TYPE", _type_db())
             if moteur == "mysql":
                 return          # migrations appliquées à la main
-            with curseur(commit=True) as cur:
-                # Les tables d'abord : une colonne ne s'ajoute pas à une
-                # table qui n'existe pas.
-                for table, formes in TABLES_ATTENDUES:
-                    try:
-                        if _table_existe(cur, moteur, table):
-                            continue
-                        cur.execute(formes.get(moteur) or formes["sqlite"])
-                        for index in formes.get("index", []):
-                            try:
-                                cur.execute(index)
-                            except Exception:
-                                pass    # index déjà là : sans conséquence
-                        logger.info("Table %s créée sur la base en service",
-                                    table)
-                    except Exception as exc:
-                        logger.warning("Table %s non créée : %s", table, exc)
 
-                for table, colonne, definition in COLONNES_ATTENDUES:
-                    try:
-                        if colonne in _colonnes_existantes(cur, moteur, table):
-                            continue
-                        cur.execute(
-                            f"ALTER TABLE {table} ADD COLUMN {colonne} {definition}")
-                        logger.info(
-                            "Colonne %s.%s ajoutée à une base existante.",
-                            table, colonne)
-                    except Exception as exc:
-                        logger.warning(
-                            "Ajout de %s.%s impossible : %s",
-                            table, colonne, exc)
+            # Les tables d'abord : une colonne ne s'ajoute pas à une
+            # table qui n'existe pas.
+            with curseur() as cur:
+                manquantes = [(t, f) for t, f in TABLES_ATTENDUES
+                              if not _table_existe(cur, moteur, t)]
+            for table, formes in manquantes:
+                if _isoler(f"Table {table} non créée",
+                           lambda c, f=formes: c.execute(
+                               f.get(moteur) or f["sqlite"])):
+                    logger.info("Table %s créée sur la base en service", table)
+                    for index in formes.get("index", []):
+                        # Un index déjà présent est sans conséquence, mais
+                        # il doit rester dans son coin : sur PostgreSQL,
+                        # son échec emporterait la suite.
+                        _isoler(f"Index de {table} non créé",
+                                lambda c, i=index: c.execute(i))
+
+            with curseur() as cur:
+                presentes = _plan_colonnes(cur, moteur)
+            for table, colonne, definition in COLONNES_ATTENDUES:
+                if colonne in presentes.get(table, set()):
+                    continue
+                if _isoler(
+                        f"Ajout de {table}.{colonne} impossible",
+                        lambda c, t=table, n=colonne, d=definition: c.execute(
+                            f"ALTER TABLE {t} ADD COLUMN {n} {d}")):
+                    logger.info(
+                        "Colonne %s.%s ajoutée à une base existante.",
+                        table, colonne)
     except Exception as exc:
         logger.warning("Contrôle des colonnes ignoré : %s", exc)

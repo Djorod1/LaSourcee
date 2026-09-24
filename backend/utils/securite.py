@@ -60,8 +60,17 @@ _DUREE_BLOCAGE = 15 * 60     # durée du blocage après dépassement (secondes)
 # seuil est bas ; sur l'inscription il s'agit d'endiguer un robot, et le
 # seuil doit rester compatible avec une salle de classe entière derrière
 # une seule adresse IP publique — cas courant sur un campus ou un réseau
-# mobile. Un robot en fait des milliers : trente ne le gêne pas moins.
-MAX_INSCRIPTIONS = int(os.getenv("MAX_INSCRIPTIONS_PAR_IP", "30"))
+# mobile, où un opérateur entier peut sortir par quelques adresses.
+#
+# Trente ne suffisait pas : une classe de quarante élèves inscrite
+# pendant la même séance se heurtait au refus à partir du trente et
+# unième, et les suivants lisaient « Trop de créations de compte depuis
+# cette connexion » sans en avoir créé une seule. Un robot, lui, en fait
+# des milliers : soixante ne le gêne pas moins que trente.
+#
+# Pour une présentation en amphithéâtre, MAX_INSCRIPTIONS_PAR_IP se
+# relève le temps de la séance.
+MAX_INSCRIPTIONS = int(os.getenv("MAX_INSCRIPTIONS_PAR_IP", "60"))
 MAX_DEMANDES_MDP = int(os.getenv("MAX_DEMANDES_MDP", "3"))
 
 _tentatives = {}             # repli : clé -> liste d'horodatages d'échec
@@ -209,10 +218,19 @@ def appliquer_entetes_securite(reponse):
         reponse.headers["Strict-Transport-Security"] = (
             "max-age=31536000; includeSubDomains")
 
-    # Isole la page des fenetres qu'elle ouvre et de celles qui
-    # l'ouvrent : sans cela, un site tiers gardant une reference sur
-    # notre onglet peut le rediriger.
-    reponse.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    # Isole la page des fenetres qui l'ouvrent : sans cela, un site tiers
+    # gardant une reference sur notre onglet peut le rediriger.
+    #
+    # « same-origin » coupait aussi le lien avec les fenetres que la page
+    # ouvre elle-meme. Or la connexion Google passe par One Tap
+    # (google.accounts.id.prompt), qui dialogue avec sa propre fenetre par
+    # postMessage : le lien coupe, le bouton « Continuer avec Google »
+    # s'affichait et ne menait nulle part. Rien ne l'aurait signale ici,
+    # l'echec se produisant dans le navigateur du visiteur. Google demande
+    # explicitement « same-origin-allow-popups » pour ce cas ; la
+    # protection contre le site tiers qui nous ouvre reste entiere, seule
+    # la fenetre que nous ouvrons nous-memes garde son lien.
+    reponse.headers["Cross-Origin-Opener-Policy"] = "same-origin-allow-popups"
     reponse.headers["X-Permitted-Cross-Domain-Policies"] = "none"
 
     # Les reponses de l'API ne doivent jamais etre mises en cache par un

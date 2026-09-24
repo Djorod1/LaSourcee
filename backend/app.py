@@ -14,8 +14,11 @@ et ``vercel.json`` à la racine du dépôt.
 import logging
 import os
 import traceback
+from datetime import date, datetime
+from decimal import Decimal
 
 from flask import Flask, jsonify, send_from_directory
+from flask.json.provider import DefaultJSONProvider
 from werkzeug.exceptions import HTTPException, NotFound
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -34,6 +37,10 @@ from routes.candidature_mentor import bp_candidature
 from routes.messagerie    import bp_messagerie
 from routes.notifications import bp_notifications
 from routes.recherche     import bp_recherche
+from routes.equipe        import bp_equipe
+from routes.opportunites  import bp_opportunites
+from routes.taches       import bp_taches
+from routes.public       import bp_public
 from routes.admin         import bp_admin
 
 logger = logging.getLogger("lasource")
@@ -52,7 +59,9 @@ FICHIERS_PUBLICS = {
     "styles.css",
     "favicon.ico",
     "robots.txt",
-    "sitemap.xml",
+    # sitemap.xml n'est plus un fichier : il est construit a partir des
+    # questions reellement publiees (routes/public.py). Un plan qui ne
+    # change jamais n'apprend rien a un moteur de recherche.
 }
 
 DOSSIERS_PUBLICS = {"assets"}
@@ -121,12 +130,45 @@ def _ressource_publique(dossier_front, ressource):
     return parties[0] in DOSSIERS_PUBLICS
 
 
+class JSONIsoDates(DefaultJSONProvider):
+    """Sérialise les dates au format ISO 8601, et non au format HTTP.
+
+    SQLite rend les horodatages sous forme de chaînes (« 2026-09-23
+    22:20:01 ») ; PostgreSQL rend de vrais objets datetime, que Flask
+    convertit par défaut en « Wed, 23 Sep 2026 22:20:01 GMT ».
+
+    Le navigateur ne sait pas lire cette seconde forme : en production,
+    plus aucune date ne s'affichait nulle part, ni sur les profils, ni
+    sous les questions, ni dans le journal d'administration. Et rien ne
+    le signalait, puisque les tests passent par SQLite, où le défaut
+    n'existe pas.
+
+    Les instants sont stockés en UTC sans indicateur de fuseau : le
+    « Z » est donc ajouté, pour que le navigateur les convertisse dans
+    l'heure de la personne au lieu de les lire comme une heure locale.
+    """
+
+    @staticmethod
+    def default(objet):
+        if isinstance(objet, datetime):
+            texte = objet.isoformat()
+            if objet.tzinfo is None:
+                texte += "Z"
+            return texte
+        if isinstance(objet, date):
+            return objet.isoformat()
+        if isinstance(objet, Decimal):
+            return float(objet)
+        return DefaultJSONProvider.default(objet)
+
+
 def creer_application():
     _configurer_logs()
     dossier_front = Config.DOSSIER_FRONTEND
     # static_folder=None : le service des fichiers est assuré plus bas par
     # une route explicite, restreinte aux ressources du frontend.
     app = Flask(__name__, static_folder=None)
+    app.json = JSONIsoDates(app)
     app.config.from_object(Config)
 
     nb_proxys = _nombre_de_proxys()
@@ -139,7 +181,8 @@ def creer_application():
 
     for bp in (bp_auth, bp_oauth, bp_profil, bp_questions, bp_reponses,
                bp_mentors, bp_candidature, bp_messagerie, bp_notifications,
-               bp_recherche, bp_admin):
+               bp_recherche, bp_equipe, bp_opportunites, bp_taches,
+               bp_public, bp_admin):
         app.register_blueprint(bp)
 
     app.teardown_appcontext(fermer_connexion)
@@ -156,6 +199,13 @@ def creer_application():
             # Une base deja en service ne rejoue pas le fichier de schema :
             # les colonnes ajoutees depuis doivent etre posees ici.
             completer_colonnes(app)
+            # Les pays proposes a l'inscription : la liste d'origine
+            # tenait en dix-huit entrees, et quelqu'un au Gabon, au
+            # Rwanda ou en Haiti ne trouvait que « Autre ». Le fichier
+            # de schema ne se rejoue pas sur une base en service.
+            from services.referentiels import completer_pays
+            with app.app_context():
+                completer_pays()
         except Exception as exc:
             logger.error("Initialisation de la base impossible : %s", exc)
 

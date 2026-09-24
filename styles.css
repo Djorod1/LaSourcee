@@ -36,6 +36,9 @@
   --accent-clair: var(--orange-clair);
   /* Couleur du texte posé SUR le bleu principal. */
   --sur-primaire: #ffffff;
+  /* L'orange du logo est vif dans les deux themes : le blanc n'y tient
+     pas (2,8:1). C'est un texte sombre qui s'y pose, dans les deux. */
+  --sur-accent: #1A1204;
 
   /* Neutres */
   --fond: #F6F9FF;
@@ -71,7 +74,22 @@ h2 { font-size: 1.7rem; }
 h3 { font-size: 1.25rem; }
 a { color: var(--primaire); text-decoration: none; }
 a:hover { text-decoration: underline; }
-button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+/* Un bouton n'hérite spontanément ni de la police, ni de la taille, ni
+   de la couleur de la page : le navigateur lui impose les siennes. Comme
+   presque tout ce qui se clique ici en est un, l'héritage est rétabli
+   une fois pour toutes, chaque classe restant libre de dire autre chose.
+   La taille manquait : les boutons sans règle propre s'affichaient en
+   13,3 px au milieu d'une page en 15. */
+button {
+  font-family: inherit; font-size: inherit; color: inherit;
+  cursor: pointer; border: none; background: none;
+}
+/* Sans anneau de focus, naviguer au clavier revient à avancer à
+   l'aveugle : rien n'indique où l'on se trouve. */
+button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--primaire); outline-offset: 2px;
+  border-radius: var(--rayon-s);
+}
 input, textarea, select {
   font-family: inherit; font-size: 14px; color: var(--texte);
   background: var(--surface); border: 1px solid var(--bordure);
@@ -89,8 +107,8 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
 .btn {
   display: inline-flex; align-items: center; justify-content: center;
   gap: 8px; padding: 10px 18px; border-radius: var(--rayon-s);
-  font-weight: 500; font-size: 14px; transition: all .15s;
-  white-space: nowrap;
+  font-weight: 500; font-size: 14px; white-space: nowrap;
+  transition: background-color .15s, border-color .15s, color .15s, box-shadow .15s;
 }
 /* Aplat plutôt que dégradé, et pas de soulèvement au survol. Le
    dégradé en diagonale, l'ombre colorée et le bouton qui monte d'un
@@ -99,11 +117,15 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
    la comparaison, et vieillissent moins vite. */
 .btn-primaire {
   background: var(--bleu);
-  color: #fff;
+  /* Le blanc etait ecrit en dur ici, alors que le jeton --sur-primaire
+     existait et servait ailleurs. En theme sombre le bleu s'eclaircit
+     pour rester lisible comme texte : le blanc y tombait a 2,5:1, et
+     tous les boutons principaux du site devenaient illisibles. */
+  color: var(--sur-primaire);
   box-shadow: 0 1px 2px rgba(15, 23, 42, .12);
 }
 .btn-primaire:hover { background: var(--bleu-fonce); }
-.btn-ambre { background: var(--orange-vif); color: #fff; }
+.btn-ambre { background: var(--orange-vif); color: var(--sur-accent); }
 .btn-ambre:hover { background: var(--orange-fonce); }
 .btn-secondaire { background: var(--surface); color: var(--primaire); border: 1.5px solid var(--primaire); }
 .btn-secondaire:hover { background: var(--primaire-clair); }
@@ -130,6 +152,12 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   font-size: 12px; font-weight: 500; background: var(--primaire-clair); color: var(--primaire);
 }
 .tag-ambre { background: var(--accent-clair); color: #7A1A1A; }
+/* Croix de suppression d'une étiquette : un bouton, pas un <span> muet
+   sur lequel on ne pouvait ni tabuler ni appuyer sur Entrée. */
+.tag-sup {
+  color: inherit; font-weight: 700; line-height: 1;
+  padding: 0 2px; border-radius: 4px;
+}
 /* Le vert subsiste pour ce qui est valide ou confirme : c'est une
    convention universelle, pas une couleur de marque. Le rendre bleu
    le confondrait avec le reste de l'interface. */
@@ -252,7 +280,10 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   display: flex; justify-content: space-between; align-items: center;
   padding: 18px 8%;
   border-bottom: 1px solid var(--bordure);
-  background: rgba(255,255,255,.7);
+  /* Un blanc translucide ecrit en dur : en theme sombre, une bande
+     claire barrait le haut de la page d'accueil. Le jeton de surface
+     suit le theme. */
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
   backdrop-filter: blur(8px);
 }
 .hero-nav .actions { display: flex; gap: 12px; }
@@ -295,7 +326,9 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
 .choix-roles { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 18px 0; }
 .carte-role {
   border: 2px solid var(--bordure); border-radius: var(--rayon-m);
-  padding: 18px; cursor: pointer; transition: all .15s; text-align: center;
+  padding: 18px; cursor: pointer; text-align: center;
+  width: 100%; display: block;
+  transition: background-color .15s, border-color .15s;
 }
 .carte-role:hover { border-color: var(--primaire); }
 .carte-role.actif { border-color: var(--primaire); background: var(--primaire-clair); }
@@ -315,9 +348,14 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   color: var(--texte-doux); margin-bottom: 18px;
 }
 .chips-select { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+/* La transition portait sur « all » : l'anneau de focus grandissait donc
+   lui aussi en cent cinquante millisecondes, et le repère visuel arrivait
+   après le déplacement. On n'anime que les couleurs. */
 .chip-select {
   padding: 8px 14px; border: 1px solid var(--bordure); border-radius: 999px;
-  cursor: pointer; font-size: 13px; background: var(--surface); transition: all .15s;
+  cursor: pointer; font-size: 13px; background: var(--surface);
+  color: var(--texte); line-height: 1.4;
+  transition: background-color .15s, border-color .15s, color .15s;
 }
 .chip-select:hover { border-color: var(--primaire); }
 .chip-select.actif { background: var(--primaire); color: var(--sur-primaire); border-color: var(--primaire); }
@@ -377,7 +415,10 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   background: var(--rouge); color: #fff; font-size: 10px; font-weight: 600;
   border-radius: 8px; display: flex; align-items: center; justify-content: center;
 }
-.nav-profil { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 4px 8px; border-radius: var(--rayon-s); }
+.nav-profil {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  padding: 4px 8px; border-radius: var(--rayon-s);
+}
 .nav-profil:hover { background: var(--fond); }
 .menu-profil {
   position: absolute; top: 56px; right: 16px; min-width: 220px;
@@ -444,8 +485,8 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
 .liste-suivis { display: flex; flex-direction: column; gap: 10px; }
 .suivi-item { display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: var(--rayon-s); }
 .suivi-item:hover { background: var(--fond); cursor: pointer; }
-.suivi-item .info { flex: 1; font-size: 13px; }
-.suivi-item .info strong { display: block; }
+.suivi-item .info { flex: 1; font-size: 13px; min-width: 0; }
+.suivi-item .info strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .suivi-item .info span { color: var(--texte-doux); font-size: 12px; }
 
 /* Fil de questions */
@@ -453,9 +494,14 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   display: flex; align-items: center; gap: 12px; padding: 14px;
   background: var(--surface); border: 1px solid var(--bordure);
   border-left: 4px solid var(--orange-vif);
-  border-radius: var(--rayon-m); margin-bottom: 16px; cursor: text;
+  border-radius: var(--rayon-m); margin-bottom: 16px;
 }
-.publier-vide input { background: var(--fond); cursor: pointer; }
+.publier-invite {
+  flex: 1; text-align: left; background: var(--fond); cursor: pointer;
+  border: 1px solid var(--bordure); border-radius: var(--rayon-s);
+  padding: 10px 14px; font-size: 14px; color: var(--texte-doux);
+}
+.publier-invite:hover { border-color: var(--primaire); }
 .txt-publier-mobile { display: none; }
 .filtres {
   background: var(--surface); border: 1px solid var(--bordure);
@@ -468,6 +514,7 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   padding: 6px 12px; border-radius: var(--rayon-s); font-size: 13px;
   color: var(--texte-doux); cursor: pointer; font-weight: 500;
 }
+.onglet:hover { color: var(--texte); }
 .onglet.actif { background: var(--primaire); color: var(--sur-primaire); }
 .filtres select { width: auto; padding: 6px 10px; font-size: 13px; }
 
@@ -491,6 +538,11 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
 .q-titre:hover { color: var(--primaire); }
 .q-corps { color: var(--texte-doux); font-size: 14px; margin-bottom: 10px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* Sur la page de la question, le texte s'affiche en entier : les deux
+   lignes de l'aperçu du fil n'ont plus de raison d'être une fois
+   qu'on a cliqué pour lire. */
+.q-corps-entier { color: var(--texte); font-size: 15px; line-height: 1.6;
+  margin-bottom: 12px; }
 .q-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
 .q-pied { display: flex; align-items: center; gap: 16px; font-size: 13px; color: var(--texte-doux); }
 .q-pied button { color: var(--texte-doux); font-size: 13px; display: flex; align-items: center; gap: 4px; }
@@ -507,13 +559,40 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   border-left: 3px solid var(--primaire);
 }
 .reponse .r-entete { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.reponse .r-entete .info { font-size: 13px; flex: 1; }
+.reponse .r-entete .info { font-size: 13px; flex: 1; min-width: 0; }
+.reponse .r-entete .info time { display: block; color: var(--texte-doux); font-size: 12px; }
 .reponse p { font-size: 14px; margin-bottom: 8px; }
-.reponse .actions { display: flex; gap: 12px; align-items: center; font-size: 13px; color: var(--texte-doux); }
-.etoiles { color: var(--accent); cursor: pointer; }
+.reponse .actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--texte-doux); }
+.etoiles { color: var(--accent); cursor: pointer; display: inline-flex; align-items: center; gap: 2px; }
 .etoiles span { transition: opacity .15s; }
 .etoiles span.vide { opacity: .3; }
+.etoiles-bilan { color: var(--texte-doux); font-size: 12px; margin-left: 6px; cursor: default; }
 .reponse-imbriquee { margin-left: 24px; margin-top: 10px; border-left: 2px solid var(--bordure); padding-left: 12px; }
+
+/* Un texte écrit par un membre garde ses retours à la ligne et ses
+   paragraphes. Sans cela, une réponse rédigée en trois points
+   arrivait en un seul bloc illisible. Les mots trop longs, adresses
+   ou liens collés, sont coupés plutôt que de déborder de la carte. */
+.texte-libre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Composition d'une réponse. C'était un champ d'une seule ligne : la
+   touche Entrée n'y allait pas à la ligne, et on ne relisait jamais
+   plus d'une phrase de ce qu'on venait d'écrire. */
+.composeur-reponse {
+  display: flex; flex-direction: column; gap: 8px; margin-top: 12px;
+}
+.composeur-reponse textarea {
+  width: 100%; min-height: 84px; resize: vertical; line-height: 1.55;
+  font-family: inherit; font-size: 14px;
+}
+.composeur-pied {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap;
+}
+.composeur-pied .aide-champ { margin: 0; }
 
 /* Sidebar droite */
 .questions-tendance li, .mentors-suggeres li {
@@ -552,7 +631,11 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   padding: 16px 22px; border-top: 1px solid var(--bordure);
   display: flex; justify-content: flex-end; gap: 10px;
 }
-.fermer { font-size: 24px; color: var(--texte-doux); cursor: pointer; }
+.fermer {
+  font-size: 24px; color: var(--texte-doux); cursor: pointer;
+  line-height: 1; padding: 0 4px; border-radius: var(--rayon-s);
+}
+.fermer:hover { color: var(--texte); }
 .compteur-car { font-size: 12px; color: var(--texte-doux); text-align: right; margin-top: 4px; }
 .similaires { background: var(--fond); border-radius: var(--rayon-s); padding: 12px; margin-top: 14px; }
 .similaires h5 { font-size: 13px; margin-bottom: 8px; }
@@ -651,7 +734,7 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
   padding: 0 8px;
 }
 .tab-profil {
-  flex: 1; text-align: center;
+  flex: 1; text-align: center; background: none; border: none;
   padding: 14px 16px; font-size: 14px; color: var(--texte-doux);
   cursor: pointer; border-bottom: 2px solid transparent; font-weight: 500;
   transition: color .15s ease, border-color .15s ease;
@@ -820,7 +903,7 @@ label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; c
 /* ===== Améliorations LaSourcee ===== */
 .nav-bouton { transition: background .25s ease, color .25s ease, transform .15s ease; }
 .nav-bouton.actif { background: var(--primaire-clair); color: var(--primaire); }
-.nav-bouton .icone-cloche { display: block; }
+.nav-bouton .icone-cloche { display: block; color: var(--texte); }
 
 .nav-recherche { display: flex; align-items: center; gap: 6px; }
 .nav-recherche input { flex: 1; min-width: 0; }
@@ -949,9 +1032,6 @@ img, svg, video { max-width: 100%; height: auto; }
   .modal { max-width: 92vw; }
   .messagerie { grid-template-columns: 1fr; height: auto; margin: 12px; }
   .liste-conv { max-height: 280px; border-right: none; border-bottom: 1px solid var(--bordure); }
-  .entete-profil { flex-direction: column; padding-top: 70px; }
-  .entete-profil .infos { margin-left: 0; width: 100%; }
-  .entete-profil .actions { width: 100%; flex-wrap: wrap; }
   .kpi-grid { grid-template-columns: repeat(2, 1fr); }
   .contenu-admin { padding: 16px; }
   .barre-graphique .label { width: 100px; font-size: 12px; }
@@ -1033,13 +1113,11 @@ img, svg, video { max-width: 100%; height: auto; }
   .messagerie { margin: 8px; border-radius: var(--rayon-s); }
 
   .banniere { height: 130px; margin-bottom: -50px; border-radius: var(--rayon-m); }
-  .entete-profil { padding: 60px 16px 18px; border-radius: var(--rayon-m); }
-  .entete-profil h2 { font-size: 1.35rem; }
-  .entete-profil .avatar-xl { width: 96px; height: 96px; font-size: 32px; top: -48px; left: 50%; transform: translateX(-50%); }
-  .entete-profil .infos { text-align: center; }
-  .entete-profil .ligne-meta { justify-content: center; }
-  .entete-profil .actions { justify-content: center; }
-  .entete-profil .actions .btn { flex: 1 1 auto; }
+  .entete-profil { padding: 20px 16px; }
+  .entete-profil .col-infos h2 { font-size: 1.35rem; }
+  .entete-profil .col-avatar .avatar-xl { width: 96px; height: 96px; font-size: 32px; }
+  .entete-profil .col-actions { flex-direction: column; }
+  .entete-profil .col-actions .btn { width: 100%; }
 
   .tab-profil { padding: 8px 12px; font-size: 13px; }
 
@@ -1327,27 +1405,14 @@ img, svg, video { max-width: 100%; height: auto; }
   border-radius: inherit;
 }
 
-.entete-profil {
-  background: var(--surface);
-  border: 1px solid var(--bordure);
-  border-radius: 0 0 var(--rayon-m) var(--rayon-m);
-  padding: 24px;
-  display: flex; gap: 20px; align-items: flex-start;
-  position: relative;
-}
-.entete-profil .avatar-xl {
-  border: 4px solid var(--surface);
-  margin-top: -36px;
-  box-shadow: var(--ombre-m);
-}
-.entete-profil .infos { flex: 1; min-width: 0; padding-top: 4px; }
-.entete-profil .infos h2 { font-size: 1.6rem; margin-bottom: 6px; display: flex; align-items: center; gap: 10px; }
-.entete-profil .actions { display: flex; flex-direction: column; gap: 8px; }
-.entete-profil .ligne-meta {
-  display: flex; flex-wrap: wrap; gap: 14px;
-  color: var(--texte-doux); font-size: 14px; margin: 8px 0;
-}
-.entete-profil .ligne-meta > span { display: inline-flex; align-items: center; gap: 6px; }
+/* L'en-tete du profil etait declaree deux fois. Celle-ci, ecrite pour un
+   balisage qui n'existe plus (.infos, .actions, un avatar en debord
+   negatif), venait apres et gagnait donc la cascade : le profil
+   s'affichait en flex, avec les bords d'une carte accolee a une
+   banniere, alors que le balisage genere est une grille a trois colonnes
+   (.col-avatar, .col-infos, .col-actions). Les regles mobiles prevues
+   pour cette grille etaient neutralisees du meme coup, d'ou l'avatar qui
+   debordait sur telephone. Une seule declaration, plus haut. */
 
 /* ============================================================
    DISTINCTION MENTOR (innovation visuelle)
@@ -1533,8 +1598,13 @@ img, svg, video { max-width: 100%; height: auto; }
 }
 .btn-oeil:hover { color: var(--noir); background: var(--fond); }
 
-/* Chip personnalisé avec bouton × */
+/* Chip personnalisé avec bouton ×.
+
+   Celui-là reste un <div> : il porte déjà la croix de suppression, et un
+   bouton ne s'imbrique pas dans un bouton. C'est donc son libellé qui est
+   le bouton, et c'est lui qui prend le focus. */
 .chip-perso { display: inline-flex; align-items: center; gap: 6px; padding-right: 6px; }
+.chip-perso .chip-texte { padding: 0; line-height: inherit; }
 .chip-perso .chip-sup {
   background: transparent; border: none; cursor: pointer;
   color: inherit; font-size: 16px; line-height: 1;
@@ -1611,7 +1681,7 @@ img, svg, video { max-width: 100%; height: auto; }
      saisie et le bouton devient la zone cliquable pleine largeur, avec
      un libellé plus explicite. */
   .publier-vide { flex-wrap: nowrap; gap: 8px; padding: 10px 12px; }
-  .publier-vide input { display: none; }
+  .publier-invite { display: none; }
   .publier-vide .avatar { order: 1; }
   .publier-vide .btn {
     order: 2; margin-left: 0; flex: 1 1 auto;
@@ -3030,3 +3100,197 @@ img, svg, video { max-width: 100%; height: auto; }
   border-radius: 4px;
   user-select: all;
 }
+
+/* ============================================================
+   BOURSES ET OPPORTUNITÉS
+   ------------------------------------------------------------
+   L'échéance est ce qu'on lit en premier : elle décide si l'on
+   continue de lire. Elle passe donc en haut de la carte, et change de
+   couleur quand elle approche, plutôt que d'être une date perdue en
+   bas de paragraphe.
+   ============================================================ */
+.entete-section {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 16px;
+}
+.entete-section h2 { font-size: 1.35rem; margin-bottom: 4px; }
+.entete-section .desc { max-width: 52ch; }
+
+.filtres-opportunites {
+  display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px;
+}
+
+.carte-opportunite { margin-bottom: 14px; }
+.carte-opportunite h3 { font-size: 1.05rem; margin: 8px 0 4px; }
+.opp-entete {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap;
+}
+.opp-echeance {
+  font-size: 12px; font-weight: 600; color: var(--texte-doux);
+  border: 1px solid var(--bordure); border-radius: 999px; padding: 2px 10px;
+}
+.opp-echeance.proche { color: var(--accent-fonce); border-color: var(--accent); }
+.opp-echeance.urgent { color: var(--rouge-fonce); border-color: var(--rouge-fonce); }
+.opp-echeance.passee { color: var(--texte-doux); }
+.opp-organisme { color: var(--texte-doux); font-size: 13px; margin-bottom: 8px; }
+.opp-description { font-size: 14px; margin-bottom: 10px; }
+.opp-criteres {
+  display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px;
+  color: var(--texte-doux); margin-bottom: 12px;
+}
+.opp-criteres span { display: inline-flex; align-items: center; gap: 5px; }
+.opp-pied {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; border-top: 1px solid var(--bordure);
+  padding-top: 10px;
+}
+.opp-source { font-size: 12px; color: var(--texte-doux); }
+/* Une annonce dont la date est passée reste lisible, mais ne se
+   confond pas avec les autres : la plupart de ces programmes
+   reviennent chaque année, et savoir qu'ils existent a de la valeur. */
+.carte-opportunite.close { opacity: .72; }
+
+/* Pastille du menu, pour signaler des annonces récentes. */
+.pastille-nouveau {
+  position: absolute; top: 6px; right: 6px; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--accent);
+}
+
+/* ============================================================
+   MESSAGES À L'ÉQUIPE (administration)
+   ============================================================ */
+.message-equipe {
+  border: 1px solid var(--bordure); border-radius: var(--rayon-s);
+  padding: 14px; margin-bottom: 12px; background: var(--surface);
+}
+.message-equipe.nouveau { border-left: 3px solid var(--accent); }
+.message-equipe.traite { opacity: .75; }
+.msg-entete {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap; margin-bottom: 8px;
+}
+.msg-meta { font-size: 12px; color: var(--texte-doux); }
+.msg-corps { font-size: 14px; margin-bottom: 10px; }
+.msg-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.msg-actions textarea { flex: 1 1 240px; min-height: 60px; font-family: inherit; }
+
+/* Objectifs proposés pendant l'accueil guidé. */
+.chips-objectifs { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip-objectif {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  border: 1px solid var(--bordure); border-radius: 999px;
+  padding: 6px 12px; font-size: 13px; background: var(--surface);
+}
+.chip-objectif:hover { border-color: var(--primaire); }
+.chip-objectif.coche {
+  border-color: var(--primaire); background: rgba(31,58,95,.06);
+  font-weight: 600;
+}
+.chip-objectif input { margin: 0; }
+
+/* Un horodatage porte toujours l'instant exact en infobulle : le
+   curseur d'aide le signale, plutôt que de laisser croire à du texte
+   inerte. */
+time[title] { cursor: help; }
+.horodatage time { white-space: nowrap; }
+
+/* ============================================================
+   PAGES PUBLIQUES
+   ------------------------------------------------------------
+   Servies par le serveur, sans JavaScript : un robot d'indexation les
+   lit, et quelqu'un sur une connexion lente aussi. Elles reprennent
+   les couleurs de l'application sans en charger l'interface.
+   ============================================================ */
+.page-publique {
+  background: var(--fond); color: var(--texte);
+  font-family: inherit; line-height: 1.6;
+}
+.bandeau-public {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap; padding: 14px 20px;
+  background: var(--surface); border-bottom: 1px solid var(--bordure);
+}
+.marque-public {
+  font-weight: 700; font-size: 1.15rem; color: var(--primaire);
+  text-decoration: none;
+}
+.bandeau-public nav { display: flex; gap: 14px; align-items: center; }
+.bandeau-public nav a { color: var(--texte-doux); text-decoration: none; }
+.bandeau-public nav a:hover { color: var(--primaire); }
+
+.contenu-public { max-width: 760px; margin: 0 auto; padding: 24px 20px 48px; }
+.contenu-public h1 { font-size: 1.5rem; line-height: 1.3; margin-bottom: 10px; }
+.contenu-public h2 { font-size: 1.15rem; margin: 26px 0 12px; }
+.carte-publique { margin-bottom: 16px; }
+.carte-publique h2 { margin: 0 0 6px; font-size: 1.05rem; }
+.carte-publique h2 a { color: var(--texte); text-decoration: none; }
+.carte-publique h2 a:hover { color: var(--primaire); }
+.intro-publique { color: var(--texte-doux); margin-bottom: 22px; max-width: 58ch; }
+.meta-publique { color: var(--texte-doux); font-size: 13px; margin-bottom: 8px; }
+.fil-ariane { font-size: 13px; color: var(--texte-doux); margin-bottom: 8px; }
+.fil-ariane a { color: var(--texte-doux); }
+
+.reponse-publique {
+  background: var(--surface); border-left: 3px solid var(--primaire);
+  border-radius: var(--rayon-s); padding: 14px; margin-bottom: 12px;
+}
+.appel-public { margin-top: 28px; text-align: center; }
+.appel-public h2 { margin-top: 0; }
+.pagination-publique {
+  display: flex; gap: 10px; justify-content: center; margin-top: 24px;
+}
+.pied-public {
+  border-top: 1px solid var(--bordure); padding: 22px 20px 34px;
+  text-align: center; color: var(--texte-doux); font-size: 14px;
+}
+
+/* Réponse retenue par l'auteur de la question. Elle passe en tête et se
+   voit du premier coup d'œil : c'est elle qui évite à qui arrive plus
+   tard, avec la même question, de lire les dix autres. */
+.reponse.retenue {
+  border-left: 3px solid var(--vert);
+  background: var(--vert-clair);
+}
+.bandeau-retenue {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: var(--vert-fonce);
+  margin-bottom: 8px;
+}
+.btn-lien {
+  background: none; border: none; padding: 0; font: inherit; font-size: 13px;
+  color: var(--texte-doux); cursor: pointer; text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.btn-lien:hover { color: var(--primaire); }
+.btn-lien.actif { color: var(--vert-fonce); font-weight: 600; }
+.fil-reponse:empty { display: none; }
+.fil-reponse { margin-top: 10px; }
+
+/* Pagination des tableaux d'administration. Une liste tronquée en
+   silence fait croire qu'il n'y a rien de plus. */
+.pagination-admin {
+  display: flex; align-items: center; justify-content: center;
+  gap: 14px; margin-top: 14px; font-size: 13px; color: var(--texte-doux);
+}
+.pagination-admin button[disabled] { opacity: .45; cursor: not-allowed; }
+
+/* Activité récente sur un profil. Un profil qui n'annonce que des
+   chiffres ne dit rien de la personne : ces lignes sont ce qui permet
+   de décider si l'on s'adresse à elle. */
+.bloc-activite { margin-bottom: 14px; }
+.ligne-activite {
+  padding: 10px 0; border-top: 1px solid var(--bordure); cursor: pointer;
+}
+.ligne-activite:first-of-type { border-top: none; }
+.ligne-activite:hover strong { color: var(--primaire); }
+.ligne-activite strong { display: block; font-size: 14px; line-height: 1.4; }
+.extrait-activite {
+  color: var(--texte-doux); font-size: 13px; margin: 4px 0 2px;
+  overflow: hidden; display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.meta-activite {
+  display: block; color: var(--texte-doux); font-size: 12px; margin-top: 3px;
+}
+.meta-activite time { color: inherit; }

@@ -62,6 +62,19 @@ PERMISSIONS_DETAIL = {
                        "proposés aux membres.",
         "portee": "animation",
     },
+    "opportunites": {
+        "nom": "Bourses et opportunités",
+        "description": "Publier des annonces de bourses, concours et "
+                       "stages, et relire celles proposées par les "
+                       "référents avant leur mise en ligne.",
+        "portee": "animation",
+    },
+    "assistance": {
+        "nom": "Messages à l'équipe",
+        "description": "Lire les observations et les problèmes signalés "
+                       "par les membres, et y répondre.",
+        "portee": "animation",
+    },
     "utilisateurs": {
         "nom": "Comptes des membres",
         "description": "Consulter l'annuaire complet, les adresses "
@@ -150,12 +163,13 @@ def permission_requise(cle):
         def emballe(*args, **kwargs):
             if not g.utilisateur.get("est_admin"):
                 return jsonify({
-                    "erreur": "Acces reserve aux administrateurs."
+                    "erreur": "Accès réservé aux administrateurs."
                 }), 403
             if not a_le_droit(g.utilisateur, cle):
+                nom = PERMISSIONS_DETAIL.get(cle, {}).get("nom", cle)
                 return jsonify({
-                    "erreur": f"Votre compte n'a pas le droit « {cle} ». "
-                              f"Demandez-le a un super administrateur."
+                    "erreur": f"Votre compte n'a pas le droit « {nom} ». "
+                              f"Demandez-le à un super administrateur."
                 }), 403
             return fonction(*args, **kwargs)
         return emballe

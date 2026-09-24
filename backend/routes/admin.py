@@ -6,17 +6,58 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request, g
 
+from utils.noms import normaliser_nom
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from utils.auth_helpers import admin_requis
 from utils.permissions import (PERMISSIONS, PERMISSIONS_PAR_DEFAUT,
                                permission_requise, permissions_de,
                                normaliser)
 from utils.audit import journaliser
+from services import evenements
 from services.notifications import notifier
 
 bp_admin = Blueprint("admin", __name__, url_prefix="/api/admin")
 
 ROLES_AUTORISES = {"visiteur", "etudiant", "mentor", "admin", "super_admin"}
+
+# Rien n'empechait un administrateur ordinaire d'agir sur un compte
+# d'administration, y compris celui d'un super administrateur : le
+# retrograder, changer son adresse e-mail pour ensuite en demander le
+# mot de passe, ou le suspendre. Ces trois gardes ferment la porte.
+
+
+def _compte(id_user):
+    return recuperer_un(
+        "SELECT id_utilisateur, prenom, nom, email, role, est_admin "
+        "FROM utilisateur WHERE id_utilisateur = %s", (id_user,))
+
+
+def _refus_sur_administrateur(cible, verbe):
+    """Refuse d'agir sur un compte d'administration, sauf super admin.
+
+    Renvoie un message, ou None si l'action est permise.
+    """
+    if not cible:
+        return None
+    vise_admin = cible.get("role") in ("admin", "super_admin") \
+        or cible.get("est_admin")
+    if not vise_admin:
+        return None
+    if g.utilisateur.get("role") == "super_admin":
+        return None
+    return (f"Seul un super administrateur peut {verbe} le compte d'un "
+            "autre administrateur.")
+
+
+def _dernier_super_admin(id_user):
+    """Vrai si retirer ce compte laisserait la plateforme sans pilote."""
+    if not (_compte(id_user) or {}).get("role") == "super_admin":
+        return False
+    restants = (recuperer_un(
+        "SELECT COUNT(*) AS n FROM utilisateur "
+        "WHERE role = 'super_admin' AND est_actif = 1 "
+        "  AND id_utilisateur <> %s", (id_user,)) or {}).get("n", 0)
+    return restants == 0
 
 
 # ============================================================
@@ -58,35 +99,59 @@ def dashboard():
 @bp_admin.get("/utilisateurs")
 @permission_requise("utilisateurs")
 def lister_utilisateurs():
-    """Annuaire administratif avec filtres optionnels."""
+    """Annuaire administratif : filtres, recherche et pagination.
+
+    La liste s'arrêtait à cinq cents comptes, sans page suivante ni
+    total : passé ce seuil, les plus anciens devenaient inatteignables
+    et rien ne le disait. Et la recherche comparait avec LIKE, qui
+    distingue les majuscules sur PostgreSQL : chercher « djossou » ne
+    trouvait pas « Djossou ».
+    """
     role = request.args.get("role")
     actif = request.args.get("actif")
+    verifie = request.args.get("verifie")
     recherche = (request.args.get("q") or "").strip()
-    limite = min(request.args.get("limite", default=100, type=int), 500)
+    limite = min(max(request.args.get("limite", default=50, type=int), 1), 200)
+    page = max(request.args.get("page", default=1, type=int), 1)
 
     conditions, params = [], []
     if role in ROLES_AUTORISES:
         conditions.append("u.role = %s"); params.append(role)
     if actif in ("0", "1"):
         conditions.append("u.est_actif = %s"); params.append(int(actif))
+    if verifie in ("0", "1"):
+        conditions.append("u.email_verifie = %s"); params.append(int(verifie))
     if recherche:
-        conditions.append("(u.prenom LIKE %s OR u.nom LIKE %s OR u.email LIKE %s)")
-        m = f"%{recherche}%"; params.extend([m, m, m])
+        conditions.append(
+            "(LOWER(u.prenom) LIKE %s OR LOWER(u.nom) LIKE %s "
+            " OR LOWER(u.email) LIKE %s)")
+        m = f"%{recherche.lower()}%"
+        params.extend([m, m, m])
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
-    params.append(limite)
+    total = (recuperer_un(
+        f"SELECT COUNT(*) AS n FROM utilisateur u {where}",
+        tuple(params)) or {}).get("n", 0)
 
-    return jsonify(recuperer_tous(
+    lignes = recuperer_tous(
         f"""SELECT u.id_utilisateur, u.prenom, u.nom, u.email, u.role,
-                   u.est_actif, u.cree_le, u.derniere_co,
+                   u.est_actif, u.email_verifie, u.cree_le, u.derniere_co,
+                   u.derniere_activite, u.photo_url,
                    p.libelle AS pays
               FROM utilisateur u
          LEFT JOIN pays p ON p.id_pays = u.id_pays
             {where}
          ORDER BY u.cree_le DESC
-            LIMIT %s""",
-        params,
-    ))
+            LIMIT %s OFFSET %s""",
+        tuple(params) + (limite, (page - 1) * limite),
+    )
+    return jsonify({
+        "utilisateurs": lignes,
+        "total": total,
+        "page": page,
+        "par_page": limite,
+        "pages": max(1, (total + limite - 1) // limite),
+    })
 
 
 @bp_admin.get("/utilisateurs/<int:id_user>")
@@ -121,6 +186,33 @@ def modifier_utilisateur(id_user):
     if not champs:
         return jsonify({"erreur": "Aucun champ à modifier."}), 400
 
+    cible = _compte(id_user)
+    if not cible:
+        return jsonify({"erreur": "Utilisateur introuvable."}), 404
+    refus = _refus_sur_administrateur(cible, "modifier")
+    if refus:
+        return jsonify({"erreur": refus}), 403
+
+    # Changer l'adresse d'un compte suffit a en prendre le controle :
+    # il reste a demander une reinitialisation de mot de passe sur la
+    # nouvelle adresse. Elle est donc verifiee, tracee, et la personne
+    # en est avertie.
+    ancienne = cible.get("email")
+    if "email" in champs:
+        nouvelle = champs["email"]
+        if "@" not in nouvelle or "." not in nouvelle.split("@")[-1]:
+            return jsonify({"erreur": "Adresse e-mail invalide."}), 400
+        if nouvelle == ancienne:
+            champs.pop("email")
+
+    for cle in ("prenom", "nom"):
+        if cle in champs:
+            propre = normaliser_nom(champs[cle])
+            if not propre:
+                return jsonify({"erreur": "Le prénom et le nom doivent "
+                                          "contenir des lettres."}), 400
+            champs[cle] = propre
+
     fragments = ", ".join(f"{k} = %s" for k in champs)
     try:
         executer(
@@ -129,14 +221,36 @@ def modifier_utilisateur(id_user):
         )
     except Exception:
         return jsonify({"erreur": "Conflit (e-mail déjà utilisé ?)."}), 409
+    detail = ",".join(champs.keys())
+    if "email" in champs:
+        detail += f" | adresse : {ancienne} vers {champs['email']}"
+        notifier(id_user,
+                 "L'adresse e-mail de votre compte a été changée par "
+                 "l'administration. Si vous n'êtes pas à l'origine de ce "
+                 "changement, écrivez immédiatement à l'équipe.",
+                 type_notif="systeme")
     journaliser(g.utilisateur["id_utilisateur"], "modifier_utilisateur",
-                "utilisateur", id_user, ",".join(champs.keys()))
+                "utilisateur", id_user, detail)
     return jsonify({"ok": True})
 
 
 @bp_admin.post("/utilisateurs/<int:id_user>/suspendre")
 @permission_requise("utilisateurs")
 def suspendre(id_user):
+    if id_user == g.utilisateur["id_utilisateur"]:
+        return jsonify({"erreur": "Vous ne pouvez pas suspendre votre "
+                                  "propre compte : personne ne pourrait "
+                                  "vous rouvrir la porte."}), 400
+    cible = _compte(id_user)
+    if not cible:
+        return jsonify({"erreur": "Utilisateur introuvable."}), 404
+    refus = _refus_sur_administrateur(cible, "suspendre")
+    if refus:
+        return jsonify({"erreur": refus}), 403
+    if _dernier_super_admin(id_user):
+        return jsonify({"erreur": "C'est le dernier super administrateur "
+                                  "actif : le suspendre fermerait la "
+                                  "plateforme à tout le monde."}), 400
     n = executer(
         "UPDATE utilisateur SET est_actif = 0 WHERE id_utilisateur = %s",
         (id_user,), commit=True,
@@ -168,14 +282,71 @@ def reactiver(id_user):
 @bp_admin.delete("/utilisateurs/<int:id_user>")
 @permission_requise("utilisateurs")
 def supprimer_utilisateur(id_user):
+    """Supprime un compte, ou l'anonymise s'il porte des décisions.
+
+    Le journal d'administration référence son auteur, et cette
+    référence est posée en cascade : supprimer un administrateur
+    effaçait donc toutes ses décisions du journal, au moment précis où
+    l'on aurait besoin de les relire.
+
+    Un compte qui n'a jamais rien décidé est supprimé comme avant. Un
+    compte qui a décidé est vidé de ce qui identifie la personne et
+    fermé définitivement : les données personnelles disparaissent, la
+    trace de ce qui a été fait reste. C'est aussi ce qu'attend un
+    droit à l'effacement, qui porte sur la personne et non sur les
+    registres.
+    """
     if id_user == g.utilisateur["id_utilisateur"]:
         return jsonify({"erreur": "Auto-suppression interdite."}), 400
-    n = executer("DELETE FROM utilisateur WHERE id_utilisateur = %s",
-                 (id_user,), commit=True)
-    if not n:
+    cible = _compte(id_user)
+    if not cible:
         return jsonify({"erreur": "Utilisateur introuvable."}), 404
+    refus = _refus_sur_administrateur(cible, "supprimer")
+    if refus:
+        return jsonify({"erreur": refus}), 403
+    if _dernier_super_admin(id_user):
+        return jsonify({"erreur": "C'est le dernier super administrateur "
+                                  "actif : le supprimer fermerait "
+                                  "l'administration à tout le monde."}), 400
+
+    decisions = (recuperer_un(
+        "SELECT COUNT(*) AS n FROM audit_admin WHERE id_acteur = %s",
+        (id_user,)) or {}).get("n", 0)
+
+    if decisions:
+        executer(
+            """UPDATE utilisateur
+                  SET prenom = 'Compte', nom = 'supprimé',
+                      email = %s, bio = NULL, photo_url = NULL,
+                      telephone = NULL, etablissement = NULL,
+                      filiere = NULL, profil_pro = NULL,
+                      est_actif = 0, est_admin = 0, role = 'visiteur',
+                      permissions = '[]'
+                WHERE id_utilisateur = %s""",
+            (f"supprime-{id_user}@lasourcee.invalid", id_user), commit=True)
+        executer("DELETE FROM session_web WHERE id_utilisateur = %s",
+                 (id_user,), commit=True)
+        journaliser(g.utilisateur["id_utilisateur"], "anonymiser_utilisateur",
+                    "utilisateur", id_user,
+                    f"{decisions} décision(s) au journal : compte vidé et "
+                    "fermé plutôt qu'effacé, pour ne pas perdre la trace")
+        return jsonify({"ok": True, "anonymise": True,
+                        "message": "Ce compte portait des décisions "
+                                   "d'administration. Ses données "
+                                   "personnelles sont effacées et le compte "
+                                   "fermé ; le journal reste lisible."})
+
+    executer("DELETE FROM utilisateur WHERE id_utilisateur = %s",
+             (id_user,), commit=True)
     journaliser(g.utilisateur["id_utilisateur"], "supprimer_utilisateur",
-                "utilisateur", id_user)
+                "utilisateur", id_user,
+                f"{cible.get('email')}")
+    # Les lignes d'evenement de ce compte partent avec lui : celle-ci
+    # n'en porte pas l'identifiant, seulement le fait qu'un depart a eu
+    # lieu. Sans quoi la courbe des inscrits ne se lit plus, les departs
+    # etant invisibles.
+    evenements.depuis_requete("compte_supprime", type_cible="utilisateur",
+                              contexte={"par": "administration"})
     return jsonify({"ok": True})
 
 
@@ -199,13 +370,56 @@ def changer_role(id_user):
     if id_user == moi["id_utilisateur"] and nouveau != moi.get("role"):
         return jsonify({"erreur": "Vous ne pouvez pas modifier votre propre rôle."}), 400
 
-    # Si on passe de mentor à autre chose, conserver mentor_details mais ce sera ignoré
+    # Le controle ci-dessus n'interdisait que d'ACCORDER le role
+    # d'administrateur. Rien n'empechait un administrateur ordinaire de
+    # le RETIRER : il pouvait retrograder tous les super administrateurs
+    # et laisser la plateforme sans personne pour rouvrir la porte.
+    cible = _compte(id_user)
+    if not cible:
+        return jsonify({"erreur": "Utilisateur introuvable."}), 404
+    refus = _refus_sur_administrateur(cible, "changer le rôle d")
+    if refus:
+        return jsonify({"erreur": refus}), 403
+    if nouveau != "super_admin" and _dernier_super_admin(id_user):
+        return jsonify({"erreur": "C'est le dernier super administrateur "
+                                  "actif : le rétrograder fermerait "
+                                  "l'administration à tout le monde."}), 400
+
+    # Le role et le drapeau d'administration doivent bouger ensemble.
+    #
+    # Cette route n'ecrivait que « role ». Or tout le controle d'acces
+    # regarde « est_admin » : admin_requis et permission_requise.
+    # Promouvoir quelqu'un ne lui ouvrait donc rien — il se faisait
+    # refuser partout pendant que la liste des administrateurs
+    # l'affichait avec tous les droits.
+    #
+    # L'autre sens est pire : retrograder un administrateur laissait
+    # est_admin a 1 et sa colonne de droits intacte. Le compte
+    # apparaissait « Beneficiaire » dans l'ecran des comptes et gardait
+    # tous ses acces a l'administration. Un droit qui survit a sa
+    # revocation, sans trace ni alerte.
+    devient_admin = nouveau in ("admin", "super_admin")
+    droits_avant = permissions_de(
+        {**(cible or {}), "est_admin": cible.get("est_admin")})
+
+    if devient_admin:
+        droits = json.dumps(PERMISSIONS_PAR_DEFAUT)
+    else:
+        droits = json.dumps([])
+
     n = executer(
-        "UPDATE utilisateur SET role = %s WHERE id_utilisateur = %s",
-        (nouveau, id_user), commit=True,
+        "UPDATE utilisateur SET role = %s, est_admin = %s, permissions = %s "
+        "WHERE id_utilisateur = %s",
+        (nouveau, 1 if devient_admin else 0, droits, id_user), commit=True,
     )
     if not n:
         return jsonify({"erreur": "Utilisateur introuvable."}), 404
+
+    # Les sessions ouvertes portent l'ancien role : les fermer evite
+    # qu'un acces retire continue de servir jusqu'a expiration.
+    if droits_avant and not devient_admin:
+        executer("DELETE FROM session_web WHERE id_utilisateur = %s",
+                 (id_user,), commit=True)
 
     # Si on promeut en mentor, créer mentor_details si manquant
     if nouveau == "mentor":
@@ -220,7 +434,10 @@ def changer_role(id_user):
             )
 
     journaliser(moi["id_utilisateur"], "changer_role",
-                "utilisateur", id_user, f"-> {nouveau}")
+                "utilisateur", id_user,
+                f"{cible.get('role')} vers {nouveau}"
+                + (f" | droits retires : {', '.join(droits_avant)}"
+                   if droits_avant and not devient_admin else ""))
     return jsonify({"ok": True})
 
 
@@ -290,6 +507,23 @@ def supprimer_secteur(id_s):
             "erreur": f"Ce secteur est utilisé par {usage['n']} question(s). "
                       "Réassignez-les avant suppression."
         }), 409
+    # Le controle ne regardait que les questions. Or `utilisateur_secteur`
+    # part en cascade : supprimer un secteur retirait sans un mot ce
+    # domaine d'expertise a tous les referents qui l'avaient declare. Ils
+    # sortaient de l'annuaire filtre par secteur et ne recevaient plus les
+    # questions correspondantes, sans que personne, eux compris, ne
+    # l'apprenne. Renommer reste possible ; supprimer ne l'est pas.
+    porteurs = recuperer_un(
+        "SELECT COUNT(*) AS n FROM utilisateur_secteur WHERE id_secteur = %s",
+        (id_s,),
+    )
+    if porteurs and porteurs["n"] > 0:
+        return jsonify({
+            "erreur": f"Ce secteur est déclaré comme domaine d'expertise par "
+                      f"{porteurs['n']} référent(s). Le supprimer le "
+                      "retirerait de leur profil. Renommez-le, ou demandez-"
+                      "leur de changer de domaine."
+        }), 409
     n = executer("DELETE FROM secteur WHERE id_secteur = %s",
                  (id_s,), commit=True)
     if not n:
@@ -346,6 +580,9 @@ def verifier_mentor(id_mentor):
 
     from routes.candidature_mentor import notifier_decision
     prevenu = notifier_decision(id_mentor, acceptee=True)
+    evenements.depuis_requete("candidature_tranchee", type_cible="utilisateur",
+                              id_cible=id_mentor,
+                              contexte={"acceptee": True})
     return jsonify({"ok": True, "email_envoye": prevenu})
 
 
@@ -370,6 +607,9 @@ def refuser_mentor(id_mentor):
              (id_mentor,), commit=True)
     journaliser(g.utilisateur["id_utilisateur"], "refuser_mentor",
                 "utilisateur", id_mentor, motif[:200] if motif else None)
+    evenements.depuis_requete("candidature_tranchee", type_cible="utilisateur",
+                              id_cible=id_mentor,
+                              contexte={"acceptee": False})
     return jsonify({"ok": True, "email_envoye": prevenu})
 
 
@@ -414,9 +654,15 @@ def _contenu_signale(type_contenu, id_contenu):
     ligne["supprime"] = False
     # Le passe de l'auteur pese dans la decision : un premier
     # signalement n'appelle pas la meme reponse qu'un cinquieme.
+    # Les signalements JUGES NON FONDES ne comptent pas. Sans cette
+    # exclusion, quelqu'un vise par des signalements abusifs, tous
+    # rejetes un par un, portait quand meme l'etiquette rouge « auteur
+    # deja signale 4 fois » a cote du bouton de suspension. L'acharnement
+    # se retournait ainsi contre sa victime.
     ligne["signalements_auteur"] = (recuperer_un(
         """SELECT COUNT(*) AS n FROM signalement s
             WHERE s.type_contenu = 'question'
+              AND s.statut <> 'rejete'
               AND s.id_contenu IN (SELECT id_question FROM question
                                     WHERE id_auteur = %s)""",
         (ligne["id_auteur"],)) or {}).get("n", 0)
@@ -448,11 +694,15 @@ def signalements():
     for ligne in lignes:
         ligne["contenu"] = _contenu_signale(ligne["type_contenu"],
                                             ligne["id_contenu"])
-        # Plusieurs personnes signalant la meme chose, c'est un signal
-        # en soi : le nombre doit sauter aux yeux.
+        # Plusieurs PERSONNES signalant la meme chose, c'est un signal
+        # en soi : le nombre doit sauter aux yeux. Les signalements deja
+        # juges non fondes en sont exclus, sinon un contenu blanchi
+        # trois fois arrive devant le moderateur avec trois etiquettes
+        # rouges.
         ligne["signalements_contenu"] = (recuperer_un(
-            "SELECT COUNT(*) AS n FROM signalement "
-            "WHERE type_contenu = %s AND id_contenu = %s",
+            "SELECT COUNT(DISTINCT id_signaleur) AS n FROM signalement "
+            "WHERE type_contenu = %s AND id_contenu = %s "
+            "  AND statut <> 'rejete'",
             (ligne["type_contenu"], ligne["id_contenu"])) or {}).get("n", 1)
     return jsonify(lignes)
 
@@ -548,6 +798,12 @@ def traiter_signalement(id_sig):
     )
     journaliser(moi, "traiter_signalement", "signalement", id_sig,
                 libelle + (f" ({note})" if note else ""))
+    # Le journal d'audit dit qui a tranche ; le journal d'activite dit
+    # combien de decisions et lesquelles. Les deux servent, et ce second
+    # figurait au vocabulaire sans jamais rien recevoir.
+    evenements.depuis_requete("moderation", type_cible="signalement",
+                              id_cible=id_sig,
+                              contexte={"action": action, "statut": statut})
     return jsonify({"ok": True, "libelle": libelle})
 
 
@@ -558,17 +814,57 @@ def traiter_signalement(id_sig):
 @bp_admin.get("/audit")
 @permission_requise("audit")
 def consulter_audit():
-    limite = min(request.args.get("limite", default=50, type=int), 200)
-    return jsonify(recuperer_tous(
-        """SELECT a.id_audit, a.action, a.type_cible, a.id_cible,
-                  a.details, a.cree_le, a.ip,
-                  u.prenom, u.nom, u.email
-             FROM audit_admin a
-             JOIN utilisateur u ON u.id_utilisateur = a.id_acteur
-         ORDER BY a.cree_le DESC
-            LIMIT %s""",
-        (limite,),
-    ))
+    """Journal d'administration, filtrable et paginé.
+
+    Deux cents lignes sans filtre ni page suivante : dès que le journal
+    s'allonge, il ne répond plus à la seule question qu'on lui pose,
+    « qui a fait quoi à ce compte, et quand ». Il se filtre donc par
+    acteur, par action et par date, et dit combien de lignes existent.
+    """
+    limite = min(max(request.args.get("limite", default=50, type=int), 1), 200)
+    page = max(request.args.get("page", default=1, type=int), 1)
+    action = (request.args.get("action") or "").strip()
+    acteur = request.args.get("acteur", type=int)
+    cible = request.args.get("cible", type=int)
+    depuis = (request.args.get("depuis") or "").strip()
+
+    conditions, params = [], []
+    if action:
+        conditions.append("a.action = %s"); params.append(action[:80])
+    if acteur:
+        conditions.append("a.id_acteur = %s"); params.append(acteur)
+    if cible:
+        conditions.append("a.id_cible = %s"); params.append(cible)
+    if depuis:
+        conditions.append("a.cree_le >= %s"); params.append(depuis[:19])
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    total = (recuperer_un(
+        f"SELECT COUNT(*) AS n FROM audit_admin a {where}",
+        tuple(params)) or {}).get("n", 0)
+
+    lignes = recuperer_tous(
+        f"""SELECT a.id_audit, a.action, a.type_cible, a.id_cible,
+                   a.details, a.cree_le, a.ip, a.id_acteur,
+                   u.prenom, u.nom, u.email
+              FROM audit_admin a
+              JOIN utilisateur u ON u.id_utilisateur = a.id_acteur
+             {where}
+          ORDER BY a.cree_le DESC
+             LIMIT %s OFFSET %s""",
+        tuple(params) + (limite, (page - 1) * limite),
+    )
+    return jsonify({
+        "entrees": lignes,
+        "total": total,
+        "page": page,
+        "par_page": limite,
+        "pages": max(1, (total + limite - 1) // limite),
+        # Les actions reellement presentes, pour que le filtre propose ce
+        # qui existe plutot qu'une liste ecrite en dur qui derive.
+        "actions": [l["action"] for l in recuperer_tous(
+            "SELECT DISTINCT action FROM audit_admin ORDER BY action")],
+    })
 
 
 # ============================================================
@@ -759,12 +1055,17 @@ def catalogue_permissions():
 def lister_administrateurs():
     lignes = recuperer_tous(
         """SELECT id_utilisateur, prenom, nom, email, role, est_actif,
-                  permissions, derniere_co, cree_le
+                  est_admin, permissions, derniere_co, cree_le
              FROM utilisateur
             WHERE est_admin = 1 OR role IN ('admin','super_admin')
          ORDER BY role DESC, cree_le""")
     for l in lignes:
-        l["droits"] = permissions_de({**l, "est_admin": 1})
+        # Les droits reellement enregistres, et non ceux qu'on aurait si
+        # le compte etait administrateur. Forcer est_admin a 1 ici
+        # faisait afficher les dix droits a un compte qui n'en avait
+        # aucun, et masquait exactement l'incoherence ci-dessus.
+        l["droits"] = permissions_de(l)
+        l["est_admin"] = bool(l.get("est_admin"))
         l.pop("permissions", None)
     return jsonify(lignes)
 
@@ -789,8 +1090,8 @@ def creer_administrateur():
             "Seul un super administrateur crée des administrateurs."}), 403
 
     d = request.get_json(silent=True) or {}
-    prenom = (d.get("prenom") or "").strip()
-    nom = (d.get("nom") or "").strip()
+    prenom = normaliser_nom(d.get("prenom")) or ""
+    nom = normaliser_nom(d.get("nom")) or ""
     email = (d.get("email") or "").strip().lower()
     droits = normaliser(d.get("permissions") or PERMISSIONS_PAR_DEFAUT)
     super_admin = bool(d.get("super_admin"))

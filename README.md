@@ -77,14 +77,16 @@ sont à transmettre manuellement. Vérifiez toujours l'envoi avec
 Trois moyens de se connecter :
 
 1. **E-mail + mot de passe** — toujours disponible ;
-2. **Google** — activé par `GOOGLE_CLIENT_ID` ;
-3. **LinkedIn** — activé par `LINKEDIN_CLIENT_ID` et `LINKEDIN_CLIENT_SECRET`.
+2. **Google** — activé par `GOOGLE_CLIENT_ID`.
 
-Si Google ou LinkedIn n'est pas configuré, le bouton correspondant est
-masqué côté interface et l'API répond par une erreur explicite (503)
-plutôt que par une erreur serveur. La marche à suivre pour obtenir les
-identifiants est détaillée dans `backend/.env.example` et dans
-`DEPLOIEMENT.md`.
+Si Google n'est pas configuré, le bouton correspondant est masqué côté
+interface et l'API répond par une erreur explicite (503) plutôt que par
+une erreur serveur. La marche à suivre pour obtenir les identifiants est
+détaillée dans `backend/.env.example` et dans `DEPLOIEMENT.md`.
+
+La piste LinkedIn a été abandonnée : son bouton ne figure plus dans
+l'interface. Les routes restent en place pour ne pas casser les comptes
+qui s'y étaient rattachés, mais rien n'y conduit plus.
 
 ### Vérification d'adresse e-mail
 
@@ -134,8 +136,8 @@ DATABASE_URL="postgresql://..." ./demarrer.sh tests   # ajoute PostgreSQL
 |---|---|
 | `tests_redaction.py` | aucun tiret cadratin dans les 18 fichiers dont le texte atteint un utilisateur |
 | `tests_contraste.py` | 16 couples de couleurs au niveau WCAG AA, en clair comme en sombre |
-| `tests_integration.py` | 425 tests fonctionnels, sur SQLite puis sur PostgreSQL |
-| `tests_deploiement.py` | 85 vérifications de mise en ligne |
+| `tests_integration.py` | 502 tests fonctionnels, sur SQLite puis sur PostgreSQL |
+| `tests_deploiement.py` | 88 vérifications de mise en ligne, dont la syntaxe des fichiers servis au navigateur |
 
 Sans `DATABASE_URL`, les deux dernières lignes sont annoncées comme non
 lancées plutôt que passées sous silence.
@@ -155,9 +157,9 @@ puis sur PostgreSQL 16.
 | Couche | Choix |
 |---|---|
 | Frontend | HTML / CSS / JavaScript, sans framework |
-| Backend | Python 3.10+ — Flask 3, 79 routes HTTP |
+| Backend | Python 3.10+ — Flask 3, 93 routes HTTP |
 | Base | SQLite, PostgreSQL ou MySQL selon `DB_TYPE` (tests automatisés sur les deux premiers) |
-| Authentification | Sessions serveur, bcrypt 12 tours, OAuth Google et LinkedIn |
+| Authentification | Sessions serveur, bcrypt 12 tours, OAuth Google |
 
 Le SQL est écrit à la main, sans ORM. Toutes les requêtes du code métier
 utilisent le paramètre `%s` ; la couche d'accès traduit le dialecte selon
@@ -194,8 +196,8 @@ frontend et pourrait servir une autre interface sans modification.
 │   ├── app.py                Application Flask, erreurs, fichiers statiques
 │   ├── config.py             Configuration et diagnostic de démarrage
 │   ├── gerer_admins.py       Gestion des comptes administrateurs
-│   ├── tests_integration.py  425 tests fonctionnels
-│   ├── tests_deploiement.py  85 vérifications de mise en ligne
+│   ├── tests_integration.py  502 tests fonctionnels
+│   ├── tests_deploiement.py  88 vérifications de mise en ligne
 │   ├── tests_redaction.py    absence de tiret dans les textes visibles
 │   ├── tests_contraste.py    lisibilité des couleurs (WCAG AA)
 │   ├── models/db.py          Accès uniforme SQLite / PostgreSQL / MySQL
@@ -210,25 +212,28 @@ frontend et pourrait servir une autre interface sans modification.
 │   │   └── audit.py            journal des actions d'administration
 │   ├── routes/
 │   │   ├── auth.py             inscription, connexion, mot de passe
-│   │   ├── oauth.py            Google et LinkedIn
+│   │   ├── oauth.py            connexion Google
 │   │   ├── profil.py           profils et référentiels
 │   │   ├── questions.py        publication, fil, favoris, signalements
 │   │   ├── reponses.py         réponses
-│   │   ├── mentors.py          annuaire et suivi
+│   │   ├── mentors.py          annuaire des référents
 │   │   ├── candidature_mentor.py  candidature et validation
 │   │   ├── messagerie.py       conversations privées
 │   │   ├── notifications.py    notifications
 │   │   ├── recherche.py        recherche globale
+│   │   ├── equipe.py           messages adressés à l'équipe
+│   │   ├── opportunites.py     bourses, concours, stages
 │   │   └── admin.py            tableau de bord et modération
+│   ├── utils/noms.py           mise en forme des noms, encodage
 │   └── services/
 │       ├── suggestions.py      suggestion de référents
 │       ├── notifications.py    dépôt des notifications
 │       └── amorcage.py         création du premier admin par variables
 │
 └── database/
-    ├── schema_sqlite.sql      24 tables — développement
-    ├── schema_postgres.sql    24 tables — production
-    ├── schema.sql             24 tables — MySQL
+    ├── schema_sqlite.sql      27 tables — développement
+    ├── schema_postgres.sql    27 tables — production
+    ├── schema.sql             27 tables — MySQL
     ├── migration_v2.sql
     └── migration_v3.sql       profils enrichis, préférences, vérification
 ```
@@ -302,7 +307,7 @@ un gain nul côté utilisateur, qui ne voit jamais ces chaînes.
 | Rôle en base | Nom affiché | Capacités |
 |---|---|---|
 | `visiteur` | Visiteur | consulter le fil public |
-| `etudiant` | Bénéficiaire | publier des questions, commenter, mettre en favori, suivre des référents |
+| `etudiant` | Bénéficiaire | publier des questions, commenter, mettre en favori, écrire aux référents |
 | `mentor` | Référent | répondre aux questions, statut de vérification, profil public enrichi |
 | `admin` | Administrateur | modération, suspension, validation des candidatures |
 | `super_admin` | Administrateur principal | création d'autres administrateurs, journal d'audit complet |
@@ -401,6 +406,169 @@ Trois limites sont posées, et elles sont volontaires :
 Ce que la plateforme collecte doit rester annoncé aux membres dans la
 politique de confidentialité : une collecte silencieuse, même
 techniquement irréprochable, ne l'est pas juridiquement.
+
+---
+
+## Bourses et opportunités
+
+Le fil de questions vit au rythme de qui ose demander. Une bourse, elle,
+a une date limite : c'est ce qui fait revenir sur le site sans avoir
+rien à publier soi-même, et ce qui donne une raison de s'inscrire à qui
+n'a pas encore de question à poser.
+
+**Qui publie.** Le compte LaSourcee publie, par ses administrateurs
+disposant du droit `opportunites`, et l'annonce paraît aussitôt : c'est
+l'équipe qui engage sa parole. Un référent vérifié peut en proposer une,
+mais elle passe d'abord par une relecture. Ce n'est pas de la défiance :
+une bourse annoncée avec une mauvaise date limite ou un lien mort coûte
+plus cher qu'une bourse non annoncée, parce que quelqu'un aura construit
+un projet dessus. Un bénéficiaire ne publie pas ; il signale ce qu'il a
+trouvé par le formulaire de contact, et l'équipe le reprend.
+
+**Ce qui est exigé.** Un titre, une description, et au moins l'organisme
+ou le lien officiel : sans l'un des deux, personne ne peut recouper
+l'annonce. La date limite est facultative mais doit être une vraie date.
+
+**Ce qui se périme.** Passé la date limite, l'annonce ne disparaît pas :
+elle passe en « clôturée », écartée du fil mais consultable. La plupart
+de ces programmes reviennent chaque année, et savoir qu'ils existent
+vaut presque autant que d'y postuler à temps.
+
+L'échéance est ce qu'on lit en premier, exprimée en jours restants
+plutôt qu'en date brute : « dans 5 jours » se comprend d'un coup d'œil.
+
+---
+
+## Contacter l'équipe
+
+Les membres n'avaient aucun endroit où dire qu'une page ne marchait pas,
+qu'un libellé prêtait à confusion, ou simplement qu'ils auraient aimé
+autre chose. Un problème qu'on ne peut pas signaler ne disparaît pas :
+il fait partir la personne, et l'équipe ne sait jamais pourquoi.
+
+Trois choix gouvernent ce formulaire :
+
+- **on n'exige pas de compte.** Quelqu'un qui n'arrive pas à se
+  connecter est précisément celui qui a le plus besoin d'écrire. Sans
+  session, une adresse e-mail est demandée pour pouvoir répondre ;
+- **le contexte technique part avec le message** : la page d'où l'on
+  écrit et le navigateur utilisé, ce qui évite l'aller-retour « sur
+  quelle page ? » qui décourage la moitié des signalements ;
+- **on répond.** Un message sans accusé de réception ne se renvoie pas,
+  il s'oublie, et la personne conclut que personne ne lit. La réponse de
+  l'équipe arrive en notification.
+
+Les administrateurs disposant du droit `assistance` lisent ces messages,
+les prennent en charge, y répondent et les marquent traités.
+
+---
+
+## Visibilité sur le net
+
+Le site entier vivait derrière une connexion. Un moteur de recherche
+n'en voyait qu'une page, l'accueil, et aucune quantité de balises ne
+compense cela : ce qui rend un site trouvable, ce sont des pages qui
+répondent à une question que quelqu'un a réellement tapée.
+
+Ces pages existent déjà sur la plateforme : ce sont les questions des
+membres et les réponses des référents. Elles sont donc servies en HTML
+complet, rendu par le serveur, sans qu'aucun JavaScript soit nécessaire
+pour les lire.
+
+| Adresse | Contenu |
+|---|---|
+| `/questions` | toutes les questions, paginées |
+| `/question/<id>-<titre>` | une question, ses réponses, données structurées `QAPage` |
+| `/sitemap.xml` | construit à partir des questions réellement publiées |
+
+**Ce que ces pages ne montrent pas** : le nom complet de l'auteur. Prénom
+et initiale, comme dans les notifications. Ni adresse, ni téléphone, ni
+établissement. Une question publique ne doit pas rendre publique la
+personne qui l'a posée.
+
+**Ce réglage se coupe.** `QUESTIONS_PUBLIQUES=0` referme tout : les pages
+répondent 404 et le plan du site se réduit à l'accueil. Rendre publiques
+les questions des membres est une décision qui appartient à la
+plateforme, pas au code, et **elle doit figurer dans la politique de
+confidentialité**.
+
+Le plan du site n'est plus un fichier : un plan qui ne change jamais
+n'apprend rien à un moteur de recherche. `vercel.json` route ces trois
+adresses vers la fonction, faute de quoi le gestionnaire de fichiers les
+renverrait toutes vers `index.html` et le serveur ne les verrait jamais.
+
+---
+
+## Résumé périodique
+
+Une plateforme de questions et de réponses meurt du même silence des
+deux côtés : personne ne publie parce que personne ne répond, et
+personne ne répond parce que personne ne publie. Un message périodique
+casse cette boucle, en disant ce qui s'est passé à des gens qui n'ont
+aucune raison de revenir d'eux-mêmes.
+
+Quatre règles le gouvernent, et chacune existe parce que son contraire
+fait se désabonner :
+
+- **jamais deux fois en deux jours.** Un message quotidien devient du
+  bruit, et le bruit se range dans les indésirables avec le reste du
+  domaine expéditeur ;
+- **rien à dire, rien à envoyer.** Un résumé vide apprend à ne plus
+  ouvrir les suivants : au moins deux nouveautés sont exigées ;
+- **ce qui concerne la personne d'abord** : les réponses à ses propres
+  questions, puis son secteur, puis les questions sans réponse si elle
+  est référente, puis les nouvelles bourses ;
+- **un lien de désinscription dans chaque message**, qui fonctionne sans
+  se connecter ni retrouver un réglage.
+
+Un hébergement serverless n'exécute rien de lui-même : ni démon, ni
+crontab. L'envoi est donc déclenché par un appel HTTP que Vercel
+programme (`crons` dans `vercel.json`, tous les deux jours à 9 h UTC),
+sur la route `POST /api/taches/resume`.
+
+Cette route envoie des e-mails en masse : elle exige un secret partagé,
+et le refuse plutôt que de l'ignorer, pour qu'une mauvaise configuration
+se voie tout de suite au lieu de passer pour une panne d'envoi.
+
+```env
+CRON_SECRET=une-chaine-longue-et-aleatoire
+```
+
+Sans cette variable, aucun résumé ne part et le refus est journalisé.
+Le réglage est modifiable par chacun dans ses paramètres, et cette
+collecte doit être annoncée dans la politique de confidentialité au même
+titre que le reste.
+
+---
+
+## Fonctionnalités retirées
+
+### Le suivi de référents
+
+On pouvait s'abonner à un référent. La fonctionnalité a été retirée, et
+il vaut mieux dire pourquoi que de laisser croire à un oubli.
+
+Elle n'alimentait rien : s'abonner n'ajoutait aucun fil, ne changeait
+l'ordre d'aucune liste, n'ouvrait aucun échange. Les deux endroits qui
+affichaient « Référents suivis » — la colonne latérale et un onglet du
+profil — montraient en réalité les quatre premiers référents de
+l'annuaire dès que la liste des abonnements était vide, c'est-à-dire
+presque toujours, puisque cette liste n'était jamais chargée depuis le
+serveur. Une personne qui venait de s'inscrire y voyait donc un inconnu
+présenté comme quelqu'un qu'elle suivait.
+
+Ce qui manquait n'était pas un abonnement, mais un moyen de s'adresser
+à quelqu'un. Le bouton « Suivre » a été remplacé par « Écrire », qui
+n'apparaît que lorsque la règle le permet (voir *Qui peut écrire à
+qui*).
+
+La table `suivi_mentor` n'est plus créée ni lue. Sur une base déjà en
+service elle subsiste sans gêner ; la supprimer est facultatif et se
+fait à la main :
+
+```sql
+DROP TABLE IF EXISTS suivi_mentor;
+```
 
 ---
 

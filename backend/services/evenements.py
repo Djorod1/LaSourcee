@@ -40,10 +40,11 @@ TYPES = {
     "connexion": "Ouverture de session",
     "question_publiee": "Publication d'une question",
     "reponse_publiee": "Publication d'une reponse",
+    "reponse_retenue": "Reponse retenue par l'auteur de la question",
+    "reponse_notee": "Note attribuee a une reponse",
     "question_vue": "Consultation d'une question",
     "reponse_utile": "Reponse marquee utile",
     "question_utile": "Question marquee utile",
-    "suivi": "Abonnement a un referent",
     "recherche": "Recherche effectuee",
     "candidature": "Depot d'une candidature de referent",
     "candidature_tranchee": "Decision sur une candidature",
@@ -51,7 +52,23 @@ TYPES = {
     "signalement": "Signalement d'un contenu",
     "moderation": "Decision de moderation",
     "compte_supprime": "Suppression d'un compte",
+    "message_equipe": "Message adresse a l'equipe",
+    "opportunite_proposee": "Proposition d'une annonce",
+    "opportunite_decidee": "Decision sur une annonce",
 }
+
+
+def type_inconnu(type_evenement):
+    """Ce type figure-t-il au vocabulaire ?
+
+    La liste ci-dessus ne contraint rien techniquement, mais elle a
+    derive dans les deux sens : cinq types etaient emis sans y figurer,
+    et onze y figuraient sans etre emis nulle part, dont l'inscription,
+    la connexion et la recherche. Le journal annoncait donc un
+    vocabulaire qu'il n'employait pas, et n'enregistrait pas ce pour quoi
+    il avait ete ecrit. Un controle le rappelle desormais.
+    """
+    return str(type_evenement) not in TYPES
 
 LONGUEUR_MAX_CONTEXTE = 2000
 

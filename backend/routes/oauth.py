@@ -17,8 +17,12 @@ from urllib.parse import urlencode
 
 from flask import Blueprint, current_app, jsonify, redirect, request, session
 
+import hmac
+
+from utils.noms import normaliser_nom, depuis_adresse
 from models.db import recuperer_un, executer, curseur
 from utils.auth_helpers import creer_session, poser_cookie_session
+from services import evenements
 
 bp_oauth = Blueprint("oauth", __name__, url_prefix="/api/auth")
 logger = logging.getLogger("lasource.oauth")
@@ -78,8 +82,8 @@ def connexion_google():
     sub = info.get("sub")
     email = (info.get("email") or "").lower()
     email_verifie = bool(info.get("email_verified"))
-    prenom = info.get("given_name") or email.split("@")[0]
-    nom = info.get("family_name") or ""
+    prenom = normaliser_nom(info.get("given_name")) or depuis_adresse(email)
+    nom = normaliser_nom(info.get("family_name")) or ""
     photo = info.get("picture")
 
     if not sub or not email:
@@ -122,7 +126,14 @@ def connexion_google():
                       "Validez-la dans votre compte Google, puis "
                       "réessayez, ou créez un compte avec un mot de passe."
         }), 403
-    return _terminer_connexion(id_user)
+    except CompteSuspendu:
+        return jsonify({
+            "erreur": "Ce compte a été fermé par l'administration de "
+                      "LaSourcee. Écrivez à l'équipe si vous pensez qu'il "
+                      "s'agit d'une erreur."
+        }), 403
+    return _terminer_connexion(id_user, fournisseur="google",
+                               creation=not deja_connu)
 
 
 # ============================================================
@@ -167,7 +178,11 @@ def retour_linkedin():
         return redirect("/?erreur=" + erreur)
     if not code:
         return jsonify({"erreur": "Code OAuth manquant."}), 400
-    if etat != session.pop("linkedin_state", None):
+    attendu = session.pop("linkedin_state", None)
+    # Sans le premier test, deux absences se valaient : un appel forge
+    # sans « state », depuis un navigateur sans session, franchissait le
+    # controle. C'est exactement ce que ce controle doit empecher.
+    if not etat or not attendu or not hmac.compare_digest(etat, attendu):
         return jsonify({"erreur": "État OAuth invalide (CSRF)."}), 400
 
     # Échanger le code contre un access token
@@ -208,12 +223,17 @@ def retour_linkedin():
     sub = info.get("sub")
     email = (info.get("email") or "").lower()
     email_verifie = bool(info.get("email_verified"))
-    prenom = info.get("given_name") or email.split("@")[0]
-    nom = info.get("family_name") or ""
+    prenom = normaliser_nom(info.get("given_name")) or depuis_adresse(email)
+    nom = normaliser_nom(info.get("family_name")) or ""
     photo = info.get("picture")
 
     if not sub or not email:
         return redirect("/?erreur=linkedin_profil_incomplet")
+
+    # Releve avant creation : c'est ce qui distingue une inscription
+    # d'une simple connexion dans le journal d'activite.
+    deja_lie = recuperer_un(
+        "SELECT 1 FROM utilisateur WHERE email = %s LIMIT 1", (email,))
 
     try:
         id_user = _trouver_ou_creer_compte_externe(
@@ -221,9 +241,14 @@ def retour_linkedin():
         )
     except AdresseNonVerifiee:
         return redirect("/?erreur=linkedin_adresse_non_verifiee")
+    except CompteSuspendu:
+        return redirect("/?erreur=compte_suspendu")
     # La réponse DOIT être celle qui porte le cookie : renvoyer une
     # redirection construite à part perdrait la session.
-    return _terminer_connexion(id_user, redirection="/?connexion=linkedin")
+    return _terminer_connexion(id_user,
+                               redirection="/?connexion=linkedin",
+                               fournisseur="linkedin",
+                               creation=not deja_lie)
 
 
 # ============================================================
@@ -232,6 +257,10 @@ def retour_linkedin():
 
 class AdresseNonVerifiee(Exception):
     """Le fournisseur externe ne garantit pas l'adresse annoncée."""
+
+
+class CompteSuspendu(Exception):
+    """Le compte existe mais l'administration l'a fermé."""
 
 
 def _trouver_ou_creer_compte_externe(fournisseur, sub_externe,
@@ -262,10 +291,15 @@ def _trouver_ou_creer_compte_externe(fournisseur, sub_externe,
         raise AdresseNonVerifiee(email)
 
     compte = recuperer_un(
-        "SELECT id_utilisateur, email_verifie FROM utilisateur "
+        "SELECT id_utilisateur, email_verifie, est_actif FROM utilisateur "
         "WHERE email = %s",
         (email,),
     )
+    # Un compte suspendu obtenait un cookie de session, que la requete
+    # suivante refusait : l'ecran annoncait « Votre session a expire »
+    # juste apres une connexion reussie, ce qui ne dit rien de vrai.
+    if compte and not compte.get("est_actif"):
+        raise CompteSuspendu(email)
 
     with curseur(commit=True) as cur:
         if compte:
@@ -302,15 +336,27 @@ def _trouver_ou_creer_compte_externe(fournisseur, sub_externe,
     return id_user
 
 
-def _terminer_connexion(id_user, redirection=None):
+def _terminer_connexion(id_user, redirection=None, fournisseur=None,
+                        creation=False):
     """Crée la session, pose le cookie et renvoie la réponse.
 
     - ``redirection`` renseignée : le navigateur revient d'un fournisseur
       externe (LinkedIn), on le renvoie sur la page demandée ;
     - sinon : réponse JSON, attendue par l'appel ``fetch`` (Google).
+
+    Les comptes créés ou ouverts par un fournisseur externe échappaient
+    au journal d'activité, qui n'était alimenté que par l'inscription et
+    la connexion classiques : la courbe des inscrits ignorait donc tous
+    ceux venus par Google, et c'est le chemin le plus court.
     """
     user_agent = request.headers.get("User-Agent", "")[:255]
     token = creer_session(id_user, user_agent)
+    if creation:
+        evenements.enregistrer("inscription", id_utilisateur=id_user,
+                               type_cible="utilisateur", id_cible=id_user,
+                               contexte={"par": fournisseur})
+    evenements.enregistrer("connexion", id_utilisateur=id_user,
+                           contexte={"moyen": fournisseur or "externe"})
     rep = (redirect(redirection) if redirection
            else jsonify({"ok": True, "id_utilisateur": id_user}))
     return poser_cookie_session(rep, token)

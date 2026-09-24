@@ -1,11 +1,14 @@
 """Lecture et mise à jour du profil utilisateur."""
 
+import json
 import unicodedata
 
 from flask import Blueprint, g, jsonify, request
 
 from models.db import recuperer_un, recuperer_tous, executer, curseur
+from services import evenements
 from utils.auth_helpers import connexion_requise
+from utils.noms import normaliser_nom
 
 bp_profil = Blueprint("profil", __name__, url_prefix="/api/profil")
 
@@ -82,20 +85,38 @@ def _eclater_objectifs(valeur):
         return [str(v).strip() for v in valeur if str(v).strip()]
     return [m.strip() for m in str(valeur).split(",") if m.strip()]
 
-# Diplome le plus eleve obtenu. La liste suit le systeme beninois et
-# place les titres professionnels au milieu du parcours, la ou ils sont
-# reellement : un CAP n'est pas une case « autre » en bas de liste.
+# Diplome le plus eleve obtenu.
+#
+# La liste nommait les diplomes beninois : CEP, BEPC, CQM. Quelqu'un au
+# Cameroun, au Canada ou en France ne s'y reconnaissait pas, et cochait
+# au hasard le libelle qui ressemblait le plus. Elle nomme desormais le
+# NIVEAU atteint, qui se compare d'un pays a l'autre, et cite les
+# diplomes locaux en exemple pour que chacun se retrouve.
+#
+# Les titres professionnels restent au milieu du parcours, la ou ils
+# sont reellement : un CAP n'est pas une case « autre » en bas de liste.
 NIVEAUX_ETUDES = [
     "Sans diplôme",
-    "CEP (primaire)",
-    "BEPC (collège)",
-    "CAP, CQP ou CQM (métier)",
-    "Baccalauréat",
-    "BTS, DUT ou DT (bac+2)",
+    "Fin de primaire (CEP, CEPE…)",
+    "Fin de collège (BEPC, brevet…)",
+    "Diplôme professionnel (CAP, CQP, CQM, BEP…)",
+    "Baccalauréat ou équivalent",
+    "Bac+2 (BTS, DUT, DEC, DT…)",
     "Licence (bac+3)",
     "Master (bac+5)",
     "Doctorat",
 ]
+
+# Ce que les comptes crees avant cette liste portent en base. Les
+# refuser empecherait ces personnes d'enregistrer leur profil, pour un
+# changement dont elles ne sont pas responsables.
+ANCIENS_NIVEAUX = {
+    "cep (primaire)": "Fin de primaire (CEP, CEPE…)",
+    "bepc (college)": "Fin de collège (BEPC, brevet…)",
+    "cap, cqp ou cqm (metier)": "Diplôme professionnel (CAP, CQP, CQM, BEP…)",
+    "baccalaureat": "Baccalauréat ou équivalent",
+    "bts, dut ou dt (bac+2)": "Bac+2 (BTS, DUT, DEC, DT…)",
+}
 
 # Domaine d'etudes ou de metier. Les filieres universitaires et les
 # metiers manuels figurent dans la meme liste, sans hierarchie : la
@@ -123,29 +144,121 @@ DOMAINES = [
 ]
 
 # Suggestions, et non liste fermee : aucune liste ne contiendra jamais
-# tous les etablissements du pays, encore moins les ateliers ou se fait
-# l'apprentissage. Le champ reste libre, ces valeurs ne font que rendre
-# la saisie plus rapide pour les cas frequents.
-ETABLISSEMENTS_SUGGERES = [
-    "Université d'Abomey-Calavi (UAC)",
-    "Université de Parakou (UP)",
-    "UNSTIM (Abomey)",
-    "Université Nationale d'Agriculture (UNA)",
-    "IFRI (Informatique, UAC)",
-    "EPAC (École Polytechnique d'Abomey-Calavi)",
-    "ENEAM (Économie Appliquée et Management)",
-    "ENSET (Lokossa)",
-    "INSTI (Lokossa)",
-    "ESGIS Bénin",
-    "Institut CERCO",
-    "HECM (Commerce et Management)",
-    "IRGIB Africa",
-    "Lycée technique Coulibaly (Cotonou)",
+# tous les etablissements d'un pays, encore moins les ateliers ou se
+# fait l'apprentissage. Le champ reste libre ; ces valeurs ne font que
+# rendre la saisie plus rapide pour les cas frequents.
+#
+# Elles sont classees par pays : proposer dix universites beninoises a
+# quelqu'un qui etudie a Dakar ou a Montreal ne l'aide pas, et laisse
+# croire que la plateforme n'est pas pour lui.
+ETABLISSEMENTS_PAR_PAYS = {
+    "Bénin": [
+        "Université d'Abomey-Calavi (UAC)",
+        "Université de Parakou (UP)",
+        "UNSTIM (Abomey)",
+        "Université Nationale d'Agriculture (UNA)",
+        "IFRI (Informatique, UAC)",
+        "EPAC (École Polytechnique d'Abomey-Calavi)",
+        "ENEAM (Économie Appliquée et Management)",
+        "ENSET (Lokossa)",
+        "INSTI (Lokossa)",
+        "ESGIS Bénin",
+        "Institut CERCO",
+        "HECM (Commerce et Management)",
+        "IRGIB Africa",
+        "Lycée technique Coulibaly (Cotonou)",
+    ],
+    "Togo": [
+        "Université de Lomé",
+        "Université de Kara",
+        "École Polytechnique de Lomé (EPL)",
+        "ESGIS Togo",
+    ],
+    "Côte d'Ivoire": [
+        "Université Félix Houphouët-Boigny",
+        "Institut National Polytechnique Houphouët-Boigny (INP-HB)",
+        "Université Nangui Abrogoua",
+        "ESATIC",
+    ],
+    "Sénégal": [
+        "Université Cheikh Anta Diop (UCAD)",
+        "Université Gaston Berger (UGB)",
+        "École Supérieure Polytechnique (ESP)",
+        "Université Amadou Mahtar Mbow",
+    ],
+    "Cameroun": [
+        "Université de Yaoundé I",
+        "Université de Douala",
+        "Université de Buea",
+        "École Nationale Supérieure Polytechnique (ENSP)",
+    ],
+    "Burkina Faso": [
+        "Université Joseph Ki-Zerbo",
+        "Université Nazi Boni",
+        "Institut 2iE",
+    ],
+    "Mali": ["Université des Sciences Sociales et de Gestion de Bamako",
+             "Université des Sciences, Techniques et Technologies de Bamako"],
+    "Niger": ["Université Abdou Moumouni", "Université de Zinder"],
+    "Maroc": ["Université Mohammed V de Rabat",
+              "Université Hassan II de Casablanca",
+              "Université Cadi Ayyad", "ENSA", "ENCG"],
+    "Tunisie": ["Université de Tunis El Manar", "Université de Carthage",
+                "INSAT"],
+    "Algérie": ["Université d'Alger", "USTHB", "Université de Constantine"],
+    "France": ["Sorbonne Université", "Université Paris-Saclay",
+               "Université de Lille", "Université de Bordeaux",
+               "INSA", "IUT", "BTS en lycée"],
+    "Canada": ["Université de Montréal", "Université Laval",
+               "Université du Québec (UQAM)", "Cégep", "McGill University"],
+    "Belgique": ["Université libre de Bruxelles (ULB)", "UCLouvain",
+                 "Université de Liège", "Haute École"],
+    "Suisse": ["Université de Genève", "Université de Lausanne", "EPFL"],
+}
+
+# Propositions valables partout, ajoutees a celles du pays : elles
+# decrivent un lieu de formation plutot qu'un etablissement precis, et
+# couvrent l'apprentissage, qui n'a d'annuaire nulle part.
+ETABLISSEMENTS_UNIVERSELS = [
+    "Lycée ou collège",
     "Centre de formation professionnelle",
     "Atelier ou maître artisan",
+    "Formation en ligne",
+    "En autodidacte",
 ]
 
+# Conserve pour les appels qui ne precisent aucun pays.
+ETABLISSEMENTS_SUGGERES = (ETABLISSEMENTS_PAR_PAYS["Bénin"]
+                           + ETABLISSEMENTS_UNIVERSELS)
+
+
+def etablissements_pour(pays):
+    """Suggestions adaptées au pays, puis celles valables partout."""
+    if not pays:
+        return ETABLISSEMENTS_UNIVERSELS
+    cible = _sans_accent(pays)
+    for nom, liste in ETABLISSEMENTS_PAR_PAYS.items():
+        if _sans_accent(nom) == cible:
+            return liste + ETABLISSEMENTS_UNIVERSELS
+    return ETABLISSEMENTS_UNIVERSELS
+
+
 LONGUEUR_ETABLISSEMENT = 120
+
+# La filiere precise ce que le domaine laisse large : « Informatique et
+# numerique » ne dit pas si l'on fait du reseau ou du developpement, et
+# c'est justement ce qui permet d'orienter quelqu'un. Champ libre :
+# aucune liste ne contiendra les filieres de cent dix-sept pays.
+LONGUEUR_FILIERE = 120
+
+# Une image de 320 pixels de côté encodée en JPEG tient largement
+# dessous ; au-delà, c'est qu'elle n'a pas été réduite.
+LONGUEUR_PHOTO = 400_000
+
+# Ce qu'un profil montre de l'activite recente. Au-dela, la page
+# devient un journal qu'on ne lit pas, et la requete s'alourdit
+# pour rien.
+LIMITE_ACTIVITE = 5
 
 
 def _sans_accent(texte):
@@ -153,6 +266,22 @@ def _sans_accent(texte):
     decompose = unicodedata.normalize("NFD", str(texte))
     return "".join(c for c in decompose
                    if unicodedata.category(c) != "Mn").strip().lower()
+
+
+def niveau_retenu(valeur):
+    """Niveau d'études officiel, ou None.
+
+    Accepte les libellés d'avant l'ouverture internationale : quelqu'un
+    dont le profil porte « BEPC (collège) » doit pouvoir l'enregistrer
+    à nouveau sans que ce changement, dont il n'est pas responsable, lui
+    ferme la porte.
+    """
+    if valeur is None:
+        return None
+    officiel = _canoniser(valeur, NIVEAUX_ETUDES)
+    if officiel is not None:
+        return officiel
+    return ANCIENS_NIVEAUX.get(_sans_accent(valeur))
 
 
 def _canoniser(valeur, liste):
@@ -176,6 +305,156 @@ def _canoniser(valeur, liste):
     return None
 
 
+LONGUEUR_DOMAINE = 80
+
+
+def domaine_retenu(valeur):
+    """Domaine a enregistrer, ou None si la valeur ne convient pas.
+
+    La liste ne contiendra jamais tous les metiers. « Autre domaine »
+    existait donc en dernier choix, mais sans nulle part ou dire
+    lequel : la personne cochait la case et son metier disparaissait.
+    Une valeur absente de la liste est desormais acceptee telle quelle,
+    apres nettoyage. C'est aussi ce qui permet aux comptes deja crees
+    avec un domaine libre de continuer a enregistrer leur profil.
+    """
+    if valeur is None:
+        return None
+    brut = " ".join(str(valeur).split())
+    if not brut:
+        return ""
+    officiel = _canoniser(brut, DOMAINES)
+    if officiel:
+        return officiel
+    if len(brut) < 2 or not any(c.isalpha() for c in brut):
+        return None
+    return brut[:LONGUEUR_DOMAINE]
+
+
+def id_pays_depuis(valeur):
+    """Identifiant du pays a partir d'un identifiant ou d'un libelle.
+
+    Le client envoyait un identifiant qu'il devait retrouver lui-meme
+    dans un referentiel charge a part. Quand ce chargement echouait, le
+    pays partait vide sans que rien ne le signale.
+    """
+    if valeur in (None, ""):
+        return None
+    try:
+        return int(valeur)
+    except (TypeError, ValueError):
+        pass
+    cible = _sans_accent(valeur)
+    for ligne in recuperer_tous("SELECT id_pays, libelle FROM pays"):
+        if _sans_accent(ligne["libelle"]) == cible:
+            return ligne["id_pays"]
+    return None
+
+
+def ids_secteurs_depuis(valeurs):
+    """Identifiants de secteurs a partir d'identifiants ou de libelles."""
+    if not valeurs:
+        return []
+    connus = recuperer_tous("SELECT id_secteur, libelle FROM secteur")
+    par_libelle = {_sans_accent(s["libelle"]): s["id_secteur"] for s in connus}
+    existants = {s["id_secteur"] for s in connus}
+    retenus = []
+    for brut in valeurs:
+        trouve = None
+        try:
+            entier = int(brut)
+            trouve = entier if entier in existants else None
+        except (TypeError, ValueError):
+            trouve = par_libelle.get(_sans_accent(brut))
+        if trouve is not None and trouve not in retenus:
+            retenus.append(trouve)
+    return retenus
+
+
+# Champs du profil que l'inscription peut deja renseigner. Ils etaient
+# recueillis pendant l'accueil guide, gardes dans une variable de la
+# page, puis envoyes seulement apres la saisie du code de confirmation.
+# Toute personne qui fermait l'onglet pour aller lire son e-mail
+# perdait la totalite de sa saisie et trouvait un profil vide.
+CHAMPS_INSCRIPTION = ("bio", "niveau_etudes", "domaine", "filiere",
+                      "etablissement", "situation", "telephone", "ville")
+
+
+def profil_initial(bloc):
+    """Colonnes a ecrire a la creation du compte, depuis le bloc recu.
+
+    Renvoie ``(colonnes, secteurs, erreur)``. Une valeur refusee ne fait
+    pas echouer l'inscription : le compte se crée, le champ reste vide,
+    et la personne le corrigera depuis ses parametres. Perdre un compte
+    pour un etablissement trop long serait hors de proportion.
+    """
+    if not isinstance(bloc, dict):
+        return {}, [], None
+
+    colonnes = {}
+    for cle in CHAMPS_INSCRIPTION:
+        valeur = bloc.get(cle)
+        if valeur in (None, ""):
+            continue
+        colonnes[cle] = valeur
+
+    if "niveau_etudes" in colonnes:
+        retenu = niveau_retenu(colonnes["niveau_etudes"])
+        if retenu:
+            colonnes["niveau_etudes"] = retenu
+        else:
+            colonnes.pop("niveau_etudes")
+
+    if "situation" in colonnes:
+        retenu = _canoniser(colonnes["situation"], SITUATIONS)
+        if retenu:
+            colonnes["situation"] = retenu
+        else:
+            colonnes.pop("situation")
+
+    if "domaine" in colonnes:
+        retenu = domaine_retenu(colonnes["domaine"])
+        if retenu:
+            colonnes["domaine"] = retenu
+        else:
+            colonnes.pop("domaine")
+
+    if "telephone" in colonnes:
+        numero = normaliser_telephone(colonnes["telephone"])
+        if numero:
+            colonnes["telephone"] = numero
+        else:
+            colonnes.pop("telephone")
+
+    if "etablissement" in colonnes:
+        colonnes["etablissement"] = \
+            str(colonnes["etablissement"]).strip()[:LONGUEUR_ETABLISSEMENT]
+    if "filiere" in colonnes:
+        colonnes["filiere"] = \
+            " ".join(str(colonnes["filiere"]).split())[:LONGUEUR_FILIERE]
+    if "bio" in colonnes:
+        colonnes["bio"] = str(colonnes["bio"]).strip()[:2000]
+    if "ville" in colonnes:
+        colonnes["ville"] = str(colonnes["ville"]).strip()[:120]
+
+    objectifs = bloc.get("objectifs")
+    if isinstance(objectifs, (list, tuple)):
+        retenus = []
+        for brut in list(objectifs)[:LIMITE_OBJECTIFS]:
+            officiel = _canoniser(brut, OBJECTIFS)
+            if officiel and officiel not in retenus:
+                retenus.append(officiel)
+        if retenus:
+            colonnes["objectif"] = \
+                SEPARATEUR_OBJECTIFS.join(retenus)[:LONGUEUR_OBJECTIFS]
+
+    id_pays = id_pays_depuis(bloc.get("id_pays") or bloc.get("pays"))
+    if id_pays:
+        colonnes["id_pays"] = id_pays
+
+    return colonnes, ids_secteurs_depuis(bloc.get("secteurs")), None
+
+
 @bp_profil.get("/referentiels-profil")
 def referentiels_profil():
     """Valeurs proposees pour les champs a choix ferme.
@@ -183,12 +462,18 @@ def referentiels_profil():
     Servies par le serveur plutot qu'ecrites dans la page : la liste
     validee et la liste affichee ne peuvent alors pas diverger.
     """
+    # Les suggestions d'établissement suivent le pays : proposer dix
+    # universités béninoises à quelqu'un qui étudie à Dakar ou à
+    # Montréal ne l'aide pas, et laisse croire que la plateforme n'est
+    # pas pour lui.
+    pays = request.args.get("pays")
     return jsonify({
         "situations": SITUATIONS,
         "objectifs": OBJECTIFS,
         "niveaux_etudes": NIVEAUX_ETUDES,
         "domaines": DOMAINES,
-        "etablissements": ETABLISSEMENTS_SUGGERES,
+        "etablissements": etablissements_pour(pays),
+        "pays_avec_suggestions": sorted(ETABLISSEMENTS_PAR_PAYS),
     })
 
 
@@ -239,6 +524,7 @@ def modifier_profil():
         "langues": d.get("langues"),
         "profil_pro": d.get("profil_pro"),
         "niveau_etudes": d.get("niveau_etudes"),
+        "filiere": d.get("filiere"),
         "domaine": d.get("domaine"),
         "etablissement": d.get("etablissement"),
         "telephone": d.get("telephone"),
@@ -250,18 +536,37 @@ def modifier_profil():
     # telle quelle sur les profils publics. La valeur retenue est celle
     # de la liste, pas celle recue : la base ne garde ainsi qu'une seule
     # orthographe par intitule.
-    A_CHOIX_FERME = (
-        ("situation", SITUATIONS, "Situation inconnue."),
-        ("niveau_etudes", NIVEAUX_ETUDES, "Niveau d'études inconnu."),
-        ("domaine", DOMAINES, "Domaine inconnu."),
-    )
-    for cle, liste, message in A_CHOIX_FERME:
+    if "situation" in champs:
+        retenu = _canoniser(champs["situation"], SITUATIONS)
+        if retenu is None:
+            return jsonify({"erreur": "Situation inconnue."}), 400
+        champs["situation"] = retenu
+
+    if "niveau_etudes" in champs:
+        retenu = niveau_retenu(champs["niveau_etudes"])
+        if retenu is None:
+            return jsonify({"erreur": "Niveau d'études inconnu."}), 400
+        champs["niveau_etudes"] = retenu
+
+    # Le domaine, lui, reste ouvert : voir domaine_retenu.
+    if "domaine" in champs:
+        retenu = domaine_retenu(champs["domaine"])
+        if retenu is None:
+            return jsonify({"erreur": "Précisez votre domaine ou métier "
+                                      "en toutes lettres."}), 400
+        champs["domaine"] = retenu
+
+    # Les noms passent par la même mise en forme qu'à l'inscription :
+    # une modification de profil ne doit pas rouvrir la porte que
+    # l'inscription vient de fermer.
+    for cle in ("prenom", "nom"):
         if cle not in champs:
             continue
-        retenu = _canoniser(champs[cle], liste)
-        if retenu is None:
-            return jsonify({"erreur": message}), 400
-        champs[cle] = retenu
+        propre = normaliser_nom(champs[cle])
+        if not propre:
+            return jsonify({"erreur":
+                "Le prénom et le nom doivent contenir des lettres."}), 400
+        champs[cle] = propre
 
     # Plusieurs objectifs a la fois. Personne ne cherche une seule chose
     # : on prepare un depart a l'etranger tout en cherchant un stage, on
@@ -295,9 +600,26 @@ def modifier_profil():
                 "avec ou sans indicatif."}), 400
         champs["telephone"] = numero
 
+    # La photo est stockée dans la base, faute de disque persistant sur
+    # l'hébergement. La page la réduit avant de l'envoyer ; cette borne
+    # est le garde-fou, pour qu'un client modifié ne puisse pas y loger
+    # une image entière.
+    if "photo_url" in champs:
+        photo = str(champs["photo_url"]).strip()
+        if len(photo) > LONGUEUR_PHOTO:
+            return jsonify({"erreur":
+                "Image trop lourde. Choisissez une photo plus légère."}), 400
+        if photo and not photo.startswith(("data:image/", "http://",
+                                           "https://")):
+            return jsonify({"erreur": "Format d'image non reconnu."}), 400
+        champs["photo_url"] = photo
+
     if "etablissement" in champs:
         champs["etablissement"] = \
             str(champs["etablissement"]).strip()[:LONGUEUR_ETABLISSEMENT]
+    if "filiere" in champs:
+        champs["filiere"] = \
+            " ".join(str(champs["filiere"]).split())[:LONGUEUR_FILIERE]
     if champs.get("profil_pro"):
         lien = champs["profil_pro"].strip()
         if lien and not lien.startswith(("https://", "http://")):
@@ -349,7 +671,20 @@ def modifier_profil():
                 (anciennete[:40], id_user), commit=True,
             )
 
-    return jsonify(_charger_profil(id_user))
+    profil = _charger_profil(id_user)
+    # Savoir a quel moment un profil se remplit dit ce qui bloque dans le
+    # parcours. Le contenu des champs ne part pas : seulement combien
+    # sont renseignes, et lesquels des grands blocs le sont.
+    evenements.depuis_requete(
+        "profil_complete", type_cible="utilisateur", id_cible=id_user,
+        contexte={"champs_remplis": sum(
+                      1 for c in ("bio", "photo_url", "ville", "etudes",
+                                  "situation", "objectif", "langues",
+                                  "niveau_etudes", "domaine", "filiere",
+                                  "etablissement", "telephone")
+                      if profil.get(c)),
+                  "secteurs": len(profil.get("secteurs") or [])})
+    return jsonify(profil)
 
 
 def _est_en_ligne(derniere_activite):
@@ -374,7 +709,7 @@ def _charger_profil(id_user, public=False):
                   u.est_admin, u.doit_changer_mdp, u.cree_le,
                   u.derniere_activite,
                   u.situation, u.objectif, u.langues, u.profil_pro,
-                  u.niveau_etudes, u.domaine, u.etablissement,
+                  u.niveau_etudes, u.domaine, u.filiere, u.etablissement,
                   u.telephone,
                   u.email_verifie,
                   md.est_verifie, md.dispo, md.anciennete,
@@ -421,10 +756,6 @@ def _charger_profil(id_user, public=False):
         """SELECT COUNT(*) AS n FROM marquage_reponse m
              JOIN reponse r ON r.id_reponse = m.id_reponse
             WHERE r.id_auteur = %s AND m.type_marquage = 'utile'""")
-    base["nb_suivis"] = _compter(
-        "SELECT COUNT(*) AS n FROM suivi_mentor WHERE id_suiveur = %s")
-    base["nb_abonnes"] = _compter(
-        "SELECT COUNT(*) AS n FROM suivi_mentor WHERE id_mentor = %s")
 
     # Presence. Calculee ici plutot que dans le navigateur : celui-ci ne
     # connait ni l'heure du serveur ni le seuil retenu, et deux
@@ -452,6 +783,45 @@ def _charger_profil(id_user, public=False):
          ORDER BY ordre, id_experience""",
         (id_user,),
     )
+
+    # L'activite recente. Un profil qui n'annonce que des chiffres ne
+    # dit rien de la personne : on ne sait pas ce qu'elle demande ni ce
+    # qu'elle sait. Ces deux listes sont ce qui permet de decider si
+    # l'on s'adresse a elle.
+    base["dernieres_questions"] = recuperer_tous(
+        """SELECT q.id_question, q.titre, q.publiee_le, q.statut,
+                  s.libelle AS secteur,
+                  (SELECT COUNT(*) FROM reponse r
+                    WHERE r.id_question = q.id_question) AS nb_reponses
+             FROM question q
+        LEFT JOIN secteur s ON s.id_secteur = q.id_secteur
+            WHERE q.id_auteur = %s
+         ORDER BY q.publiee_le DESC
+            LIMIT %s""",
+        (id_user, LIMITE_ACTIVITE))
+    base["dernieres_reponses"] = recuperer_tous(
+        """SELECT r.id_reponse, r.contenu, r.cree_le,
+                  q.id_question, q.titre,
+                  (q.id_reponse_retenue = r.id_reponse) AS retenue,
+                  (SELECT COUNT(*) FROM marquage_reponse m
+                    WHERE m.id_reponse = r.id_reponse
+                      AND m.type_marquage = 'utile') AS nb_utiles
+             FROM reponse r
+             JOIN question q ON q.id_question = r.id_question
+            WHERE r.id_auteur = %s
+         ORDER BY r.cree_le DESC
+            LIMIT %s""",
+        (id_user, LIMITE_ACTIVITE))
+    for r in base["dernieres_reponses"]:
+        r["retenue"] = bool(r.get("retenue"))
+        # Un extrait suffit : le profil montre ce qui a ete dit, la page
+        # de la question porte le texte entier.
+        r["extrait"] = " ".join(str(r.pop("contenu") or "").split())[:200]
+
+    base["nb_reponses_retenues"] = (recuperer_un(
+        """SELECT COUNT(*) AS n FROM question q
+             JOIN reponse r ON r.id_reponse = q.id_reponse_retenue
+            WHERE r.id_auteur = %s""", (id_user,)) or {}).get("n", 0)
     return base
 
 
@@ -479,7 +849,58 @@ def statistiques_publiques():
             "WHERE role = 'mentor' AND est_actif = 1"),
         "questions": compter("SELECT COUNT(*) AS n FROM question"),
         "reponses": compter("SELECT COUNT(*) AS n FROM reponse"),
+        # Le bandeau annoncait une note moyenne de 4,8/5, ecrite en dur.
+        # Le delai avant la premiere reponse, lui, se mesure, et il dit
+        # a qui hesite a poser sa question ce qu'il veut savoir : dans
+        # combien de temps on lui repondra.
+        "delai_premiere_reponse_heures": _delai_median_premiere_reponse(),
     })
+
+
+def _delai_median_premiere_reponse():
+    """Heures ecoulees, en median, entre une question et sa reponse.
+
+    La mediane plutot que la moyenne : une seule question restee sans
+    reponse pendant trois mois tirerait la moyenne au point de la rendre
+    fausse pour tout le monde. Renvoie None tant qu'il n'y a pas assez
+    de questions repondues pour que le chiffre veuille dire quelque
+    chose : mieux vaut ne rien annoncer qu'annoncer un delai tire d'un
+    seul cas.
+    """
+    from datetime import datetime
+
+    lignes = recuperer_tous(
+        "SELECT publiee_le, premiere_reponse_le FROM question "
+        "WHERE premiere_reponse_le IS NOT NULL")
+    if len(lignes) < MINIMUM_POUR_UN_DELAI:
+        return None
+
+    def _instant(valeur):
+        if isinstance(valeur, datetime):
+            return valeur
+        texte = str(valeur)[:19].replace("T", " ")
+        try:
+            return datetime.strptime(texte, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+
+    ecarts = []
+    for l in lignes:
+        debut, fin = _instant(l["publiee_le"]), _instant(l["premiere_reponse_le"])
+        if debut and fin and fin >= debut:
+            ecarts.append((fin - debut).total_seconds() / 3600)
+    if len(ecarts) < MINIMUM_POUR_UN_DELAI:
+        return None
+    ecarts.sort()
+    milieu = len(ecarts) // 2
+    mediane = (ecarts[milieu] if len(ecarts) % 2
+               else (ecarts[milieu - 1] + ecarts[milieu]) / 2)
+    return round(mediane, 1)
+
+
+# En dessous, le chiffre dirait surtout le hasard des premieres
+# questions.
+MINIMUM_POUR_UN_DELAI = 5
 
 
 # ============================================================
@@ -493,8 +914,12 @@ PREFERENCES_CONNUES = {
     "reponse_question": True,
     "reactions": True,
     "questions_secteur": False,
-    "reponses_suivis": True,
     "infolettre": False,
+    # Le résumé de ce qui bouge, au plus une fois tous les deux jours.
+    # Activé par défaut : c'est ce qui ramène des gens qui n'ont aucune
+    # raison de revenir d'eux-mêmes, et chaque message porte son lien de
+    # désinscription.
+    "resume_activite": True,
 }
 CANAUX = ("app", "email")
 
@@ -510,7 +935,6 @@ def _lire_preferences(id_user):
     serait illisible, retombe sur les valeurs par défaut plutôt que de
     faire échouer l'affichage.
     """
-    import json
 
     prefs = _preferences_par_defaut()
     ligne = recuperer_un(
@@ -547,7 +971,6 @@ def enregistrer_preferences():
     Seules les clés connues sont retenues : le contenu écrit en base est
     donc borné, quoi qu'envoie le client.
     """
-    import json
 
     recu = request.get_json(silent=True) or {}
     prefs = _preferences_par_defaut()
@@ -620,6 +1043,8 @@ def supprimer_mon_compte():
 
     executer("DELETE FROM utilisateur WHERE id_utilisateur = %s",
              (id_user,), commit=True)
+    evenements.enregistrer("compte_supprime", type_cible="utilisateur",
+                           contexte={"par": "le titulaire"})
 
     reponse = jsonify({"ok": True})
     return supprimer_cookie_session(reponse)
@@ -643,7 +1068,7 @@ def exporter_mes_donnees():
         """SELECT prenom, nom, email, role, bio, etudes, ville,
                   photo_url, cree_le, derniere_co, email_verifie,
                   situation, objectif, langues, profil_pro,
-                  niveau_etudes, domaine, etablissement, telephone
+                  niveau_etudes, domaine, filiere, etablissement, telephone
              FROM utilisateur WHERE id_utilisateur = %s""", (id_user,))
 
     return jsonify({
@@ -659,4 +1084,39 @@ def exporter_mes_donnees():
             "SELECT s.libelle FROM secteur s "
             "JOIN utilisateur_secteur us ON us.id_secteur = s.id_secteur "
             "WHERE us.id_utilisateur = %s", (id_user,)),
+    })
+
+
+# ============================================================
+# RÉSUMÉ PÉRIODIQUE
+# ============================================================
+
+@bp_profil.get("/resume/stop")
+def desinscrire_resume():
+    """Désinscription du résumé, sans avoir à se connecter.
+
+    Un désabonnement difficile ne se fait pas : il se règle en marquant
+    l'expéditeur comme indésirable, ce qui coûte au domaine entier. Le
+    lien porte donc une signature dérivée de la clé du serveur, valable
+    sans session et inutilisable pour désinscrire quelqu'un d'autre.
+    """
+    from services.resume import jeton_valide
+
+    try:
+        id_user = int(request.args.get("u") or 0)
+    except (TypeError, ValueError):
+        id_user = 0
+    if not id_user or not jeton_valide(id_user, request.args.get("j")):
+        return jsonify({"erreur": "Lien de désinscription invalide."}), 400
+
+    prefs = _lire_preferences(id_user)
+    prefs.setdefault("email", {})["resume_activite"] = False
+    executer(
+        "UPDATE utilisateur SET preferences_notif = %s WHERE id_utilisateur = %s",
+        (json.dumps(prefs), id_user), commit=True)
+    return jsonify({
+        "ok": True,
+        "message": "C'est fait : vous ne recevrez plus le résumé de "
+                   "l'activité. Les réponses à vos propres questions "
+                   "continuent de vous parvenir.",
     })

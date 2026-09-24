@@ -104,7 +104,93 @@ def supprimer(id_r):
         return jsonify({"erreur": "Action non autorisée."}), 403
     executer("DELETE FROM reponse WHERE id_reponse = %s",
              (id_r,), commit=True)
+    # Le compteur du referent n'etait jamais corrige : il montait a la
+    # publication et ne redescendait pas. L'annuaire affichait « 10
+    # reponses » sous quelqu'un qui en avait deux, et le classait devant
+    # des referents plus actifs, puisque c'est sur ce compteur qu'il
+    # trie. On le recale sur ce que la base contient reellement.
+    _recaler_compteur(r["id_auteur"])
     return jsonify({"ok": True})
+
+
+def _recaler_compteur(id_auteur):
+    """Remet nb_reponses en accord avec les reponses existantes."""
+    reel = (recuperer_un(
+        "SELECT COUNT(*) AS n FROM reponse WHERE id_auteur = %s",
+        (id_auteur,)) or {}).get("n", 0)
+    executer(
+        "UPDATE mentor_details SET nb_reponses = %s WHERE id_utilisateur = %s",
+        (reel, id_auteur), commit=True)
+    return reel
+
+
+@bp_reponses.post("/<int:id_r>/note")
+@connexion_requise
+def noter(id_r):
+    """Note une réponse de un à cinq, et met à jour la moyenne du référent.
+
+    Les étoiles existaient à l'écran depuis l'origine : on cliquait, un
+    message confirmait « Note attribuée », et rien ne partait nulle
+    part. La moyenne affichée sur les profils de référents valait donc
+    zéro pour tout le monde, faute d'avoir jamais été calculée.
+    """
+    d = request.get_json(silent=True) or {}
+    try:
+        valeur = int(d.get("valeur"))
+    except (TypeError, ValueError):
+        return jsonify({"erreur": "Note attendue entre 1 et 5."}), 400
+    if not 1 <= valeur <= 5:
+        return jsonify({"erreur": "Note attendue entre 1 et 5."}), 400
+
+    reponse = recuperer_un(
+        "SELECT id_auteur FROM reponse WHERE id_reponse = %s", (id_r,))
+    if not reponse:
+        return jsonify({"erreur": "Réponse introuvable."}), 404
+    id_user = g.utilisateur["id_utilisateur"]
+    if reponse["id_auteur"] == id_user:
+        return jsonify({"erreur": "On ne note pas sa propre réponse."}), 400
+
+    deja = recuperer_un(
+        """SELECT valeur FROM note_reponse
+            WHERE id_reponse = %s AND id_utilisateur = %s""",
+        (id_r, id_user))
+    if deja:
+        executer(
+            """UPDATE note_reponse SET valeur = %s
+                WHERE id_reponse = %s AND id_utilisateur = %s""",
+            (valeur, id_r, id_user), commit=True)
+    else:
+        executer(
+            """INSERT INTO note_reponse (id_reponse, id_utilisateur, valeur)
+               VALUES (%s, %s, %s)""",
+            (id_r, id_user, valeur), commit=True)
+
+    note_auteur = _recalculer_note(reponse["id_auteur"])
+    resume = recuperer_un(
+        """SELECT COUNT(*) AS n, AVG(valeur) AS moyenne
+             FROM note_reponse WHERE id_reponse = %s""", (id_r,)) or {}
+    evenements.depuis_requete("reponse_notee", type_cible="reponse",
+                              id_cible=id_r, contexte={"valeur": valeur})
+    return jsonify({
+        "ma_note": valeur,
+        "nb_notes": resume.get("n") or 0,
+        "note_moyenne": round(float(resume.get("moyenne") or 0), 1),
+        "note_auteur": note_auteur,
+    })
+
+
+def _recalculer_note(id_auteur):
+    """Moyenne des notes reçues par un référent, sur toutes ses réponses."""
+    ligne = recuperer_un(
+        """SELECT AVG(n.valeur) AS moyenne
+             FROM note_reponse n
+             JOIN reponse r ON r.id_reponse = n.id_reponse
+            WHERE r.id_auteur = %s""", (id_auteur,)) or {}
+    moyenne = round(float(ligne.get("moyenne") or 0), 2)
+    executer(
+        "UPDATE mentor_details SET note_moyenne = %s WHERE id_utilisateur = %s",
+        (moyenne, id_auteur), commit=True)
+    return moyenne
 
 
 @bp_reponses.post("/<int:id_r>/utile")
@@ -131,4 +217,9 @@ def basculer_utile(id_r):
            VALUES (%s, %s, 'utile')""",
         (id_r, id_user), commit=True,
     )
+    # « Cette réponse m'a servi » est le seul signal de qualité que
+    # laisse un bénéficiaire. Il figurait au vocabulaire du journal sans
+    # y être jamais inscrit.
+    evenements.depuis_requete("reponse_utile", type_cible="reponse",
+                              id_cible=id_r)
     return jsonify({"marque": True})

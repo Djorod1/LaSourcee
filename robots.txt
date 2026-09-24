@@ -7,6 +7,11 @@ Allow: /
 # moteur de recherche : elles ne servent qu'à l'application et aux
 # liens reçus par e-mail.
 Disallow: /api/
+
+# Les questions et leurs reponses sont servies en HTML complet,
+# lisibles sans compte et sans JavaScript.
+Allow: /questions
+Allow: /question/
 Disallow: /verifier-email.html
 Disallow: /reinitialiser.html
 

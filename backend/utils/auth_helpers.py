@@ -50,6 +50,17 @@ def detruire_session(token: str) -> None:
 
 
 def utilisateur_depuis_jeton(token):
+    """Le compte derrière ce jeton, si la session tient encore.
+
+    L'échéance se comparait à ``CURRENT_TIMESTAMP``. Or elle est écrite
+    depuis Python en temps universel, tandis que ``CURRENT_TIMESTAMP``
+    suit le fuseau du serveur de base : sur un serveur réglé en UTC+1,
+    une session valable encore trente minutes se lisait comme déjà
+    expirée, et tout le monde se retrouvait déconnecté sans raison
+    apparente. Sur un serveur en retard sur UTC, l'inverse : des sessions
+    échues restaient ouvertes. On compare donc à une heure universelle
+    explicite, la même que celle qu'on écrit.
+    """
     if not token:
         return None
     return recuperer_un(
@@ -58,9 +69,9 @@ def utilisateur_depuis_jeton(token):
              FROM session_web s
              JOIN utilisateur u ON u.id_utilisateur = s.id_utilisateur
             WHERE s.id_token = %s
-              AND s.expire_le > CURRENT_TIMESTAMP
+              AND s.expire_le > %s
               AND u.est_actif = 1""",
-        (token,),
+        (token, datetime.utcnow()),
     )
 
 
@@ -211,7 +222,7 @@ def purger_sessions_expirees():
     if random.randint(1, 50) != 1:
         return
     try:
-        executer("DELETE FROM session_web WHERE expire_le < CURRENT_TIMESTAMP",
-                 commit=True)
+        executer("DELETE FROM session_web WHERE expire_le < %s",
+                 (datetime.utcnow(),), commit=True)
     except Exception:
         pass

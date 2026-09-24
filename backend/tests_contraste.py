@@ -121,6 +121,54 @@ if __name__ == "__main__":
         if fond and texte:
             verifier(nom, texte.group(1), fond.group(1))
 
+    # Les regles reelles, et non plus seulement les jetons.
+    #
+    # Le controle precedent verifiait le couple --sur-primaire /
+    # --primaire, alors que .btn-primaire ecrivait « color: #fff » en
+    # dur : le jeton passait, et tous les boutons principaux restaient
+    # illisibles en theme sombre (2,5:1). Un test qui verifie autre
+    # chose que ce qui s'affiche ne protege rien.
+    #
+    # On lit donc la declaration de chaque bouton, on resout les jetons
+    # dans les deux themes, et on mesure ce que la personne voit.
+    clair = jetons_du_theme(re.search(r":root\s*\{(.*?)\}", css, re.S).group(1))
+
+    def _resoudre(valeur, jetons, profondeur=0):
+        """Remonte les var(--x) jusqu'a une couleur, ou None."""
+        valeur = (valeur or "").strip()
+        if profondeur > 5:
+            return None
+        if valeur.startswith("#"):
+            return valeur
+        ref = re.match(r"var\((--[\w-]+)\)", valeur)
+        if ref and ref.group(1) in jetons:
+            return _resoudre(jetons[ref.group(1)], jetons, profondeur + 1)
+        return None
+
+    BOUTONS = [
+        ("Bouton principal", r"\.btn-primaire\s*\{([^}]*)\}"),
+        ("Bouton accent", r"\.btn-ambre\s*\{([^}]*)\}"),
+        ("Bouton destructeur", r"\.btn-danger\s*\{([^}]*)\}"),
+        ("Onglet actif", r"\.onglet\.actif\s*\{([^}]*)\}"),
+        ("Bulle de message envoye", r"\.bulle\.envoye\s*\{([^}]*)\}"),
+    ]
+    for nom, regle in BOUTONS:
+        corps = re.search(regle, css)
+        if not corps:
+            _echecs.append((nom, "?", "?", 0.0))
+            print("  [ECHEC] %-45s regle introuvable" % nom)
+            continue
+        decl = corps.group(1)
+        fond = re.search(r"background(?:-color)?:\s*([^;]+)", decl)
+        texte = re.search(r"(?<!-)color:\s*([^;]+)", decl)
+        if not (fond and texte):
+            continue
+        for theme, jetons in (("clair", clair), ("sombre", {**clair, **j})):
+            f = _resoudre(fond.group(1), jetons)
+            t = _resoudre(texte.group(1), jetons)
+            if f and t:
+                verifier(f"{nom}, theme {theme}", t, f)
+
     # Un fond clair ecrit en dur ignore le theme sombre. Les deux menus
     # deroulants de telephone et le bouton burger etaient blancs :
     # eclatants au milieu d'une page sombre, et invisibles a tout le
@@ -133,7 +181,19 @@ if __name__ == "__main__":
         nu = ligne.strip()
         if nu.startswith(("/*", "*", "--")):
             continue
-        if re.search(r"background:\s*(#fff\b|#ffffff\b|white\b)", nu, re.I):
+        # Un blanc translucide n'est pas forcement un defaut : pose a
+        # faible opacite sur une surface deja sombre, c'est un voile de
+        # survol. Au-dela de la moitie, en revanche, il recouvre le
+        # theme : c'est ainsi que l'en-tete de l'accueil restait une
+        # bande claire en mode sombre.
+        blanc_translucide = re.search(
+            r"background:\s*rgba\(\s*255\s*,\s*255\s*,\s*255\s*,"
+            r"\s*([0-9.]+)\s*\)", nu, re.I)
+        opaque = re.search(r"background:\s*(#fff\b|#ffffff\b|white\b)",
+                           nu, re.I)
+        if blanc_translucide and float(blanc_translucide.group(1)) < 0.5:
+            continue
+        if opaque or blanc_translucide:
             if "border-radius: 50%" in nu:      # curseur d'interrupteur
                 continue
             lignes_en_dur.append(f"styles.css:{numero}")
