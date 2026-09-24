@@ -22,6 +22,7 @@ import hmac
 from utils.noms import normaliser_nom, depuis_adresse
 from models.db import recuperer_un, executer, curseur
 from utils.auth_helpers import creer_session, poser_cookie_session
+from services import evenements
 
 bp_oauth = Blueprint("oauth", __name__, url_prefix="/api/auth")
 logger = logging.getLogger("lasource.oauth")
@@ -131,7 +132,8 @@ def connexion_google():
                       "LaSourcee. Écrivez à l'équipe si vous pensez qu'il "
                       "s'agit d'une erreur."
         }), 403
-    return _terminer_connexion(id_user)
+    return _terminer_connexion(id_user, fournisseur="google",
+                               creation=not deja_connu)
 
 
 # ============================================================
@@ -228,6 +230,11 @@ def retour_linkedin():
     if not sub or not email:
         return redirect("/?erreur=linkedin_profil_incomplet")
 
+    # Releve avant creation : c'est ce qui distingue une inscription
+    # d'une simple connexion dans le journal d'activite.
+    deja_lie = recuperer_un(
+        "SELECT 1 FROM utilisateur WHERE email = %s LIMIT 1", (email,))
+
     try:
         id_user = _trouver_ou_creer_compte_externe(
             "linkedin", sub, email, email_verifie, prenom, nom, photo
@@ -238,7 +245,10 @@ def retour_linkedin():
         return redirect("/?erreur=compte_suspendu")
     # La réponse DOIT être celle qui porte le cookie : renvoyer une
     # redirection construite à part perdrait la session.
-    return _terminer_connexion(id_user, redirection="/?connexion=linkedin")
+    return _terminer_connexion(id_user,
+                               redirection="/?connexion=linkedin",
+                               fournisseur="linkedin",
+                               creation=not deja_lie)
 
 
 # ============================================================
@@ -326,15 +336,27 @@ def _trouver_ou_creer_compte_externe(fournisseur, sub_externe,
     return id_user
 
 
-def _terminer_connexion(id_user, redirection=None):
+def _terminer_connexion(id_user, redirection=None, fournisseur=None,
+                        creation=False):
     """Crée la session, pose le cookie et renvoie la réponse.
 
     - ``redirection`` renseignée : le navigateur revient d'un fournisseur
       externe (LinkedIn), on le renvoie sur la page demandée ;
     - sinon : réponse JSON, attendue par l'appel ``fetch`` (Google).
+
+    Les comptes créés ou ouverts par un fournisseur externe échappaient
+    au journal d'activité, qui n'était alimenté que par l'inscription et
+    la connexion classiques : la courbe des inscrits ignorait donc tous
+    ceux venus par Google, et c'est le chemin le plus court.
     """
     user_agent = request.headers.get("User-Agent", "")[:255]
     token = creer_session(id_user, user_agent)
+    if creation:
+        evenements.enregistrer("inscription", id_utilisateur=id_user,
+                               type_cible="utilisateur", id_cible=id_user,
+                               contexte={"par": fournisseur})
+    evenements.enregistrer("connexion", id_utilisateur=id_user,
+                           contexte={"moyen": fournisseur or "externe"})
     rep = (redirect(redirection) if redirection
            else jsonify({"ok": True, "id_utilisateur": id_user}))
     return poser_cookie_session(rep, token)

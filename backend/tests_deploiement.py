@@ -740,6 +740,22 @@ def executer():
     verifier("Le HTML fabriqué par le script est lui aussi utilisable au clavier",
              not muets, ", ".join(muets[:6]))
 
+    # Le bandeau « Serveur indisponible » restait affiché indéfiniment :
+    # la sonde repassait au vert, l'application refonctionnait, et le
+    # visiteur lisait encore qu'elle ne marchait pas. Et une panne
+    # constatée au chargement ne relançait aucune sonde, donc quelqu'un
+    # arrivé pendant une coupure restait devant un site mort jusqu'à ce
+    # qu'il pense à recharger.
+    api_js = (RACINE / "api.js").read_text(encoding="utf-8")
+    verifier("Le bandeau de panne se retire quand le serveur revient",
+             "function masquerServeurIndisponible" in api_js
+             and re.search(r"Backend\.disponible\s*\)\s*\{[^}]*"
+                           r"masquerServeurIndisponible\(\)", api_js,
+                           re.S) is not None)
+    verifier("Une panne constatée au chargement relance une sonde",
+             re.search(r"if\s*\(!Backend\.disponible\)\s*_resonder\(\)",
+                       api_js) is not None)
+
     # Un élément qui se dit bouton doit se comporter comme un bouton.
     # Plusieurs portaient role="button" sans que rien n'écoute Entrée :
     # ils prenaient le focus, s'annonçaient comme des boutons, et ne

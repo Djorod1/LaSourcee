@@ -30,6 +30,11 @@ function _resonder() {
     await verifierServeur();
     if (Backend.disponible) {
       _attenteResonde = 2000;
+      // Le bandeau restait affiché indéfiniment : la sonde repassait au
+      // vert, l'application refonctionnait, et le visiteur lisait encore
+      // « Serveur indisponible ». Il conclut que rien ne marche et il
+      // s'en va, alors que tout est revenu.
+      masquerServeurIndisponible();
     } else {
       _attenteResonde = Math.min(_attenteResonde * 2, ATTENTE_MAX);
       _resonder();
@@ -156,6 +161,11 @@ async function verifierServeur() {
     Backend.raison = 'Le serveur est injoignable depuis ce navigateur.';
   }
   Backend.verifie = true;
+  // Une panne constatée ici ne relançait aucune sonde : seule une
+  // requête échouée en déclenchait une. Quelqu'un qui ouvrait la page
+  // pendant une coupure restait donc devant un site mort jusqu'à ce
+  // qu'il pense à recharger, même une fois le serveur revenu.
+  if (!Backend.disponible) _resonder();
   return Backend.disponible;
 }
 
@@ -188,4 +198,9 @@ function afficherServeurIndisponible() {
     " La connexion et l'inscription sont momentanément impossibles."
     + " Réessayez dans quelques instants." + detail));
   document.body.prepend(b);
+}
+
+/* Retire le bandeau quand le serveur répond de nouveau. */
+function masquerServeurIndisponible() {
+  document.getElementById('bandeauServeur')?.remove();
 }
