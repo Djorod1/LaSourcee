@@ -851,6 +851,23 @@ def executer():
     verifier("Au moins une tâche planifiée est déclarée", bool(taches))
     for tache in taches:
         chemin = tache.get("path", "")
+
+        # L'offre d'hébergement n'accepte qu'un déclenchement par jour et
+        # par tâche. Une expression qui en demande davantage ne se
+        # contente pas d'être ignorée : elle fait échouer la construction
+        # entière, et c'est tout le déploiement qui reste à quai — le
+        # correctif d'à côté avec. Le refus arrive chez l'hébergeur, donc
+        # après la fusion, quand plus rien ne l'attend.
+        #
+        # « Au plus une fois par jour » se lit sur les deux premiers
+        # champs : minute et heure doivent désigner une valeur et une
+        # seule. Les trois suivants ne font que retirer des jours, ils
+        # n'ajoutent jamais de passage.
+        champs = (tache.get("schedule") or "").split()
+        unique = (len(champs) == 5
+                  and all(c.isdigit() for c in champs[:2]))
+        verifier(f"La tâche {chemin} ne demande qu'un passage par jour",
+                 unique, f"horaire : {tache.get('schedule')!r}")
         # Un chemin peut porter plusieurs regles, une par verbe : les
         # reunir, sinon on ne lit que la premiere et le controle conclut
         # de travers.
@@ -866,6 +883,17 @@ def executer():
             r = client.open(chemin, method=verbe.upper())
             verifier(f"{chemin} en {verbe.upper()} exige le secret partagé",
                      r.status_code == 403, f"reçu {r.status_code}")
+
+    # Une tâche qui s'impose un temps de repos ne doit pas le régler sur
+    # l'intervalle exact de son passage. L'ordonnanceur ne déclenche pas
+    # à la seconde près : avancé de quelques secondes, il trouverait le
+    # repos inachevé d'autant et sauterait la journée entière. La panne
+    # est invisible — rien n'échoue, l'avertissement arrive simplement un
+    # jour trop tard, et seulement certains jours.
+    from services.messages_manques import REPOS_HEURES
+    verifier("Le repos entre deux avertissements tient sous la journée",
+             REPOS_HEURES < 24,
+             f"repos : {REPOS_HEURES} h, passage : toutes les 24 h")
 
 
 if __name__ == "__main__":

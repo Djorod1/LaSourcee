@@ -23,6 +23,14 @@ Quatre règles, et chacune existe pour une raison précise :
   - **Un lien de désinscription dans chaque message.** Il ne demande ni
     de se connecter ni de retrouver un réglage.
 
+Le passage est quotidien, à midi heure du Bénin : l'hébergement actuel
+n'accorde qu'un déclenchement par jour et par tâche. Avec douze heures
+de grâce, ce passage ramasse tout ce qui a été écrit jusqu'à minuit la
+veille — autrement dit l'intégralité d'une journée est couverte par le
+passage du lendemain. Un message déposé après minuit attend le
+surlendemain ; c'est le prix d'un seul passage, et il est assumé : ces
+avertissements ne sont pas des notifications instantanées.
+
 Rien ne lève : un avertissement perdu est regrettable, une tâche
 interrompue qui laisse la moitié des gens non prévenus l'est davantage.
 """
@@ -41,7 +49,17 @@ logger = logging.getLogger("lasourcee.messages_manques")
 DELAI_HEURES = 12
 
 # Jamais deux e-mails pour la même conversation dans la même journée.
-REPOS_HEURES = 24
+#
+# Vingt-trois et non vingt-quatre. L'hébergement n'accorde qu'un passage
+# par jour : la fenêtre de repos vaudrait alors exactement l'intervalle
+# entre deux passages, et l'ordonnanceur ne déclenche pas à la seconde
+# près. Un passage avancé de trois secondes trouverait un prevenu_le
+# vieux de 23 h 59 min 57 s, jugerait le repos inachevé, et sauterait la
+# journée — un avertissement en retard d'un jour, sans rien dans les
+# journaux pour le dire. Une heure de marge absorbe cette dérive, et la
+# règle tient toujours : un seul passage quotidien ne peut pas écrire
+# deux fois.
+REPOS_HEURES = 23
 
 # Garde-fou : un envoi en masse sur une fonction sans serveur limitée à
 # quelques secondes n'aboutirait pas. Les suivants partent au passage
