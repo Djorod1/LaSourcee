@@ -3360,6 +3360,77 @@ def executer_tests():
     verifier("La limite d'inscriptions laisse passer une classe",
              MAX_INSCRIPTIONS >= 40, str(MAX_INSCRIPTIONS))
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  46. UN DROIT NE SURVIT PAS À SA RÉVOCATION")
+    print("═" * 70)
+
+    # Le changement de role n'ecrivait que « role ». Or tout le controle
+    # d'acces regarde « est_admin » : promouvoir n'ouvrait rien, et
+    # retrograder ne fermait rien.
+    promu, id_promu = _compte_admin(
+        "Promu", "promu@test.io", "PromuTest2026!", "etudiant", '[]')
+    with app.app_context():
+        _maj("UPDATE utilisateur SET est_admin = 0 WHERE id_utilisateur = %s",
+             (id_promu,), commit=True)
+    verifier("Avant promotion, l'administration est fermée",
+             promu.get("/api/admin/utilisateurs").status_code == 403)
+
+    r = patron.post(f"/api/admin/utilisateurs/{id_promu}/role",
+                    json={"role": "admin"})
+    verifier("La promotion aboutit", r.status_code == 200,
+             r.get_data(as_text=True)[:110])
+    verifier("Le drapeau d'administration suit le rôle",
+             jeton_sql("SELECT est_admin FROM utilisateur "
+                       "WHERE id_utilisateur = ?", (id_promu,)) == 1)
+    promu.post("/api/auth/connexion", json={"email": "promu@test.io",
+                                            "mot_de_passe": "PromuTest2026!"})
+    verifier("La personne promue accède réellement à l'administration",
+             promu.get("/api/admin/utilisateurs").status_code == 200)
+
+    liste = patron.get("/api/admin/administrateurs").get_json() or []
+    fiche = next((a for a in liste if a["id_utilisateur"] == id_promu), {})
+    verifier("La liste montre les droits réellement enregistrés",
+             bool(fiche.get("droits")), str(fiche.get("droits")))
+
+    # Le sens inverse est le plus grave. On pose les droits en base
+    # avant de retrograder : sans cela, cette partie reussirait par
+    # ricochet le jour ou la promotion cesserait de fonctionner.
+    with app.app_context():
+        _maj("UPDATE utilisateur SET est_admin = 1, role = 'admin', "
+             "permissions = %s WHERE id_utilisateur = %s",
+             ('["utilisateurs"]', id_promu), commit=True)
+    avec_droits = app.test_client()
+    avec_droits.post("/api/auth/connexion",
+                     json={"email": "promu@test.io",
+                           "mot_de_passe": "PromuTest2026!"})
+    verifier("Le compte a bien les droits avant retrait",
+             avec_droits.get("/api/admin/utilisateurs").status_code == 200)
+
+    r = patron.post(f"/api/admin/utilisateurs/{id_promu}/role",
+                    json={"role": "etudiant"})
+    verifier("La rétrogradation aboutit", r.status_code == 200)
+    verifier("Le drapeau d'administration retombe",
+             jeton_sql("SELECT est_admin FROM utilisateur "
+                       "WHERE id_utilisateur = ?", (id_promu,)) == 0)
+    verifier("Les droits sont retirés en base",
+             jeton_sql("SELECT permissions FROM utilisateur "
+                       "WHERE id_utilisateur = ?", (id_promu,)) == "[]")
+    verifier("Les sessions ouvertes sont fermées",
+             jeton_sql("SELECT COUNT(*) FROM session_web "
+                       "WHERE id_utilisateur = ?", (id_promu,)) == 0)
+
+    rentre = app.test_client()
+    rentre.post("/api/auth/connexion", json={"email": "promu@test.io",
+                                             "mot_de_passe": "PromuTest2026!"})
+    verifier("L'accès à l'administration est réellement fermé",
+             rentre.get("/api/admin/utilisateurs").status_code == 403)
+    verifier("Le retrait des droits est tracé",
+             jeton_sql("SELECT COUNT(*) FROM audit_admin "
+                       "WHERE action = 'changer_role' "
+                       "  AND details LIKE ?",
+                       ("%droits retires%",)) >= 1)
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

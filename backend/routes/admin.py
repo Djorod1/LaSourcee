@@ -378,13 +378,41 @@ def changer_role(id_user):
                                   "actif : le rétrograder fermerait "
                                   "l'administration à tout le monde."}), 400
 
-    # Si on passe de mentor à autre chose, conserver mentor_details mais ce sera ignoré
+    # Le role et le drapeau d'administration doivent bouger ensemble.
+    #
+    # Cette route n'ecrivait que « role ». Or tout le controle d'acces
+    # regarde « est_admin » : admin_requis et permission_requise.
+    # Promouvoir quelqu'un ne lui ouvrait donc rien — il se faisait
+    # refuser partout pendant que la liste des administrateurs
+    # l'affichait avec tous les droits.
+    #
+    # L'autre sens est pire : retrograder un administrateur laissait
+    # est_admin a 1 et sa colonne de droits intacte. Le compte
+    # apparaissait « Beneficiaire » dans l'ecran des comptes et gardait
+    # tous ses acces a l'administration. Un droit qui survit a sa
+    # revocation, sans trace ni alerte.
+    devient_admin = nouveau in ("admin", "super_admin")
+    droits_avant = permissions_de(
+        {**(cible or {}), "est_admin": cible.get("est_admin")})
+
+    if devient_admin:
+        droits = json.dumps(PERMISSIONS_PAR_DEFAUT)
+    else:
+        droits = json.dumps([])
+
     n = executer(
-        "UPDATE utilisateur SET role = %s WHERE id_utilisateur = %s",
-        (nouveau, id_user), commit=True,
+        "UPDATE utilisateur SET role = %s, est_admin = %s, permissions = %s "
+        "WHERE id_utilisateur = %s",
+        (nouveau, 1 if devient_admin else 0, droits, id_user), commit=True,
     )
     if not n:
         return jsonify({"erreur": "Utilisateur introuvable."}), 404
+
+    # Les sessions ouvertes portent l'ancien role : les fermer evite
+    # qu'un acces retire continue de servir jusqu'a expiration.
+    if droits_avant and not devient_admin:
+        executer("DELETE FROM session_web WHERE id_utilisateur = %s",
+                 (id_user,), commit=True)
 
     # Si on promeut en mentor, créer mentor_details si manquant
     if nouveau == "mentor":
@@ -399,7 +427,10 @@ def changer_role(id_user):
             )
 
     journaliser(moi["id_utilisateur"], "changer_role",
-                "utilisateur", id_user, f"-> {nouveau}")
+                "utilisateur", id_user,
+                f"{cible.get('role')} vers {nouveau}"
+                + (f" | droits retires : {', '.join(droits_avant)}"
+                   if droits_avant and not devient_admin else ""))
     return jsonify({"ok": True})
 
 
@@ -988,12 +1019,17 @@ def catalogue_permissions():
 def lister_administrateurs():
     lignes = recuperer_tous(
         """SELECT id_utilisateur, prenom, nom, email, role, est_actif,
-                  permissions, derniere_co, cree_le
+                  est_admin, permissions, derniere_co, cree_le
              FROM utilisateur
             WHERE est_admin = 1 OR role IN ('admin','super_admin')
          ORDER BY role DESC, cree_le""")
     for l in lignes:
-        l["droits"] = permissions_de({**l, "est_admin": 1})
+        # Les droits reellement enregistres, et non ceux qu'on aurait si
+        # le compte etait administrateur. Forcer est_admin a 1 ici
+        # faisait afficher les dix droits a un compte qui n'en avait
+        # aucun, et masquait exactement l'incoherence ci-dessus.
+        l["droits"] = permissions_de(l)
+        l["est_admin"] = bool(l.get("est_admin"))
         l.pop("permissions", None)
     return jsonify(lignes)
 

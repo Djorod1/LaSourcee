@@ -406,16 +406,16 @@
       <p class="sous-titre">Choisissez votre profil pour commencer</p>
 
       <div class="choix-roles">
-        <div class="carte-role actif" data-role="etudiant" onclick="choisirRole(this, 'etudiant')">
+        <button type="button" class="carte-role actif" data-role="etudiant" aria-pressed="true" onclick="choisirRole(this, 'etudiant')">
           <svg class="ic" style="width:28px;height:28px;" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8.4 12 4.6l9 3.8-9 3.8z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M20.4 8.7v4.6M7 11V15c0 1.4 2.2 2.6 5 2.6s5-1.2 5-2.6v-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
           <strong>Bénéficiaire</strong>
           <span>Je cherche des conseils</span>
-        </div>
-        <div class="carte-role" data-role="mentor" onclick="choisirRole(this, 'mentor')">
+        </button>
+        <button type="button" class="carte-role" data-role="mentor" aria-pressed="false" onclick="choisirRole(this, 'mentor')">
           <svg class="ic" style="width:28px;height:28px;" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5h10V8a5 5 0 0 1-10 0z M7 5.8H4.2v1.6a3 3 0 0 0 3 3 M17 5.8h2.8v1.6a3 3 0 0 1-3 3 M9.5 14.2h5 M10 14.2v3h4v-3 M8 20h8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <strong>Référent</strong>
           <span>Je partage mon expertise</span>
-        </div>
+        </button>
       </div>
 
       <div class="champs-cote">
@@ -612,15 +612,15 @@
         <h2 style="font-size:1.5rem; margin-bottom:6px;">Vos secteurs d'intérêt</h2>
         <p style="color:var(--texte-doux); font-size:13px; margin-bottom:14px;">Choisissez au moins 2 secteurs pour personnaliser votre fil.</p>
         <div class="chips-select">
-          <div class="chip-select" onclick="toggleChip(this)">Technologie</div>
-          <div class="chip-select" onclick="toggleChip(this)">Médecine</div>
-          <div class="chip-select" onclick="toggleChip(this)">Droit</div>
-          <div class="chip-select" onclick="toggleChip(this)">Finance</div>
-          <div class="chip-select" onclick="toggleChip(this)">Arts</div>
-          <div class="chip-select" onclick="toggleChip(this)">Éducation</div>
-          <div class="chip-select" onclick="toggleChip(this)">Ingénierie</div>
-          <div class="chip-select" onclick="toggleChip(this)">Entrepreneuriat</div>
-          <div class="chip-select" data-autre="1" onclick="ouvrirAjoutSecteur(this)">+ Autre</div>
+          <button type="button" class="chip-select" aria-pressed="false" onclick="toggleChip(this)">Technologie</button>
+          <button type="button" class="chip-select" aria-pressed="false" onclick="toggleChip(this)">Médecine</button>
+          <button type="button" class="chip-select" aria-pressed="false" onclick="toggleChip(this)">Droit</button>
+          <button type="button" class="chip-select" aria-pressed="false" onclick="toggleChip(this)">Finance</button>
+          <button type="button" class="chip-select" aria-pressed="false" onclick="toggleChip(this)">Arts</button>
+          <button type="button" class="chip-select" aria-pressed="false" onclick="toggleChip(this)">Éducation</button>
+          <button type="button" class="chip-select" aria-pressed="false" onclick="toggleChip(this)">Ingénierie</button>
+          <button type="button" class="chip-select" aria-pressed="false" onclick="toggleChip(this)">Entrepreneuriat</button>
+          <button type="button" class="chip-select" data-autre="1" onclick="ouvrirAjoutSecteur()">+ Autre</button>
         </div>
         <div class="champ" id="champ-autre-secteur" style="display:none; margin-top:10px;">
           <label>Précisez votre secteur</label>
@@ -704,10 +704,12 @@
         <svg class="icone-lune" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
         <svg class="icone-soleil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
       </button>
-      <div class="nav-profil" onclick="basculerMenuProfil()">
+      <button type="button" class="nav-profil" id="bouton-menu-profil"
+              onclick="basculerMenuProfil()" aria-haspopup="true"
+              aria-expanded="false" aria-label="Mon compte">
         <div class="avatar avatar-s" id="avatar-nav"></div>
-        <span style="font-size:14px;">▾</span>
-      </div>
+        <span style="font-size:14px;" aria-hidden="true">▾</span>
+      </button>
     </div>
   </nav>
 
@@ -767,19 +769,28 @@
              La carte de complétion vit sur la page du profil, que les
              personnes concernées ne visitent justement pas. -->
         <div id="rappel-profil"></div>
-        <div class="publier-vide" onclick="ouvrirModal('modalPublier')">
+        <!-- L'invite était un <input readonly> : au clavier on pouvait s'y
+             poser sans rien pouvoir en faire, ni taper ni ouvrir la boîte.
+             C'est un bouton, comme le gros bouton à sa droite. -->
+        <div class="publier-vide">
           <div class="avatar avatar-s" id="avatar-fil"></div>
-          <input type="text" placeholder="Quelle est votre question aujourd'hui ?" readonly />
-          <button class="btn btn-primaire btn-petit">
+          <button type="button" class="publier-invite" onclick="ouvrirModal('modalPublier')">
+            Quelle est votre question aujourd'hui ?
+          </button>
+          <button type="button" class="btn btn-primaire btn-petit"
+                  onclick="ouvrirModal('modalPublier')">
             <span class="txt-publier-desktop">Publier</span>
             <span class="txt-publier-mobile">Poser une question</span>
           </button>
         </div>
         <div class="filtres">
-          <div class="onglets onglets-scroll">
-            <div class="onglet actif" data-tri="recent" onclick="changerTri(this, 'recent')">Les plus récentes</div>
-            <div class="onglet" data-tri="populaire" onclick="changerTri(this, 'populaire')">Les plus populaires</div>
-            <div class="onglet" data-tri="sansrep" onclick="changerTri(this, 'sansrep')">Sans réponse</div>
+          <div class="onglets onglets-scroll" role="tablist" aria-label="Trier le fil">
+            <button type="button" class="onglet actif" role="tab" aria-selected="true"
+                    data-tri="recent" onclick="changerTri(this, 'recent')">Les plus récentes</button>
+            <button type="button" class="onglet" role="tab" aria-selected="false"
+                    data-tri="populaire" onclick="changerTri(this, 'populaire')">Les plus populaires</button>
+            <button type="button" class="onglet" role="tab" aria-selected="false"
+                    data-tri="sansrep" onclick="changerTri(this, 'sansrep')">Sans réponse</button>
           </div>
           <select id="filtre-secteur" onchange="rendreFil()">
             <option value="">Tous les secteurs</option>
@@ -913,7 +924,7 @@
   <div class="modal">
     <header>
       <h3>Proposer une annonce</h3>
-      <span class="fermer" onclick="fermerModal('modalOpportunite')">×</span>
+      <button type="button" class="fermer" aria-label="Fermer" onclick="fermerModal('modalOpportunite')">×</button>
     </header>
     <div class="corps">
       <div class="champ">
@@ -975,7 +986,7 @@
   <div class="modal">
     <header>
       <h3>Contacter l'équipe de LaSourcee</h3>
-      <span class="fermer" onclick="fermerModal('modalEquipe')">×</span>
+      <button type="button" class="fermer" aria-label="Fermer" onclick="fermerModal('modalEquipe')">×</button>
     </header>
     <div class="corps">
       <p class="desc">Une page qui ne marche pas, une information fausse,
@@ -1012,7 +1023,7 @@
   <div class="modal">
     <header>
       <h3>Poser une question</h3>
-      <span class="fermer" onclick="fermerModal('modalPublier')">×</span>
+      <button type="button" class="fermer" aria-label="Fermer" onclick="fermerModal('modalPublier')">×</button>
     </header>
     <div class="corps">
       <div class="champ">
@@ -1027,15 +1038,15 @@
       <div class="champ">
         <label>Catégorie</label>
         <div class="chips-select" id="chips-cat">
-          <div class="chip-select" onclick="choisirCat(this)">Technologie</div>
-          <div class="chip-select" onclick="choisirCat(this)">Médecine</div>
-          <div class="chip-select" onclick="choisirCat(this)">Droit</div>
-          <div class="chip-select" onclick="choisirCat(this)">Finance</div>
-          <div class="chip-select" onclick="choisirCat(this)">Arts</div>
-          <div class="chip-select" onclick="choisirCat(this)">Éducation</div>
-          <div class="chip-select" onclick="choisirCat(this)">Ingénierie</div>
-          <div class="chip-select" onclick="choisirCat(this)">Entrepreneuriat</div>
-          <div class="chip-select" onclick="choisirCat(this)">Autre</div>
+          <button type="button" class="chip-select" aria-pressed="false" onclick="choisirCat(this)">Technologie</button>
+          <button type="button" class="chip-select" aria-pressed="false" onclick="choisirCat(this)">Médecine</button>
+          <button type="button" class="chip-select" aria-pressed="false" onclick="choisirCat(this)">Droit</button>
+          <button type="button" class="chip-select" aria-pressed="false" onclick="choisirCat(this)">Finance</button>
+          <button type="button" class="chip-select" aria-pressed="false" onclick="choisirCat(this)">Arts</button>
+          <button type="button" class="chip-select" aria-pressed="false" onclick="choisirCat(this)">Éducation</button>
+          <button type="button" class="chip-select" aria-pressed="false" onclick="choisirCat(this)">Ingénierie</button>
+          <button type="button" class="chip-select" aria-pressed="false" onclick="choisirCat(this)">Entrepreneuriat</button>
+          <button type="button" class="chip-select" aria-pressed="false" onclick="choisirCat(this)">Autre</button>
         </div>
       </div>
       <div class="similaires" id="bloc-similaires" style="display:none;">

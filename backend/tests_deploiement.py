@@ -26,6 +26,7 @@ Utilisation :
 import os
 import re
 import sys
+from html.parser import HTMLParser
 from pathlib import Path
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -586,6 +587,100 @@ def executer():
 
     verifier(f"Les {examines} appels du navigateur visent une route existante",
              not orphelins, ", ".join(sorted(set(orphelins))[:4]))
+
+    titre("ACCESSIBILITÉ AU CLAVIER DE LA PAGE")
+
+    # Une page dont les balises se croisent s'affiche quand même : le
+    # navigateur répare à sa façon, et le résultat diffère d'un moteur à
+    # l'autre. Un <button> fermé par </div> passe ainsi inaperçu jusqu'au
+    # jour où une moitié de formulaire se retrouve dans le bouton.
+    ouvertes, fautes_structure = [], []
+    ORPHELINES = {"area", "base", "br", "col", "embed", "hr", "img", "input",
+                  "link", "meta", "param", "source", "track", "wbr", "path",
+                  "circle", "rect", "line", "polyline", "polygon", "ellipse",
+                  "use", "stop"}
+
+    class _Structure(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            if tag not in ORPHELINES:
+                ouvertes.append((tag, self.getpos()[0]))
+
+        def handle_endtag(self, tag):
+            if tag in ORPHELINES:
+                return
+            for i in range(len(ouvertes) - 1, -1, -1):
+                if ouvertes[i][0] == tag:
+                    for t, ligne in ouvertes[i + 1:]:
+                        fautes_structure.append(
+                            f"<{t}> l.{ligne} fermé par </{tag}> "
+                            f"l.{self.getpos()[0]}")
+                    del ouvertes[i:]
+                    return
+            fautes_structure.append(f"</{tag}> l.{self.getpos()[0]} sans ouverture")
+
+    _Structure(convert_charrefs=True).feed(html)
+    verifier("Les balises de la page s'ouvrent et se ferment dans l'ordre",
+             not fautes_structure and not ouvertes,
+             "; ".join(fautes_structure[:3])
+             or ", ".join(f"<{t}> l.{n}" for t, n in ouvertes[:3]))
+
+    # Un onclick posé sur un <div> ne se déclenche ni à Entrée ni à la
+    # barre d'espace, et le lecteur d'écran n'annonce rien. L'étape 2 de
+    # l'inscription exigeant deux secteurs, une pastille non focusable y
+    # bloquait purement et simplement qui navigue au clavier. La règle
+    # retenue : un élément cliquable est soit focusable lui-même, soit il
+    # contient un élément qui l'est et qui fait la même chose.
+    FOCUSABLES = {"button", "a", "input", "select", "textarea", "summary"}
+    pile, sans_clavier = [], []
+
+    class _Clavier(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            d = dict(attrs)
+            focusable = tag in FOCUSABLES or "tabindex" in d
+            if focusable:
+                for entree in pile:
+                    entree[3] = True
+            if tag in ORPHELINES:
+                return
+            pile.append([tag, self.getpos()[0],
+                         "onclick" in d and not focusable, False])
+
+        def handle_endtag(self, tag):
+            for i in range(len(pile) - 1, -1, -1):
+                if pile[i][0] == tag:
+                    for t, ligne, cliquable, atteignable in pile[i:]:
+                        if cliquable and not atteignable:
+                            sans_clavier.append(f"<{t}> l.{ligne}")
+                    del pile[i:]
+                    return
+
+    _Clavier(convert_charrefs=True).feed(html)
+    verifier("Tout ce qui est cliquable est atteignable au clavier",
+             not sans_clavier, ", ".join(sans_clavier[:5]))
+
+    # Même contrôle sur le HTML que le script fabrique : il échappe au
+    # parseur ci-dessus puisqu'il n'existe qu'à l'exécution. La balise
+    # ouvrante et sa fermeture tiennent rarement sur la même ligne, on
+    # cherche donc dans le texte entier et non ligne par ligne.
+    mal_fermes = []
+    for debut in re.finditer(r"<button\b", script):
+        reste = script[debut.end():]
+        fin_bouton, fin_div = reste.find("</button>"), reste.find("</div>")
+        if fin_div == -1 or (fin_bouton != -1 and fin_bouton < fin_div):
+            continue
+        if "<div" in reste[:fin_div]:       # le bouton contient une boîte
+            continue
+        mal_fermes.append(f"l.{script.count(chr(10), 0, debut.start()) + 1}")
+    verifier("Les boutons fabriqués par le script se ferment par </button>",
+             not mal_fermes, ", ".join(mal_fermes[:5]))
+
+    # Une pastille de secteur est un <button>. Si quelqu'un la remet en
+    # <div>, l'inscription redevient infranchissable au clavier sans que
+    # rien ne le signale.
+    pastilles_div = re.findall(r'<div[^>]*\bclass="[^"]*\bchip-select\b[^"]*"'
+                               r'[^>]*\bonclick=', html + script)
+    verifier("Les pastilles de secteur restent des boutons",
+             not pastilles_div, f"{len(pastilles_div)} pastille(s) en <div>")
 
 
 if __name__ == "__main__":

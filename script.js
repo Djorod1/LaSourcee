@@ -160,7 +160,7 @@ function naviguerApp(panneau) {
   document.querySelectorAll('.sous-vue').forEach(sv => sv.style.display = 'none');
   const cible = document.getElementById('sv-' + panneau);
   if (cible) cible.style.display = 'block';
-  document.getElementById('menuProfil').classList.remove('ouvert');
+  fermerMenuProfil();
   etat.sectionActive = panneau;
   majNavActif();
 
@@ -196,8 +196,12 @@ function majNavActif() {
    AUTHENTIFICATION & ONBOARDING
    ============================================================ */
 function choisirRole(elem, role) {
-  document.querySelectorAll('.carte-role').forEach(c => c.classList.remove('actif'));
+  document.querySelectorAll('.carte-role').forEach(c => {
+    c.classList.remove('actif');
+    c.setAttribute('aria-pressed', 'false');
+  });
   elem.classList.add('actif');
+  elem.setAttribute('aria-pressed', 'true');
   etat.roleChoisi = role;
 }
 /* Connexion par e-mail et mot de passe. Le serveur fait foi. */
@@ -661,7 +665,24 @@ function choisirPhotoOnboarding() {
     toast('Photo de profil ajoutée.');
   });
 }
-function toggleChip(elem) { elem.classList.toggle('actif'); }
+/* Bascule une pastille de secteur.
+
+   Ces pastilles étaient des <div> avec un seul onclick : elles ne
+   recevaient pas le focus, ne répondaient ni à Entrée ni à la barre
+   d'espace, et n'annonçaient rien à un lecteur d'écran. Comme l'étape 2
+   de l'inscription exige deux secteurs, quiconque navigue au clavier
+   restait bloqué là, sans aucun moyen d'avancer. Ce sont désormais des
+   boutons, qui portent l'état qu'ils ont. */
+function toggleChip(elem) {
+  const actif = elem.classList.toggle('actif');
+  // Une pastille personnalisée ne peut pas être un bouton : elle contient
+  // déjà la croix de suppression, et un bouton ne s'imbrique pas. C'est
+  // donc son libellé qui est cliquable, et c'est lui qui porte l'état.
+  const porteur = elem.matches('button')
+    ? elem
+    : elem.querySelector('.chip-texte') || elem;
+  porteur.setAttribute('aria-pressed', actif ? 'true' : 'false');
+}
 
 /* Chip "Autre" : ouvre le champ d'ajout de secteurs personnalisés. */
 function ouvrirAjoutSecteur() {
@@ -685,7 +706,11 @@ function ajouterSecteurPerso() {
   const chip = document.createElement('div');
   chip.className = 'chip-select chip-perso actif';
   chip.dataset.perso = '1';
-  chip.innerHTML = `<span onclick="toggleChip(this.parentElement)">${v}</span><button type="button" class="chip-sup" onclick="this.parentElement.remove()" aria-label="Supprimer">×</button>`;
+  chip.innerHTML =
+    `<button type="button" class="chip-texte" aria-pressed="true" `
+    + `onclick="toggleChip(this.parentElement)">${echapper(v)}</button>`
+    + `<button type="button" class="chip-sup" onclick="this.parentElement.remove()" `
+    + `aria-label="Supprimer ${echapper(v)}">×</button>`;
   // Insérer avant le chip "+ Autre"
   const chipAutre = conteneur.querySelector('[data-autre="1"]');
   conteneur.insertBefore(chip, chipAutre);
@@ -805,7 +830,7 @@ function limiterObjectifsOnboarding() {
   }
 }
 async function seDeconnecter() {
-  document.getElementById('menuProfil').classList.remove('ouvert');
+  fermerMenuProfil();
   // On déconnecte l'interface même si l'appel réseau échoue
   try { await API.post('/auth/deconnexion', {}); } catch (_) {}
   SESSION.utilisateur = null;
@@ -966,9 +991,18 @@ function rendreSidebarProfil() {
 /* ============================================================
    FIL D'ACTUALITÉ
    ============================================================ */
+/* Le tri désactivait toutes les pastilles `.onglet` de la page, pas
+   seulement les siennes : les onglets des opportunités et ceux de la
+   modération, présents dans le même document, perdaient leur état au
+   passage. On se limite au groupe auquel appartient l'onglet cliqué. */
 function changerTri(elem, tri) {
-  document.querySelectorAll('.onglet').forEach(o => o.classList.remove('actif'));
+  const groupe = elem.closest('.onglets') || document;
+  groupe.querySelectorAll('.onglet').forEach(o => {
+    o.classList.remove('actif');
+    if (o.hasAttribute('role')) o.setAttribute('aria-selected', 'false');
+  });
   elem.classList.add('actif');
+  if (elem.hasAttribute('role')) elem.setAttribute('aria-selected', 'true');
   etat.tri = tri;
   rendreFil();
 }
@@ -1639,9 +1673,13 @@ function majCompteur() {
   document.getElementById('compteur').textContent = v.length;
 }
 function choisirCat(elem) {
-  document.querySelectorAll('#chips-cat .chip-select').forEach(c => c.classList.remove('actif'));
+  document.querySelectorAll('#chips-cat .chip-select').forEach(c => {
+    c.classList.remove('actif');
+    c.setAttribute('aria-pressed', 'false');
+  });
   elem.classList.add('actif');
-  etat.categorieChoisie = elem.textContent;
+  elem.setAttribute('aria-pressed', 'true');
+  etat.categorieChoisie = elem.textContent.trim();
 }
 
 /* Évalue le titre saisi et propose des questions similaires existantes */
@@ -2083,8 +2121,8 @@ async function devenirMentor() {
         <label>Domaines d'expertise <span class="obligatoire">*</span></label>
         <div class="chips-select" id="cm-secteurs">
           ${secteurs.map(s => `
-            <div class="chip-select" data-id="${s.id_secteur}"
-                 onclick="this.classList.toggle('actif')">${echapper(s.libelle)}</div>
+            <button type="button" class="chip-select" data-id="${s.id_secteur}"
+                 aria-pressed="false" onclick="toggleChip(this)">${echapper(s.libelle)}</button>
           `).join('') || '<p style="color:var(--texte-doux);font-size:13px;">Liste indisponible.</p>'}
         </div>
       </div>
@@ -2172,7 +2210,7 @@ function _alerteCandidature(message) {
    ============================================================ */
 function basculerNotifs() {
   document.getElementById('panneauNotifs').classList.toggle('ouvert');
-  document.getElementById('menuProfil').classList.remove('ouvert');
+  fermerMenuProfil();
   etat.sectionActive = etat.sectionActive === 'notifs' ? 'fil' : 'notifs';
   majNavActif();
 }
@@ -2236,9 +2274,21 @@ async function chargerNotificationsDepuisApi() {
 /* ============================================================
    MENU PROFIL
    ============================================================ */
+/* Le menu du profil se ferme depuis cinq endroits différents. Chacun
+   retirait la classe dans son coin, si bien que le bouton qui l'ouvre
+   continuait d'annoncer un menu ouvert dès qu'on le fermait autrement
+   qu'en recliquant dessus. Une seule porte de sortie, désormais. */
+function fermerMenuProfil() {
+  document.getElementById('menuProfil')?.classList.remove('ouvert');
+  document.getElementById('bouton-menu-profil')
+    ?.setAttribute('aria-expanded', 'false');
+}
+
 function basculerMenuProfil() {
-  document.getElementById('menuProfil').classList.toggle('ouvert');
+  const ouvert = document.getElementById('menuProfil').classList.toggle('ouvert');
   document.getElementById('panneauNotifs').classList.remove('ouvert');
+  document.getElementById('bouton-menu-profil')
+    ?.setAttribute('aria-expanded', ouvert ? 'true' : 'false');
 }
 
 /* ============================================================
@@ -2463,10 +2513,10 @@ function panneauCompte() {
     <div class="champ"><label>Secteurs d'intérêt</label>
       <div class="chips-select" id="pc-chips">
         ${secteursDefaut.map(s =>
-          `<div class="chip-select ${u.secteurs.includes(s)?'actif':''}" onclick="toggleChip(this)">${s}</div>`).join('')}
+          `<button type="button" class="chip-select ${u.secteurs.includes(s)?'actif':''}" aria-pressed="${u.secteurs.includes(s)?'true':'false'}" onclick="toggleChip(this)">${echapper(s)}</button>`).join('')}
         ${secteursPerso.map(s =>
-          `<div class="chip-select chip-perso actif" data-perso="1"><span onclick="toggleChip(this.parentElement)">${echapper(s)}</span><button type="button" class="chip-sup" onclick="this.parentElement.remove()" aria-label="Supprimer">×</button></div>`).join('')}
-        <div class="chip-select" data-autre="1" onclick="document.getElementById('pc-autre-wrap').style.display=''; document.getElementById('pc-autre-input').focus();">+ Autre</div>
+          `<div class="chip-select chip-perso actif" data-perso="1"><button type="button" class="chip-texte" aria-pressed="true" onclick="toggleChip(this.parentElement)">${echapper(s)}</button><button type="button" class="chip-sup" onclick="this.parentElement.remove()" aria-label="Supprimer ${echapper(s)}">×</button></div>`).join('')}
+        <button type="button" class="chip-select" data-autre="1" onclick="document.getElementById('pc-autre-wrap').style.display=''; document.getElementById('pc-autre-input').focus();">+ Autre</button>
       </div>
       <div id="pc-autre-wrap" style="display:none; margin-top:10px;">
         <div style="display:flex; gap:8px;">
@@ -2492,7 +2542,11 @@ function ajouterSecteurPersoParam() {
   const chip = document.createElement('div');
   chip.className = 'chip-select chip-perso actif';
   chip.dataset.perso = '1';
-  chip.innerHTML = `<span onclick="toggleChip(this.parentElement)">${echapper(v)}</span><button type="button" class="chip-sup" onclick="this.parentElement.remove()" aria-label="Supprimer">×</button>`;
+  chip.innerHTML =
+    `<button type="button" class="chip-texte" aria-pressed="true" `
+    + `onclick="toggleChip(this.parentElement)">${echapper(v)}</button>`
+    + `<button type="button" class="chip-sup" onclick="this.parentElement.remove()" `
+    + `aria-label="Supprimer ${echapper(v)}">×</button>`;
   const chipAutre = conteneur.querySelector('[data-autre="1"]');
   conteneur.insertBefore(chip, chipAutre);
   input.value = '';
@@ -3356,9 +3410,12 @@ async function adminSignalements(statut) {
     <p class="desc" style="margin-bottom:14px;">Chaque décision est tracée,
        notifiée à l'auteur quand elle le concerne, et confirmée à la
        personne qui a signalé.</p>
-    <div class="onglets onglets-scroll" style="margin-bottom:16px;">
-      ${onglets.map(([c, l]) => `<div class="onglet ${c === _filtreSignalements ? 'actif' : ''}"
-        onclick="rechargerSignalements('${c}')">${l}</div>`).join('')}
+    <div class="onglets onglets-scroll" role="tablist" aria-label="Filtrer les signalements"
+         style="margin-bottom:16px;">
+      ${onglets.map(([c, l]) => `<button type="button" role="tab"
+        class="onglet ${c === _filtreSignalements ? 'actif' : ''}"
+        aria-selected="${c === _filtreSignalements ? 'true' : 'false'}"
+        onclick="rechargerSignalements('${c}')">${l}</button>`).join('')}
     </div>`;
 
   if (!liste.length) {
@@ -3598,7 +3655,7 @@ function toast(message, type = 'succes') {
    ============================================================ */
 document.addEventListener('click', (e) => {
   if (!e.target.closest('.nav-profil') && !e.target.closest('.menu-profil'))
-    document.getElementById('menuProfil')?.classList.remove('ouvert');
+    fermerMenuProfil();
   if (!e.target.closest('[onclick*="basculerNotifs"]') && !e.target.closest('.panneau-notifs'))
     document.getElementById('panneauNotifs')?.classList.remove('ouvert');
   if (!e.target.closest('.nav-recherche'))
@@ -5764,7 +5821,7 @@ async function envoyerOpportunite(bouton) {
    ============================================================ */
 
 async function ouvrirContactEquipe(categorie) {
-  document.getElementById('menuProfil')?.classList.remove('ouvert');
+  fermerMenuProfil();
   const select = document.getElementById('eq-categorie');
   if (select && !select.options.length) {
     try {
