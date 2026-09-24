@@ -81,10 +81,19 @@ class Config:
     SUR_VERCEL = _SUR_VERCEL
 
     # ---- Clé de signature ------------------------------------------------
-    # Utilisée par Flask pour le cookie d'état OAuth LinkedIn. En
-    # production elle DOIT être fournie et rester stable : sur un
-    # hébergement serverless, chaque instance repartirait sinon avec une
-    # clé différente et la connexion LinkedIn échouerait au retour.
+    # En production elle DOIT être fournie et rester stable : sur un
+    # hébergement sans serveur, chaque instance repartirait sinon avec une
+    # clé différente. Deux choses en dépendent, et la seconde est la plus
+    # lourde de conséquences :
+    #
+    #   - le cookie d'état OAuth LinkedIn ;
+    #   - la signature du lien de désinscription des résumés
+    #     (services/resume.py). Le lien est signé par l'instance qui
+    #     envoie l'e-mail et vérifié par celle qui reçoit le clic : deux
+    #     clés différentes, et « se désinscrire » répond que le lien est
+    #     invalide. On se retrouve alors à envoyer des e-mails dont on ne
+    #     peut pas sortir, ce qui est à la fois fautif et le plus sûr
+    #     moyen de finir signalé comme indésirable.
     SECRET_KEY = os.getenv("SECRET_KEY") or secrets.token_hex(32)
     SECRET_KEY_FOURNIE = bool(os.getenv("SECRET_KEY"))
 
@@ -204,9 +213,12 @@ def anomalies_configuration():
         problemes.append((
             "bloquant",
             "SECRET_KEY n'est pas définie. Une clé aléatoire a été générée "
-            "pour cette instance : la connexion LinkedIn échouera de façon "
-            "intermittente. Définissez SECRET_KEY dans les variables "
-            "d'environnement.",
+            "pour cette instance seulement : le lien « se désinscrire » des "
+            "e-mails de résumé sera refusé, car il est signé par une "
+            "instance et vérifié par une autre. La connexion LinkedIn "
+            "échouera aussi par intermittence. Définissez SECRET_KEY dans "
+            "les variables d'environnement, avant d'activer l'envoi des "
+            "résumés.",
         ))
 
     if Config.DB_TYPE == "sqlite" and Config.SUR_VERCEL:
