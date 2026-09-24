@@ -60,8 +60,17 @@ _DUREE_BLOCAGE = 15 * 60     # durée du blocage après dépassement (secondes)
 # seuil est bas ; sur l'inscription il s'agit d'endiguer un robot, et le
 # seuil doit rester compatible avec une salle de classe entière derrière
 # une seule adresse IP publique — cas courant sur un campus ou un réseau
-# mobile. Un robot en fait des milliers : trente ne le gêne pas moins.
-MAX_INSCRIPTIONS = int(os.getenv("MAX_INSCRIPTIONS_PAR_IP", "30"))
+# mobile, où un opérateur entier peut sortir par quelques adresses.
+#
+# Trente ne suffisait pas : une classe de quarante élèves inscrite
+# pendant la même séance se heurtait au refus à partir du trente et
+# unième, et les suivants lisaient « Trop de créations de compte depuis
+# cette connexion » sans en avoir créé une seule. Un robot, lui, en fait
+# des milliers : soixante ne le gêne pas moins que trente.
+#
+# Pour une présentation en amphithéâtre, MAX_INSCRIPTIONS_PAR_IP se
+# relève le temps de la séance.
+MAX_INSCRIPTIONS = int(os.getenv("MAX_INSCRIPTIONS_PAR_IP", "60"))
 MAX_DEMANDES_MDP = int(os.getenv("MAX_DEMANDES_MDP", "3"))
 
 _tentatives = {}             # repli : clé -> liste d'horodatages d'échec

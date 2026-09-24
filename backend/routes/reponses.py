@@ -104,7 +104,24 @@ def supprimer(id_r):
         return jsonify({"erreur": "Action non autorisée."}), 403
     executer("DELETE FROM reponse WHERE id_reponse = %s",
              (id_r,), commit=True)
+    # Le compteur du referent n'etait jamais corrige : il montait a la
+    # publication et ne redescendait pas. L'annuaire affichait « 10
+    # reponses » sous quelqu'un qui en avait deux, et le classait devant
+    # des referents plus actifs, puisque c'est sur ce compteur qu'il
+    # trie. On le recale sur ce que la base contient reellement.
+    _recaler_compteur(r["id_auteur"])
     return jsonify({"ok": True})
+
+
+def _recaler_compteur(id_auteur):
+    """Remet nb_reponses en accord avec les reponses existantes."""
+    reel = (recuperer_un(
+        "SELECT COUNT(*) AS n FROM reponse WHERE id_auteur = %s",
+        (id_auteur,)) or {}).get("n", 0)
+    executer(
+        "UPDATE mentor_details SET nb_reponses = %s WHERE id_utilisateur = %s",
+        (reel, id_auteur), commit=True)
+    return reel
 
 
 @bp_reponses.post("/<int:id_r>/note")

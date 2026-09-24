@@ -3282,6 +3282,84 @@ def executer_tests():
                 "LINKEDIN_REDIRECT_URI"):
         _os2.environ.pop(cle, None)
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  45. COMPTEURS QUI NE DÉRIVENT PLUS")
+    print("═" * 70)
+
+    # Le compteur du referent montait a la publication et ne
+    # redescendait jamais : l'annuaire affichait « 10 reponses » sous
+    # quelqu'un qui en avait deux, et le classait devant des referents
+    # plus actifs, puisque c'est sur ce compteur qu'il trie.
+    r = cand.post("/api/reponses", json={
+        "id_question": id_q, "contenu": "Une réponse qui sera supprimée."})
+    id_jetable = (r.get_json() or {}).get("id_reponse")
+    avant = jeton_sql("SELECT nb_reponses FROM mentor_details "
+                      "WHERE id_utilisateur = ?", (id_ref,))
+    reelles = jeton_sql("SELECT COUNT(*) FROM reponse WHERE id_auteur = ?",
+                        (id_ref,))
+    verifier("Le compteur suit la publication", avant == reelles,
+             f"{avant} annonce(s) pour {reelles} réponse(s)")
+
+    cand.delete(f"/api/reponses/{id_jetable}")
+    apres = jeton_sql("SELECT nb_reponses FROM mentor_details "
+                      "WHERE id_utilisateur = ?", (id_ref,))
+    reelles = jeton_sql("SELECT COUNT(*) FROM reponse WHERE id_auteur = ?",
+                        (id_ref,))
+    verifier("Il redescend à la suppression", apres == reelles,
+             f"{apres} annonce(s) pour {reelles} réponse(s)")
+
+    # Signaler douze fois la meme question faisait croire a la
+    # moderation qu'un probleme collectif se posait, alors qu'une seule
+    # personne etait en cause.
+    r = lecteur.post(f"/api/questions/{id_q}/signaler",
+                     json={"motif": "Premier signalement"})
+    verifier("Un signalement est accepté", r.status_code == 200)
+    r = lecteur.post(f"/api/questions/{id_q}/signaler",
+                     json={"motif": "Motif précisé"})
+    verifier("Le second signalement de la même personne ne s'ajoute pas",
+             (r.get_json() or {}).get("deja_signale") is True)
+    verifier("Une seule ligne reste en base",
+             jeton_sql("SELECT COUNT(*) FROM signalement "
+                       "WHERE type_contenu = 'question' AND id_contenu = ? "
+                       "  AND id_signaleur = ?",
+                       (id_q, _id("ife@test.io"))) == 1)
+    verifier("Le motif a bien été mis à jour",
+             jeton_sql("SELECT motif FROM signalement "
+                       "WHERE type_contenu = 'question' AND id_contenu = ? "
+                       "  AND id_signaleur = ?",
+                       (id_q, _id("ife@test.io"))) == "Motif précisé")
+    verifier("Signaler une question inexistante répond 404",
+             lecteur.post("/api/questions/999999/signaler",
+                          json={"motif": "x"}).status_code == 404)
+
+    # Un signalement juge non fonde ne doit plus peser contre sa cible.
+    sig = jeton_sql("SELECT id_signalement FROM signalement "
+                    "WHERE type_contenu = 'question' AND id_contenu = ?",
+                    (id_q,))
+    liste_avant = adm.get("/api/admin/signalements").get_json() or []
+    compte_avant = next((s["signalements_contenu"] for s in liste_avant
+                         if s["id_signalement"] == sig), 0)
+    adm.post(f"/api/admin/signalements/{sig}", json={"action": "rejeter"})
+    # Un signalement rejete quitte la liste par defaut, qui ne montre
+    # que ceux en attente : on demande donc tous les statuts.
+    liste_apres = adm.get("/api/admin/signalements?statut=tous").get_json() or []
+    entree = next((s for s in liste_apres
+                   if s["id_signalement"] == sig), {})
+    verifier("Un signalement rejeté cesse de compter contre le contenu",
+             entree.get("signalements_contenu", 99) < compte_avant
+             or compte_avant == 0,
+             f"{compte_avant} puis {entree.get('signalements_contenu')}")
+    contenu = entree.get("contenu") or {}
+    verifier("Il cesse aussi de compter contre l'auteur",
+             contenu.get("signalements_auteur", 99) == 0,
+             str(contenu.get("signalements_auteur")))
+
+    # Une salle de classe entiere sort par une seule adresse IP.
+    from utils.securite import MAX_INSCRIPTIONS
+    verifier("La limite d'inscriptions laisse passer une classe",
+             MAX_INSCRIPTIONS >= 40, str(MAX_INSCRIPTIONS))
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

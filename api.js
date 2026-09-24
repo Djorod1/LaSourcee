@@ -13,6 +13,39 @@ const API_BASE = '/api';
 /* État de la connexion au serveur, déterminé au démarrage. */
 const Backend = { verifie: false, disponible: false, raison: '' };
 
+/* Nouvelle tentative après une coupure, sans harceler le serveur.
+
+   Une seule requête ratée condamnait la session entière : rien ne
+   remettait jamais Backend.disponible à vrai. On resonde donc, en
+   espaçant les essais, et dès que la connexion revient l'application
+   repart d'elle-même. */
+let _minuteurResonde = null;
+let _attenteResonde = 2000;
+const ATTENTE_MAX = 30000;
+
+function _resonder() {
+  if (_minuteurResonde) return;
+  _minuteurResonde = setTimeout(async () => {
+    _minuteurResonde = null;
+    await verifierServeur();
+    if (Backend.disponible) {
+      _attenteResonde = 2000;
+    } else {
+      _attenteResonde = Math.min(_attenteResonde * 2, ATTENTE_MAX);
+      _resonder();
+    }
+  }, _attenteResonde);
+}
+
+// Le navigateur sait quand la connexion revient : autant l'écouter
+// plutôt que d'attendre le prochain essai programmé.
+if (typeof window !== 'undefined' && window.addEventListener) {
+  window.addEventListener('online', () => {
+    _attenteResonde = 2000;
+    verifierServeur();
+  });
+}
+
 class ApiErreur extends Error {
   constructor(statut, message, donnees) {
     super(message);
@@ -36,8 +69,15 @@ const API = {
     let reponse;
     try {
       reponse = await fetch(API_BASE + chemin, opts);
+      // Une requête qui aboutit prouve que le serveur répond. Sans
+      // cette ligne, l'application restait figée sur « serveur
+      // indisponible » jusqu'au rechargement de la page : une
+      // micro-coupure, un tunnel, un changement de wifi, et plus rien
+      // ne s'enregistrait de toute la session.
+      Backend.disponible = true;
     } catch (err) {
       Backend.disponible = false;
+      _resonder();
       throw new ApiErreur(0,
         "Le serveur LaSourcee est injoignable. Vérifiez votre connexion "
         + "internet, puis réessayez.");

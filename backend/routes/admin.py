@@ -593,9 +593,15 @@ def _contenu_signale(type_contenu, id_contenu):
     ligne["supprime"] = False
     # Le passe de l'auteur pese dans la decision : un premier
     # signalement n'appelle pas la meme reponse qu'un cinquieme.
+    # Les signalements JUGES NON FONDES ne comptent pas. Sans cette
+    # exclusion, quelqu'un vise par des signalements abusifs, tous
+    # rejetes un par un, portait quand meme l'etiquette rouge « auteur
+    # deja signale 4 fois » a cote du bouton de suspension. L'acharnement
+    # se retournait ainsi contre sa victime.
     ligne["signalements_auteur"] = (recuperer_un(
         """SELECT COUNT(*) AS n FROM signalement s
             WHERE s.type_contenu = 'question'
+              AND s.statut <> 'rejete'
               AND s.id_contenu IN (SELECT id_question FROM question
                                     WHERE id_auteur = %s)""",
         (ligne["id_auteur"],)) or {}).get("n", 0)
@@ -627,11 +633,15 @@ def signalements():
     for ligne in lignes:
         ligne["contenu"] = _contenu_signale(ligne["type_contenu"],
                                             ligne["id_contenu"])
-        # Plusieurs personnes signalant la meme chose, c'est un signal
-        # en soi : le nombre doit sauter aux yeux.
+        # Plusieurs PERSONNES signalant la meme chose, c'est un signal
+        # en soi : le nombre doit sauter aux yeux. Les signalements deja
+        # juges non fondes en sont exclus, sinon un contenu blanchi
+        # trois fois arrive devant le moderateur avec trois etiquettes
+        # rouges.
         ligne["signalements_contenu"] = (recuperer_un(
-            "SELECT COUNT(*) AS n FROM signalement "
-            "WHERE type_contenu = %s AND id_contenu = %s",
+            "SELECT COUNT(DISTINCT id_signaleur) AS n FROM signalement "
+            "WHERE type_contenu = %s AND id_contenu = %s "
+            "  AND statut <> 'rejete'",
             (ligne["type_contenu"], ligne["id_contenu"])) or {}).get("n", 1)
     return jsonify(lignes)
 

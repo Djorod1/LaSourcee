@@ -357,13 +357,40 @@ def basculer_sauver(id_q):
 @bp_questions.post("/<int:id_q>/signaler")
 @connexion_requise
 def signaler(id_q):
+    """Signale une question à la modération, une fois par personne.
+
+    Rien n'empêchait de signaler douze fois la même question : l'écran
+    de modération montrait alors douze signalements et concluait à un
+    problème collectif, alors qu'une seule personne était en cause.
+    C'est exactement ce qui transforme un outil de modération en arme.
+    """
+    if not recuperer_un("SELECT 1 FROM question WHERE id_question = %s",
+                        (id_q,)):
+        return jsonify({"erreur": "Question introuvable."}), 404
+
     d = request.get_json(silent=True) or {}
     motif = (d.get("motif") or "Signalé sans motif précisé").strip()[:300]
+    id_user = g.utilisateur["id_utilisateur"]
+
+    deja = recuperer_un(
+        """SELECT id_signalement FROM signalement
+            WHERE id_signaleur = %s AND type_contenu = 'question'
+              AND id_contenu = %s""",
+        (id_user, id_q))
+    if deja:
+        # Le motif est mis a jour : quelqu'un qui precise sa pensee ne
+        # doit pas avoir a creer un second signalement pour le faire.
+        executer("UPDATE signalement SET motif = %s WHERE id_signalement = %s",
+                 (motif, deja["id_signalement"]), commit=True)
+        return jsonify({"ok": True, "deja_signale": True,
+                        "message": "Vous aviez déjà signalé cette question. "
+                                   "Votre motif a été mis à jour."})
+
     executer(
         """INSERT INTO signalement
               (id_signaleur, type_contenu, id_contenu, motif)
            VALUES (%s, 'question', %s, %s)""",
-        (g.utilisateur["id_utilisateur"], id_q, motif),
+        (id_user, id_q, motif),
         commit=True,
     )
     return jsonify({"ok": True})
