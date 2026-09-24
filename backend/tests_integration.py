@@ -1466,10 +1466,14 @@ def executer_tests():
                             "email": "z@test.io"}).status_code == 403)
 
     # Le refus doit nommer le droit manquant : « acces refuse » seul
-    # fait conclure a une panne plutot qu'a un droit a demander.
+    # fait conclure a une panne plutot qu'a un droit a demander. Et il le
+    # nomme comme l'ecran le nomme : demander « le droit audit » a un
+    # super administrateur oblige celui-ci a deviner de quelle case il
+    # s'agit dans la liste qu'il a sous les yeux.
+    from utils.permissions import PERMISSIONS_DETAIL
+    refus = (res.get("/api/admin/audit").get_json() or {}).get("erreur", "")
     verifier("Le refus nomme le droit manquant",
-             "audit" in (res.get("/api/admin/audit").get_json()
-                         or {}).get("erreur", ""))
+             PERMISSIONS_DETAIL["audit"]["nom"] in refus, refus[:90])
 
     # --- Exports ---
     for jeu in ("utilisateurs", "questions", "reponses", "referents",
@@ -2665,6 +2669,16 @@ def executer_tests():
         headers={"Authorization": "Bearer secret-de-test-pour-la-tache"})
     verifier("Avec le bon secret, la tâche répond", r.status_code == 200,
              r.get_data(as_text=True)[:110])
+    # L'ordonnanceur de l'hebergeur appelle en GET. La route n'acceptait
+    # que POST : elle repondait 405 a chaque passage, et le resume ne
+    # serait jamais parti en production, sans la moindre trace.
+    r_get = app.test_client().get(
+        "/api/taches/resume",
+        headers={"Authorization": "Bearer secret-de-test-pour-la-tache"})
+    verifier("La tâche répond aussi au GET de l'ordonnanceur",
+             r_get.status_code == 200, f"reçu {r_get.status_code}")
+    verifier("Et le GET exige le même secret",
+             app.test_client().get("/api/taches/resume").status_code == 403)
     verifier("En mode console, rien ne part et rien n'est marqué",
              "ignore" in (r.get_json() or {}))
     _os.environ.pop("CRON_SECRET", None)
@@ -3701,6 +3715,97 @@ def executer_tests():
 
     with app.app_context():
         _maj("DROP TABLE IF EXISTS essai_migration", (), commit=True)
+
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  49. CE QUI ARRIVE VRAIMENT À DESTINATION")
+    print("═" * 70)
+
+    # Un message prive n'avertissait personne. Le type « message »
+    # existait dans les notifications, mais rien ne l'y deposait : la
+    # cloche restait muette. Ecrire a quelqu'un revenait a esperer qu'il
+    # rouvre la messagerie de lui-meme.
+    lecteur, id_lecteur = _compte_admin(
+        "Lisa", "lisa@test.io", "LisaTest2026!", "etudiant", '[]')
+    r = patron.post("/api/messagerie/conversations",
+                    json={"id_utilisateur": id_lecteur})
+    id_conv = (r.get_json() or {}).get("id_conversation")
+    verifier("Une conversation s'ouvre vers un membre",
+             bool(id_conv), r.get_data(as_text=True)[:110])
+
+    avant = jeton_sql("SELECT COUNT(*) FROM notification "
+                      "WHERE id_destinataire = ? AND type_notif = 'message'",
+                      (id_lecteur,))
+    r = patron.post(f"/api/messagerie/conversations/{id_conv}/messages",
+                    json={"contenu": "Bonjour, votre question m'a intéressée."})
+    verifier("Le message est enregistré", r.status_code == 201,
+             r.get_data(as_text=True)[:110])
+    verifier("Et le destinataire en est averti",
+             jeton_sql("SELECT COUNT(*) FROM notification "
+                       "WHERE id_destinataire = ? AND type_notif = 'message'",
+                       (id_lecteur,)) == avant + 1)
+    verifier("L'expéditeur, lui, ne se notifie pas lui-même",
+             jeton_sql("SELECT COUNT(*) FROM notification "
+                       "WHERE id_destinataire = ? AND type_notif = 'message'",
+                       (id_patron,)) == 0)
+
+    # Deux messages envoyes dans la meme seconde portaient la meme heure :
+    # le tri n'avait plus rien pour les departager.
+    for n in range(4):
+        patron.post(f"/api/messagerie/conversations/{id_conv}/messages",
+                    json={"contenu": f"Suite {n}"})
+    fil = lecteur.get(
+        f"/api/messagerie/conversations/{id_conv}/messages").get_json() or []
+    ids = [m["id_message"] for m in fil]
+    verifier("Les messages sortent dans l'ordre où ils sont arrivés",
+             ids == sorted(ids), str(ids))
+
+    # Le texte en tete du module des opportunites dit « un referent
+    # verifie peut en proposer une », mais le controle se contentait du
+    # role : une candidature deposee le matin pouvait proposer une bourse
+    # l'apres-midi, avant qu'un seul element du dossier ne soit regarde.
+    annonce = {
+        "titre": "Bourse d'excellence pour la rentrée",
+        "description": "Bourse annuelle ouverte aux bacheliers de la région, "
+                       "couvrant les frais de scolarité et le logement.",
+        "categorie": "bourse",
+        "lien": "https://exemple.org/bourse",
+    }
+    r = candidat.post("/api/opportunites", json=annonce)
+    verifier("Un référent non vérifié ne publie pas d'annonce",
+             r.status_code == 403, str(r.status_code))
+    verifier("Et le refus dit pourquoi, sans le laisser deviner",
+             "validée" in (r.get_json() or {}).get("erreur", ""),
+             (r.get_json() or {}).get("erreur", "")[:90])
+    vue = candidat.get("/api/opportunites").get_json() or {}
+    verifier("L'interface ne lui propose pas un bouton qui refusera",
+             vue.get("peut_proposer") is False, str(vue.get("peut_proposer")))
+
+    with app.app_context():
+        _maj("UPDATE mentor_details SET est_verifie = 1 "
+             "WHERE id_utilisateur = %s", (id_candidat,), commit=True)
+    r = candidat.post("/api/opportunites", json=annonce)
+    verifier("Une fois vérifié, il peut proposer",
+             r.status_code == 201, r.get_data(as_text=True)[:110])
+    verifier("Sa proposition attend une relecture",
+             (r.get_json() or {}).get("statut") == "en_attente")
+
+    # Le message annoncait https et le code acceptait http.
+    r = candidat.post("/api/opportunites",
+                      json={**annonce, "lien": "http://exemple.org/bourse"})
+    verifier("Un lien en http est refusé, comme le message l'annonce",
+             r.status_code == 400, str(r.status_code))
+
+    # L'annuaire comparait avec LIKE sans uniformiser la casse, comme la
+    # recherche globale avant correction.
+    if os.environ["DB_TYPE"] == "postgres":
+        trouves = lecteur.get("/api/mentors?q=candide").get_json() or []
+        verifier("L'annuaire ignore la casse (PostgreSQL)",
+                 any(m["prenom"] == "Candide" for m in trouves),
+                 str([m.get("prenom") for m in trouves]))
+    tout = lecteur.get("/api/mentors?q=a%25e").get_json() or []
+    verifier("Un joker saisi dans l'annuaire n'est pas interprété",
+             not tout, str([m.get("prenom") for m in tout]))
 
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)

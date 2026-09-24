@@ -3,6 +3,7 @@
 from flask import Blueprint, g, jsonify, request
 
 from models.db import recuperer_un, recuperer_tous, executer
+from routes.recherche import motif_like
 from utils.auth_helpers import connexion_requise
 
 bp_mentors = Blueprint("mentors", __name__, url_prefix="/api/mentors")
@@ -32,8 +33,16 @@ def lister():
         conditions.append("md.dispo = %s")
         params.append(dispo)
     if terme:
-        conditions.append("(u.prenom LIKE %s OR u.nom LIKE %s OR u.bio LIKE %s)")
-        params.extend([f"%{terme}%", f"%{terme}%", f"%{terme}%"])
+        # Meme defaut que la recherche globale : LIKE distingue les
+        # majuscules sur PostgreSQL, si bien que chercher « marie » dans
+        # l'annuaire ne trouvait pas Marie. Et un « % » saisi y balayait
+        # la table. Une seule preparation du motif, partagee.
+        conditions.append(
+            "(LOWER(u.prenom) LIKE %s ESCAPE '\\' "
+            " OR LOWER(u.nom) LIKE %s ESCAPE '\\' "
+            " OR LOWER(u.bio) LIKE %s ESCAPE '\\')")
+        motif = motif_like(terme)
+        params.extend([motif, motif, motif])
     if id_sec:
         conditions.append(
             """EXISTS (SELECT 1 FROM utilisateur_secteur us

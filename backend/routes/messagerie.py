@@ -22,7 +22,8 @@ def lister_conversations():
                   autre.derniere_activite,
                   (SELECT contenu FROM message
                      WHERE id_conversation = c.id_conversation
-                     ORDER BY envoye_le DESC LIMIT 1) AS dernier_contenu,
+                     ORDER BY envoye_le DESC, id_message DESC
+                     LIMIT 1) AS dernier_contenu,
                   (SELECT COUNT(*) FROM message m
                      WHERE m.id_conversation = c.id_conversation
                        AND m.id_expediteur <> %s
@@ -190,11 +191,15 @@ def lire(id_conv):
     if not _participe(id_user, id_conv):
         return jsonify({"erreur": "Accès refusé."}), 403
 
+    # Deux messages envoyes dans la meme seconde portent la meme heure :
+    # le tri n'avait alors plus rien pour les departager, et une reponse
+    # pouvait s'afficher avant la question qu'elle suit. L'identifiant,
+    # lui, croit toujours.
     messages = recuperer_tous(
         """SELECT id_message, id_expediteur, contenu, envoye_le
              FROM message
             WHERE id_conversation = %s
-         ORDER BY envoye_le ASC""",
+         ORDER BY envoye_le ASC, id_message ASC""",
         (id_conv,),
     )
     executer(
@@ -233,11 +238,40 @@ def envoyer(id_conv):
             (id_conv,),
         )
 
+    # Un message prive n'avertissait personne. Le type « message »
+    # existait dans les notifications, mais rien ne l'y deposait : la
+    # cloche restait muette, et la pastille des conversations n'etait
+    # calculee qu'une fois, au chargement de la page. Ecrire a quelqu'un
+    # revenait donc a esperer qu'il rouvre la messagerie de lui-meme.
+    # C'est la notification qui vit apres l'enregistrement, et non
+    # l'inverse : un envoi ne doit pas echouer parce qu'elle a echoue.
+    _avertir_destinataire(id_conv, id_user, contenu)
+
     return jsonify(recuperer_un(
         "SELECT id_message, id_expediteur, contenu, envoye_le "
         "FROM message WHERE id_message = %s",
         (id_msg,),
     )), 201
+
+
+def _avertir_destinataire(id_conv, id_expediteur, contenu):
+    """Prévient l'autre participant qu'un message l'attend."""
+    from services.notifications import notifier
+    autre = recuperer_un(
+        """SELECT u.id_utilisateur
+             FROM conversation_participant cp
+             JOIN utilisateur u ON u.id_utilisateur = cp.id_utilisateur
+            WHERE cp.id_conversation = %s AND cp.id_utilisateur <> %s
+              AND u.est_actif = 1""",
+        (id_conv, id_expediteur))
+    if not autre:
+        return
+    qui = f"{g.utilisateur.get('prenom') or ''} " \
+          f"{(g.utilisateur.get('nom') or '')[:1]}.".strip()
+    apercu = contenu[:120] + ("…" if len(contenu) > 120 else "")
+    notifier(autre["id_utilisateur"],
+             f"{qui} vous a écrit : {apercu}",
+             type_notif="message", id_acteur=id_expediteur)
 
 
 def _participe(id_user, id_conv):

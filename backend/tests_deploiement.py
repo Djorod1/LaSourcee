@@ -23,6 +23,7 @@ Utilisation :
     DATABASE_URL=postgresql://... python tests_deploiement.py
 """
 
+import json
 import os
 import re
 import sys
@@ -705,6 +706,34 @@ def executer():
     verifier("Un écouteur clavier dessert les éléments role=\"button\"",
              "getAttribute('role') !== 'button'" in script
              and "cible.click()" in script)
+
+    titre("TÂCHES PLANIFIÉES")
+
+    # L'ordonnanceur de la plateforme appelle en GET. La route du résumé
+    # n'acceptait que POST : elle aurait répondu 405 à chaque passage, et
+    # le résumé ne serait jamais parti, sans la moindre trace. Un
+    # silence de ce genre se confond avec une panne d'envoi et se cherche
+    # pendant des semaines du mauvais côté.
+    config = json.loads((RACINE / "vercel.json").read_text(encoding="utf-8"))
+    taches = config.get("crons") or []
+    verifier("Au moins une tâche planifiée est déclarée", bool(taches))
+    for tache in taches:
+        chemin = tache.get("path", "")
+        # Un chemin peut porter plusieurs regles, une par verbe : les
+        # reunir, sinon on ne lit que la premiere et le controle conclut
+        # de travers.
+        verbes = sorted({m for r in application.url_map.iter_rules()
+                         if str(r) == chemin
+                         for m in r.methods - {"HEAD", "OPTIONS"}})
+        verifier(f"La tâche {chemin} répond au GET de l'ordonnanceur",
+                 "GET" in verbes,
+                 f"verbes acceptés : {verbes or 'route absente'}")
+        # Et elle reste fermée à qui n'a pas le secret, quel que soit le
+        # verbe : une route qui envoie des e-mails en masse est une arme.
+        for verbe in ("get", "post"):
+            r = client.open(chemin, method=verbe.upper())
+            verifier(f"{chemin} en {verbe.upper()} exige le secret partagé",
+                     r.status_code == 403, f"reçu {r.status_code}")
 
 
 if __name__ == "__main__":

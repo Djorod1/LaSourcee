@@ -4733,6 +4733,10 @@ async function releverNotifications() {
     // Un échec de relève ne doit rien interrompre : le prochain
     // passage réessaiera.
   }
+  // La pastille des conversations n'était calculée qu'une fois, au
+  // chargement de la session. Quelqu'un qui écrivait pendant qu'on
+  // était là n'apparaissait nulle part avant un rechargement complet.
+  chargerCompteurMessages();
 }
 
 function majPastilleNotifications(nb) {

@@ -72,6 +72,27 @@ def _peut_publier_directement(utilisateur):
                 and a_le_droit(utilisateur, "opportunites"))
 
 
+def _referent_verifie(id_utilisateur):
+    """Le dossier de ce référent a-t-il été examiné ?
+
+    Le texte en tête de ce module dit « un référent vérifié peut en
+    proposer une », mais le contrôle se contentait du rôle. N'importe
+    quelle candidature déposée le matin pouvait donc proposer une bourse
+    l'après-midi, avant qu'un seul élément du dossier n'ait été regardé.
+    """
+    ligne = recuperer_un(
+        "SELECT est_verifie FROM mentor_details WHERE id_utilisateur = %s",
+        (id_utilisateur,))
+    return bool(ligne and ligne["est_verifie"])
+
+
+def _peut_proposer(utilisateur):
+    if _peut_publier_directement(utilisateur):
+        return True
+    return (utilisateur.get("role") == "mentor"
+            and _referent_verifie(utilisateur["id_utilisateur"]))
+
+
 def _nettoyer(valeur, longueur):
     return " ".join(str(valeur or "").split())[:longueur]
 
@@ -143,9 +164,10 @@ def lister():
         "opportunites": ouvertes + (closes if inclure_closes else []),
         "nb_closes": len(closes),
         "categories": CATEGORIES,
-        "peut_proposer": bool(g.utilisateur.get("role") in ("mentor", "admin",
-                                                            "super_admin")
-                              or g.utilisateur.get("est_admin")),
+        # L'interface ne propose le bouton que s'il aboutira : offrir
+        # une action qui repondra par un refus fait passer une regle
+        # pour une panne.
+        "peut_proposer": _peut_proposer(g.utilisateur),
         "publie_directement": _peut_publier_directement(g.utilisateur),
     })
 
@@ -179,7 +201,11 @@ def detail(id_opp):
 def proposer():
     moi = g.utilisateur
     direct = _peut_publier_directement(moi)
-    if not direct and moi.get("role") != "mentor":
+    if not direct and not _peut_proposer(moi):
+        if moi.get("role") == "mentor":
+            return _erreur(
+                "Votre candidature de référent n'a pas encore été validée. "
+                "Vous pourrez proposer des annonces ensuite.", 403)
         return _erreur(
             "Les annonces sont publiées par l'équipe et proposées par les "
             "référents. Si vous en connaissez une, écrivez à l'équipe : "
@@ -201,8 +227,11 @@ def proposer():
     if limite is None:
         return _erreur("Date limite attendue au format jour/mois/année.")
 
+    # Le message annoncait https et le code acceptait http : quelqu'un
+    # postule a une bourse depuis ce lien, souvent en donnant son
+    # identite et parfois ses papiers. On tient ce qu'on annonce.
     lien = (d.get("lien") or "").strip()[:400]
-    if lien and not lien.startswith(("https://", "http://")):
+    if lien and not lien.startswith("https://"):
         return _erreur("Le lien doit commencer par https://")
     # Une annonce sans lien ni organisme ne se verifie pas.
     organisme = _nettoyer(d.get("organisme"), LONGUEUR_COURTE)

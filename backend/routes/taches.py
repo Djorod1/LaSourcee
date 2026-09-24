@@ -38,9 +38,20 @@ def _autorise():
     return bool(recu) and hmac.compare_digest(recu, attendu)
 
 
+@bp_taches.get("/resume")
 @bp_taches.post("/resume")
 def resume():
-    """Envoie le résumé périodique aux membres qui y ont droit."""
+    """Envoie le résumé périodique aux membres qui y ont droit.
+
+    La route n'acceptait que POST. Or l'ordonnanceur de l'hébergeur
+    appelle en GET : il aurait reçu « 405 Method Not Allowed » à chaque
+    passage, et le résumé ne serait jamais parti en production. Rien ne
+    l'aurait signalé — ni erreur, ni e-mail, juste un silence qu'on
+    aurait mis des semaines à remarquer, et qu'on aurait d'abord attribué
+    au serveur d'envoi. Les deux verbes sont acceptés : GET pour
+    l'ordonnanceur, POST pour un déclenchement à la main. Le secret
+    partagé protège les deux de la même façon.
+    """
     if not _autorise():
         if not os.getenv("CRON_SECRET"):
             logger.warning(
