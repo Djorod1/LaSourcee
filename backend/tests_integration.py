@@ -3938,6 +3938,108 @@ def executer_tests():
     verifier("Une session échue depuis trente minutes est refusée",
              morte is None)
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  51. UN MESSAGE PRIVÉ NON LU FINIT PAR SE SIGNALER")
+    print("═" * 70)
+
+    from datetime import datetime as _dtm, timedelta as _tdm
+    import services.messages_manques as _mm
+
+    # Un message prive ne deposait qu'une notification dans la cloche.
+    # Quelqu'un qui ne revient pas ne l'apprenait donc jamais, et c'est
+    # l'echange lui-meme qui mourait.
+    _avant_envois = {"n": 0}
+    _vrai_envoi = None
+    import utils.email as _mod_mail
+    _vrai_envoi = _mod_mail.envoyer
+    _partis = []
+
+    def _envoi_espion(destinataire, sujet, corps, corps_html=None):
+        _partis.append({"a": destinataire, "sujet": sujet,
+                        "corps": corps, "html": corps_html or ""})
+        return True
+
+    _mod_mail.envoyer = _envoi_espion
+    try:
+        with app.app_context():
+            # Un message tout juste arrive : le delai de grace n'est pas
+            # ecoule, on ne derange personne.
+            _maj("UPDATE conversation_participant SET lu_jusqua = NULL, "
+                 "prevenu_le = NULL WHERE id_conversation = %s",
+                 (id_conv,), commit=True)
+            _maj("UPDATE message SET envoye_le = %s "
+                 "WHERE id_conversation = %s",
+                 (_dtm.utcnow().strftime("%Y-%m-%d %H:%M:%S"), id_conv),
+                 commit=True)
+            frais = _mm.prevenir_messages_non_lus()
+        verifier("Un message tout juste reçu ne déclenche aucun e-mail",
+                 frais["envoyes"] == 0 and not _partis, str(frais))
+
+        with app.app_context():
+            # Le meme message, vieux de treize heures.
+            _maj("UPDATE message SET envoye_le = %s "
+                 "WHERE id_conversation = %s",
+                 ((_dtm.utcnow() - _tdm(hours=13)).strftime(
+                     "%Y-%m-%d %H:%M:%S"), id_conv), commit=True)
+            _maj("UPDATE conversation_participant SET prevenu_le = NULL "
+                 "WHERE id_conversation = %s", (id_conv,), commit=True)
+            vieux = _mm.prevenir_messages_non_lus()
+        verifier("Passé douze heures, un e-mail part",
+                 vieux["envoyes"] >= 1, str(vieux))
+        verifier("Il va bien à la personne qui n'a pas lu",
+                 any(m["a"] == "lisa@test.io" for m in _partis),
+                 str([m["a"] for m in _partis]))
+
+        # Le contenu d'un message prive ne sort pas de la plateforme.
+        verifier("Le contenu du message n'est pas recopié dans l'e-mail",
+                 not any("votre question m'a intéressée" in m["corps"]
+                         or "votre question m'a intéressée" in m["html"]
+                         for m in _partis),
+                 "un message privé a fuité dans un e-mail")
+        verifier("L'e-mail porte un lien de désinscription",
+                 all("resume/stop" in m["corps"] for m in _partis))
+
+        # Deux passages de suite ne font pas deux e-mails.
+        _partis.clear()
+        with app.app_context():
+            repete = _mm.prevenir_messages_non_lus()
+        verifier("Un second passage le même jour n'écrit pas de nouveau",
+                 repete["envoyes"] == 0 and not _partis, str(repete))
+
+        # Une fois la conversation lue, plus rien ne part.
+        with app.app_context():
+            _maj("UPDATE conversation_participant SET lu_jusqua = %s, "
+                 "prevenu_le = NULL WHERE id_conversation = %s",
+                 (_dtm.utcnow().strftime("%Y-%m-%d %H:%M:%S"), id_conv),
+                 commit=True)
+            lu = _mm.prevenir_messages_non_lus()
+        verifier("Une conversation lue ne déclenche plus rien",
+                 lu["envoyes"] == 0, str(lu))
+
+        # Celui qui a decoche la preference n'est pas ecrit.
+        with app.app_context():
+            _maj("UPDATE conversation_participant SET lu_jusqua = NULL, "
+                 "prevenu_le = NULL WHERE id_conversation = %s",
+                 (id_conv,), commit=True)
+            _maj("UPDATE utilisateur SET preferences_notif = %s "
+                 "WHERE id_utilisateur = %s",
+                 ('{"email": {"message": false}}', id_lecteur), commit=True)
+            _partis.clear()
+            refuse = _mm.prevenir_messages_non_lus()
+        verifier("Qui a décoché la préférence n'est pas écrit",
+                 refuse["envoyes"] == 0 and not _partis, str(refuse))
+        with app.app_context():
+            _maj("UPDATE utilisateur SET preferences_notif = NULL "
+                 "WHERE id_utilisateur = %s", (id_lecteur,), commit=True)
+    finally:
+        _mod_mail.envoyer = _vrai_envoi
+
+    # La tache est une arme : elle ecrit a des gens.
+    verifier("La tâche des messages exige le secret partagé",
+             app.test_client().get(
+                 "/api/taches/messages-non-lus").status_code == 403)
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

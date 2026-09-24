@@ -79,3 +79,32 @@ def resume():
     except Exception as exc:                 # pragma: no cover
         logger.error("Envoi des résumés interrompu : %s", exc)
         return jsonify({"erreur": "Envoi interrompu."}), 500
+
+
+@bp_taches.get("/messages-non-lus")
+@bp_taches.post("/messages-non-lus")
+def messages_non_lus():
+    """Prévient ceux dont un message privé dort depuis douze heures.
+
+    Une notification dans la cloche ne prévient que ceux qui reviennent.
+    Sur une plateforme de mise en relation, celui qui ne revient pas est
+    précisément celui qu'il faut atteindre : sans cet e-mail, un
+    bénéficiaire écrit à un référent, le référent ne repasse pas de la
+    semaine, et le bénéficiaire conclut qu'on ne lui a pas répondu.
+    """
+    if not _autorise():
+        if not os.getenv("CRON_SECRET"):
+            logger.warning(
+                "Tâche refusée : CRON_SECRET n'est pas défini sur ce "
+                "déploiement, aucun avertissement ne partira.")
+        return jsonify({"erreur": "Tâche non autorisée."}), 403
+
+    if (os.getenv("EMAIL_MODE", "console") or "console").lower() != "smtp":
+        return jsonify({"ignore": "EMAIL_MODE n'est pas « smtp »"}), 200
+
+    from services.messages_manques import prevenir_messages_non_lus
+    try:
+        return jsonify(prevenir_messages_non_lus())
+    except Exception as exc:                 # pragma: no cover
+        logger.error("Avertissements de messages interrompus : %s", exc)
+        return jsonify({"erreur": "Envoi interrompu."}), 500

@@ -913,6 +913,10 @@ MINIMUM_POUR_UN_DELAI = 5
 PREFERENCES_CONNUES = {
     "reponse_question": True,
     "reactions": True,
+    # Quelqu'un vous a ecrit en prive et vous ne l'avez pas lu depuis
+    # douze heures. Active par defaut : celui qui recoit un message veut
+    # l'apprendre, c'est le refus qui doit etre explicite.
+    "message": True,
     "questions_secteur": False,
     "infolettre": False,
     # Le résumé de ce qui bouge, au plus une fois tous les deux jours.

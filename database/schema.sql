@@ -278,6 +278,7 @@ CREATE TABLE conversation_participant (
     id_utilisateur   INT UNSIGNED NOT NULL,
     rejoint_le       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     lu_jusqua        DATETIME NULL,
+    prevenu_le       DATETIME NULL,
     PRIMARY KEY (id_conversation, id_utilisateur),
     CONSTRAINT fk_cp_conv FOREIGN KEY (id_conversation)
         REFERENCES conversation(id_conversation) ON DELETE CASCADE,
