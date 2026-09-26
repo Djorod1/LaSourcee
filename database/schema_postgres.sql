@@ -37,6 +37,8 @@ CREATE TABLE utilisateur (
     role            TEXT    NOT NULL DEFAULT 'etudiant'
                     CHECK (role IN ('visiteur','etudiant','mentor','admin','super_admin')),
     photo_url       TEXT,
+    photo_maj_le    TEXT,
+    photo_vignette  TEXT,
     bio             TEXT,
     etudes          TEXT,
     id_pays         INTEGER,

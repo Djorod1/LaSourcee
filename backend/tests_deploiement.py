@@ -849,6 +849,22 @@ def executer():
              "d'apostrophes (utiliser chaineJS)", not fautifs,
              "; ".join(fautifs[:3]))
 
+    # Une photo encodée pèse une trentaine de kilo-octets : recopiée
+    # dans chaque ligne d'une liste, elle faisait l'essentiel du poids du
+    # fil, et le premier écran arrivait au bout de trente secondes en 3G.
+    # Les listes lisent la photo par utils/photos.colonnes(), qui n'en
+    # renvoie que la nature ; seul l'export de ses propres données, en
+    # colonne nue, garde l'image entière.
+    photos_brutes = []
+    for chemin_route in sorted((RACINE / "backend" / "routes").glob("*.py")):
+        texte_route = chemin_route.read_text(encoding="utf-8")
+        for m in re.finditer(r"\b[a-z_]+\.photo_url\b", texte_route):
+            ligne_no = texte_route.count("\n", 0, m.start()) + 1
+            photos_brutes.append(f"{chemin_route.name}:{ligne_no}")
+    verifier("Aucune requête de liste ne lit la photo encodée "
+             "(utiliser photos.colonnes)", not photos_brutes,
+             ", ".join(photos_brutes[:4]))
+
     titre("TÂCHES PLANIFIÉES")
 
     # L'ordonnanceur de la plateforme appelle en GET. La route du résumé

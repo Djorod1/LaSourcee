@@ -43,6 +43,8 @@ CREATE TABLE utilisateur (
     mot_de_passe     VARCHAR(255) NOT NULL,           -- hash bcrypt
     role             ENUM('etudiant','mentor') NOT NULL DEFAULT 'etudiant',
     photo_url        TEXT         NULL,               -- chemin ou dataURL
+    photo_maj_le     VARCHAR(26)  NULL,               -- version de la photo
+    photo_vignette   TEXT         NULL,               -- avatar des listes
     bio              VARCHAR(500) NULL,
     etudes           VARCHAR(150) NULL,               -- "Master 2 — Sciences Po Paris"
     id_pays          SMALLINT UNSIGNED NULL,

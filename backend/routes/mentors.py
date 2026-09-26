@@ -4,6 +4,7 @@ from flask import Blueprint, g, jsonify, request
 
 from models.db import recuperer_un, recuperer_tous, executer
 from routes.recherche import motif_like
+from utils import photos
 from utils.auth_helpers import connexion_requise
 
 bp_mentors = Blueprint("mentors", __name__, url_prefix="/api/mentors")
@@ -55,7 +56,8 @@ def lister():
 
     where = " AND ".join(conditions)
     sql = f"""
-        SELECT u.id_utilisateur, u.prenom, u.nom, u.photo_url, u.bio,
+        SELECT u.id_utilisateur, u.prenom, u.nom, {photos.colonnes("u")},
+               u.bio,
                u.ville, p.libelle AS pays,
                md.est_verifie, md.dispo, md.anciennete,
                md.note_moyenne, md.nb_reponses
@@ -67,7 +69,7 @@ def lister():
          LIMIT %s
     """
     params.append(limite)
-    mentors = recuperer_tous(sql, params)
+    mentors = photos.remplacer(recuperer_tous(sql, params))
 
     if mentors:
         ids = [m["id_utilisateur"] for m in mentors]

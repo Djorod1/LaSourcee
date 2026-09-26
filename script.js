@@ -73,7 +73,9 @@ function avatarHTML(initiales, taille = '', photo = null, mentorVerifie = false)
   // l'y a mise : insérée telle quelle dans un attribut, une valeur
   // comme `https://x" onerror="…` en sortait et faisait exécuter ce
   // qu'on voulait dans le navigateur de tous les autres.
-  if (photo) return `<div class="${cls}"><img src="${echapper(photo)}" class="photo-avatar" alt=""></div>`;
+  // Chargement paresseux et décodage hors du fil principal : une liste
+  // de trente avatars ne bloque plus l'affichage du texte.
+  if (photo) return `<div class="${cls}"><img src="${echapper(photo)}" class="photo-avatar" alt="" loading="lazy" decoding="async"></div>`;
   return `<div class="${cls}">${echapper(initiales)}</div>`;
 }
 /* Badge mentor vérifié (innovation : couleur vert du logo, lecture immédiate) */
@@ -445,7 +447,7 @@ function appliquerUtilisateur(u) {
   majRappelConfirmation();
   majRappelProfil();
   chargerCompteurCandidatures();
-  chargerCompteurMessages();
+  // La relève compte aussi les messages, dès son premier passage.
   demarrerReleveNotifications();
 }
 /* Validation des champs de l'inscription AVANT de passer à l'onboarding. */
@@ -757,6 +759,7 @@ async function chargerSecteurs() {
 }
 
 let _referentielsEnCours = null;
+let _idsSecteurs = new Map();
 
 function chargerReferentielsPublics() {
   if (_pays && _secteurs) return Promise.resolve();
@@ -767,6 +770,11 @@ function chargerReferentielsPublics() {
       .then(r => {
         _pays = (r.pays || []).map(p => p.libelle);
         _secteurs = (r.secteurs || []).map(s => s.libelle);
+        // Le filtre du fil montre des libellés, le serveur filtre par
+        // identifiant.
+        _idsSecteurs = new Map((r.secteurs || [])
+          .filter(s => s.id_secteur != null)
+          .map(s => [s.libelle, s.id_secteur]));
       })
       .catch(() => { _pays = _pays || []; _secteurs = _secteurs || []; })
       .finally(() => { _referentielsEnCours = null; });
@@ -951,19 +959,22 @@ function declencherSelectionPhoto(callback) {
    partie centrale est conservée : un portrait cadré au milieu reste
    reconnaissable, un portrait déformé ne l'est plus. */
 const COTE_AVATAR = 320;
+// Vignette des listes : un avatar n'y dépasse pas 28 pixels, soit 84
+// sur un écran à haute densité. Dix fois plus légère que la photo.
+const COTE_VIGNETTE = 96;
 
-function reduireImage(dataUrl) {
+function reduireImage(dataUrl, cote_cible = COTE_AVATAR) {
   return new Promise((resoudre) => {
     const img = new Image();
     img.onload = () => {
       try {
         const cote = Math.min(img.width, img.height);
         const toile = document.createElement('canvas');
-        toile.width = toile.height = COTE_AVATAR;
+        toile.width = toile.height = cote_cible;
         const ctx = toile.getContext('2d');
         ctx.drawImage(img,
           (img.width - cote) / 2, (img.height - cote) / 2, cote, cote,
-          0, 0, COTE_AVATAR, COTE_AVATAR);
+          0, 0, cote_cible, cote_cible);
         resoudre(toile.toDataURL('image/jpeg', 0.82));
       } catch (_) {
         resoudre(dataUrl);   // navigateur sans canvas : on garde l'original
@@ -987,7 +998,13 @@ async function enregistrerPhoto(dataUrl) {
 
   if (!MODE.api) return;
   try {
-    await API.put('/profil/moi', { photo_url: dataUrl });
+    // La vignette part avec la photo : le serveur en a besoin pour
+    // servir les listes sans envoyer l'image entière à chaque avatar.
+    const vignette = await reduireImage(dataUrl, COTE_VIGNETTE);
+    await API.put('/profil/moi', {
+      photo_url: dataUrl,
+      photo_vignette: vignette.startsWith('data:image/') ? vignette : undefined,
+    });
     if (MODE.utilisateur) MODE.utilisateur.photo_url = dataUrl;
     toast('Photo mise à jour.');
   } catch (err) {
@@ -1017,8 +1034,11 @@ function iconePouce(actif = false) {
    INITIALISATION
    ============================================================ */
 async function initApp() {
-  // En mode API : recharge l'utilisateur courant
-  if (MODE.api) {
+  // Le profil n'est plus rechargé ici : chaque appel d'initApp suit un
+  // chargement de /profil/moi (connexion, Google, confirmation,
+  // démarrage). Le relire aussitôt coûtait un aller-retour de plus au
+  // démarrage, et relançait toutes les relèves une seconde fois.
+  if (MODE.api && !MODE.utilisateur) {
     try { MODE.utilisateur = await API.get('/profil/moi'); appliquerUtilisateur(MODE.utilisateur); }
     catch (_) { /* on garde l'état local */ }
   }
@@ -1036,7 +1056,7 @@ async function initApp() {
 
   // Recharge asynchrone depuis l'API si dispo
   if (MODE.api) {
-    chargerFilDepuisApi();
+    rechargerFil();
     chargerMentorsDepuisApi();
     chargerNotificationsDepuisApi();
   }
@@ -1092,40 +1112,133 @@ function changerTri(elem, tri) {
   elem.classList.add('actif');
   if (elem.hasAttribute('role')) elem.setAttribute('aria-selected', 'true');
   etat.tri = tri;
-  rendreFil();
+  rechargerFil();
 }
 
-/* Recharge la variable `questions` depuis le backend et re-rend le fil.
-   Si le backend est inaccessible, conserve les données de démo. */
-async function chargerFilDepuisApi() {
+/* Le fil, chargé par pages.
+
+   Il s'arrêtait aux trente dernières questions, sans suite possible :
+   tout ce qui était plus ancien devenait inatteignable, et le tri, le
+   secteur et la recherche ne s'appliquaient qu'à ces trente-là, dans la
+   page. Ils sont maintenant transmis au serveur, qui renvoie une page
+   de FIL_PAR_PAGE questions ; « Voir plus » demande la suivante.
+
+   Chaque rechargement porte un numéro : la réponse d'une demande
+   devancée par une autre (un changement de tri pendant le chargement,
+   sur une connexion lente) est ignorée au lieu d'écraser la bonne. */
+const FIL_PAR_PAGE = 15;
+etat.fil = { charge: false, enCours: false, fini: false, page: 1, dernierId: null };
+let _generationFil = 0;
+
+/* Questions ouvertes hors du fil : depuis une notification, un
+   résultat de recherche, un profil ou les sauvegardes. */
+const _questionsHorsFil = new Map();
+
+function trouverQuestion(id) {
+  return questions.find(x => x.id === id) || _questionsHorsFil.get(id) || null;
+}
+
+function adapterQuestion(q) {
+  return {
+    id: q.id_question,
+    titre: q.titre,
+    corps: q.corps || '',
+    // Le fil n'envoie qu'un extrait : le texte entier arrive avec le
+    // détail, à l'ouverture de la question.
+    corpsComplet: q.corps_complet !== false,
+    secteur: q.secteur || 'Autre',
+    auteur: `${q.prenom || ''} ${q.nom || ''}`.trim() || 'Anonyme',
+    initiales: initialesDe(q.prenom, q.nom),
+    idAuteur: q.id_utilisateur || q.id_auteur || null,
+    photoAuteur: q.photo_url || null,
+    pays: q.pays || '',
+    publiee_le: q.publiee_le,
+    utile: q.nb_utiles || 0,
+    repCount: q.nb_reponses || 0,
+    reponses: [],
+  };
+}
+
+function _parametresFil() {
+  const p = new URLSearchParams();
+  p.set('tri', etat.tri || 'recent');
+  p.set('limite', String(FIL_PAR_PAGE));
+  const sect = document.getElementById('filtre-secteur')?.value || '';
+  const idSect = sect ? _idsSecteurs.get(sect) : null;
+  if (idSect) p.set('id_secteur', String(idSect));
+  if (etat.rechercheTerme) p.set('q', etat.rechercheTerme);
+  return p;
+}
+
+/* Repart de la première page : tri, secteur ou recherche ont changé. */
+function rechargerFil() {
+  etat.fil = { charge: false, enCours: false, fini: false, page: 1, dernierId: null };
+  questions.length = 0;
+  rendreFil();
+  return chargerFilDepuisApi(false);
+}
+
+async function chargerFilDepuisApi(suite = false) {
   if (!MODE.api) return;
-  try {
-    const params = new URLSearchParams();
-    if (etat.tri) params.set('tri', etat.tri);
-    const liste = await API.get('/questions?' + params.toString());
-    // Adapter la forme API au format attendu par carteQuestionHTML
-    const adaptees = liste.map(q => ({
-      id: q.id_question,
-      titre: q.titre,
-      corps: q.corps,
-      secteur: q.secteur || 'Autre',
-      auteur: `${q.prenom || ''} ${q.nom || ''}`.trim() || 'Anonyme',
-      initiales: initialesDe(q.prenom, q.nom),
-      idAuteur: q.id_utilisateur || q.id_auteur || null,
-      photoAuteur: q.photo_url || null,
-      pays: q.pays || '',
-      publiee_le: q.publiee_le,
-      utile: q.nb_utiles || 0,
-      repCount: q.nb_reponses || 0,
-      reponses: [],
-    }));
-    // Remplace le contenu de l'array (les références sont conservées)
-    questions.length = 0;
-    questions.push(...adaptees);
-    rendreFil(); rendreColonneDroite();
-  } catch (err) {
-    console.warn('Fil indisponible :', err.message);
+  if (suite && (etat.fil.fini || etat.fil.enCours || !etat.fil.charge)) return;
+  const generation = ++_generationFil;
+  const p = _parametresFil();
+  if (suite) {
+    if ((etat.tri || 'recent') === 'recent') p.set('avant', String(etat.fil.dernierId));
+    else p.set('page', String(etat.fil.page + 1));
   }
+  etat.fil.enCours = true;
+  majBoutonSuiteFil();
+  try {
+    const liste = await API.get('/questions?' + p.toString());
+    if (generation !== _generationFil) return;
+    const connues = new Set(questions.map(q => q.id));
+    const adaptees = (liste || []).map(adapterQuestion)
+      .filter(q => !connues.has(q.id));
+    if (!suite) questions.length = 0;
+    else etat.fil.page += 1;
+    questions.push(...adaptees);
+    if (questions.length) {
+      etat.fil.dernierId = Math.min(...questions.map(q => q.id));
+    }
+    etat.fil.fini = (liste || []).length < FIL_PAR_PAGE;
+    etat.fil.charge = true;
+    etat.fil.enCours = false;
+    if (suite) ajouterCartesFil(adaptees); else rendreFil();
+    rendreColonneDroite();
+  } catch (err) {
+    if (generation !== _generationFil) return;
+    etat.fil.enCours = false;
+    etat.fil.charge = true;
+    if (!suite) rendreFil();
+    majBoutonSuiteFil();
+    toast(err.message || "Le fil n'a pas pu être chargé.", 'erreur');
+  }
+}
+
+function _boutonSuiteFilHTML() {
+  if (!etat.fil.charge || etat.fil.fini || !questions.length) return '';
+  return `<button type="button" id="fil-suite" class="btn btn-secondaire btn-bloc"
+            onclick="chargerFilDepuisApi(true)"${etat.fil.enCours ? ' disabled' : ''}>${
+            etat.fil.enCours ? 'Chargement…' : 'Voir plus de questions'}</button>`;
+}
+
+function majBoutonSuiteFil() {
+  const ancien = document.getElementById('fil-suite');
+  const html = _boutonSuiteFilHTML();
+  if (ancien) {
+    if (html) ancien.outerHTML = html; else ancien.remove();
+  }
+}
+
+/* Ajoute une page au bas du fil sans reconstruire ce qui est déjà là :
+   la position de lecture et les cartes déjà affichées restent en place. */
+function ajouterCartesFil(nouvelles) {
+  const conteneur = document.getElementById('fil-questions');
+  if (!conteneur) return;
+  document.getElementById('fil-suite')?.remove();
+  conteneur.insertAdjacentHTML('beforeend',
+    nouvelles.map(q => carteQuestionHTML(q)).join('') + _boutonSuiteFilHTML());
 }
 
 /* Charge l'annuaire des mentors depuis le serveur. */
@@ -1264,32 +1377,29 @@ function baliseTemps(valeur, { relatif = true, classe = '' } = {}) {
 }
 
 function rendreFil() {
-  const pays = document.getElementById('filtre-pays')?.value || '';
-  const sect = document.getElementById('filtre-secteur')?.value || '';
-  let liste = questions.filter(q => (!pays || q.pays === pays) && (!sect || q.secteur === sect));
-  if (etat.rechercheTerme) {
-    const t = etat.rechercheTerme.toLowerCase();
-    liste = liste.filter(q => q.titre.toLowerCase().includes(t) || q.corps.toLowerCase().includes(t) || q.secteur.toLowerCase().includes(t));
-  }
-  if (etat.tri === 'populaire') liste.sort((a, b) => b.utile - a.utile);
-  // Le fil ne rapporte que le NOMBRE de reponses : la liste q.reponses
-  // y est toujours vide, et ce filtre laissait donc tout passer.
-  // L'onglet « Sans reponse » donnait exactement la meme liste que
-  // « Les plus recentes », ce qui envoyait les referents chercher ou
-  // ils ne servaient a rien.
-  if (etat.tri === 'sansrep') liste = liste.filter(q => !q.repCount);
-
+  // Le tri, le secteur et la recherche sont appliqués par le serveur
+  // (voir chargerFilDepuisApi) : la page n'affiche que ce qu'il renvoie.
+  const liste = questions;
   const conteneur = document.getElementById('fil-questions');
+  if (!conteneur) return;
   const banniere = etat.rechercheTerme
     ? `<div class="carte" style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
-         <span>Résultats pour <strong>« ${echapper(etat.rechercheTerme)} »</strong> : ${liste.length} question(s)</span>
+         <span>Résultats pour <strong>« ${echapper(etat.rechercheTerme)} »</strong></span>
          <button class="btn btn-fantome btn-petit" onclick="effacerRecherche()">${ic('croix','ic ic-s')} Effacer</button>
        </div>` : '';
+  // Pendant le premier chargement, la liste est vide : annoncer
+  // « Aucune question » à ce moment faisait croire à un fil désert,
+  // pendant parfois plus de vingt secondes sur une connexion lente.
+  if (!liste.length && MODE.api && !etat.fil.charge) {
+    conteneur.innerHTML = banniere + `<p class="note-param" role="status">Chargement des questions…</p>`;
+    return;
+  }
   if (!liste.length) {
     conteneur.innerHTML = banniere + `<div class="etat-vide carte"><div class="illu">${ic('loupe','ic ic-l')}</div><h3>Aucune question pour ces critères</h3><p>Essayez d'élargir vos filtres ou soyez le premier à poser une question !</p></div>`;
     return;
   }
-  conteneur.innerHTML = banniere + liste.map(q => carteQuestionHTML(q)).join('');
+  conteneur.innerHTML = banniere + liste.map(q => carteQuestionHTML(q)).join('')
+    + _boutonSuiteFilHTML();
 }
 
 function carteQuestionHTML(q) {
@@ -1305,7 +1415,7 @@ function carteQuestionHTML(q) {
         <button class="btn-fantome btn-petit" title="Signaler" aria-label="Signaler" onclick="signaler(${q.id})">${ic('drapeau','ic ic-s')}</button>
       </div>
       <h3 class="q-titre" style="cursor:pointer;" onclick="ouvrirQuestion(${q.id})">${echapper(q.titre)}</h3>
-      <p class="q-corps">${echapper(q.corps)}</p>
+      <p class="q-corps">${echapper(q.corps)}${q.corpsComplet === false ? '…' : ''}</p>
       <div class="q-tags"><span class="tag">${echapper(q.secteur)}</span></div>
       <div class="q-pied">
         <button class="btn-utile${utileActif}" onclick="basculerUtileQ(${q.id})" aria-label="En favoris" title="En favoris">${iconePouce(etat.utilesQ.has(q.id))}<span class="cnt">${q.utile}</span><span class="lbl">En favoris</span></button>
@@ -1318,7 +1428,7 @@ function carteQuestionHTML(q) {
 
 /* ----- Bouton "utile" : 1 clic = j'aime, 2e clic = annulé ----- */
 async function basculerUtileQ(id) {
-  const q = questions.find(x => x.id === id); if (!q) return;
+  const q = trouverQuestion(id); if (!q) return;
   // Optimistic UI : on bascule immédiatement, puis on confirme côté serveur
   const etaitMarque = etat.utilesQ.has(id);
   if (etaitMarque) { etat.utilesQ.delete(id); q.utile = Math.max(0, q.utile - 1); }
@@ -1421,7 +1531,17 @@ function rendreCourant() {
    Aucune réponse publiée n'a jamais été lisible. Le détail est
    maintenant demandé au serveur à chaque ouverture. */
 async function ouvrirQuestion(id) {
-  const q = questions.find(x => x.id === id); if (!q) return;
+  // Une question hors du fil (notification, recherche, profil,
+  // sauvegardes) ne s'ouvrait pas : la fonction sortait sans rien dire
+  // dès qu'elle n'était pas parmi les questions chargées. Elle est créée
+  // ici en attente, puis complétée par son détail plus bas.
+  let q = trouverQuestion(id);
+  if (!q) {
+    if (!MODE.api) return;
+    q = { id, titre: '', corps: '', reponses: [], _horsFil: true,
+          utile: 0, repCount: 0 };
+    _questionsHorsFil.set(id, q);
+  }
   document.querySelectorAll('.sous-vue').forEach(sv => sv.style.display = 'none');
   const sv = document.getElementById('sv-question');
   sv.style.display = 'block';
@@ -1437,7 +1557,9 @@ async function ouvrirQuestion(id) {
     }
     try {
       const d = await API.get('/questions/' + id);
+      if (q._horsFil) Object.assign(q, adapterQuestion(d), { _horsFil: false });
       q.corps = d.corps ?? q.corps;
+      q.corpsComplet = true;
       q.utile = d.nb_utiles ?? q.utile;
       q.idAuteur = d.id_auteur ?? q.idAuteur;
       q.statut = d.statut;
@@ -1450,6 +1572,13 @@ async function ouvrirQuestion(id) {
       else etat.sauvegardees.delete(id);
     } catch (err) {
       toast(err.message || "Cette question n'a pas pu être chargée.", 'erreur');
+      // Sans son détail, une question hors du fil n'a rien à montrer :
+      // on revient au fil plutôt que d'afficher une page vide.
+      if (q._horsFil) {
+        _questionsHorsFil.delete(id);
+        naviguerApp('fil');
+        return;
+      }
     }
     if (etat.sectionActive !== 'question'
         || parseInt(sv.dataset.qid, 10) !== id) return;
@@ -1527,7 +1656,7 @@ function reponseHTML(r, qid, imbriquee = false) {
   // administrateur qui trancherait à sa place déciderait de ce qui a
   // servi à quelqu'un d'autre.
   const monQuestion = etat.utilisateur && qid
-    && questions.find(x => x.id === qid)?.idAuteur === etat.utilisateur.id;
+    && trouverQuestion(qid)?.idAuteur === etat.utilisateur.id;
   const bandeau = r.retenue
     ? `<div class="bandeau-retenue">${ic('check','ic ic-s')} Réponse retenue
          par l'auteur de la question</div>`
@@ -1910,10 +2039,32 @@ function ongletProfil(elem, t) {
     c.innerHTML = blocParcoursProfil(MODE.utilisateur || etat.utilisateur)
       || '<div class="carte"><p class="desc">Renseignez votre parcours depuis vos paramètres : c\'est lui qui décide des référents qu\'on vous propose.</p></div>';
   } else {
+    c.innerHTML = '<p class="note-param" role="status">Chargement…</p>';
+    chargerSauvegardees(c);
+  }
+}
+
+/* Les questions sauvegardées, demandées au serveur.
+
+   L'onglet les cherchait parmi les questions du fil déjà chargées : une
+   question sauvegardée qui n'y figurait plus disparaissait de l'onglet,
+   alors qu'elle était bien enregistrée. */
+async function chargerSauvegardees(zone) {
+  const vide = `<div class="etat-vide carte"><div class="illu">${ic('marque','ic ic-l')}</div><h3>Aucune question sauvegardée</h3><p>Sauvegardez les questions intéressantes pour les retrouver ici.</p></div>`;
+  if (!MODE.api) {
     const liste = questions.filter(q => etat.sauvegardees.has(q.id));
-    c.innerHTML = liste.length
-      ? liste.map(q => carteQuestionHTML(q)).join('')
-      : `<div class="etat-vide carte"><div class="illu">${ic('marque','ic ic-l')}</div><h3>Aucune question sauvegardée</h3><p>Sauvegardez les questions intéressantes pour les retrouver ici.</p></div>`;
+    zone.innerHTML = liste.length ? liste.map(q => carteQuestionHTML(q)).join('') : vide;
+    return;
+  }
+  try {
+    const liste = ((await API.get('/questions/sauvegardees')) || []).map(adapterQuestion);
+    liste.forEach(q => {
+      etat.sauvegardees.add(q.id);
+      if (!questions.some(x => x.id === q.id)) _questionsHorsFil.set(q.id, q);
+    });
+    zone.innerHTML = liste.length ? liste.map(q => carteQuestionHTML(q)).join('') : vide;
+  } catch (err) {
+    zone.innerHTML = `<p class="desc">${echapper(err.message || 'Sauvegardes indisponibles.')}</p>`;
   }
 }
 
@@ -2468,7 +2619,7 @@ function filtrerParSecteur(libelle) {
   const sel = document.getElementById('filtre-secteur');
   if (sel) sel.value = libelle;
   naviguerApp('fil');
-  rendreFil();
+  rechargerFil();
 }
 
 function lancerRecherche() {
@@ -2478,11 +2629,14 @@ function lancerRecherche() {
   etat.rechercheTerme = v;
   document.getElementById('dropRech').classList.remove('ouvert');
   naviguerApp('fil');
+  // Entrée cherche dans toutes les questions, et non plus seulement
+  // parmi celles déjà chargées dans la page.
+  rechargerFil();
 }
 function effacerRecherche() {
   etat.rechercheTerme = '';
   document.getElementById('recherche-glob').value = '';
-  rendreFil();
+  rechargerFil();
 }
 
 /* ============================================================
@@ -2706,7 +2860,10 @@ async function sauverCompte() {
     const id_pays = await _idPaysDepuisLibelle(pays);
     await API.put('/profil/moi', {
       prenom, nom, bio,
-      photo_url: etat.utilisateur.photo || undefined,
+      // La photo n'est plus renvoyée à chaque enregistrement : elle a sa
+      // propre sauvegarde, au moment où on la choisit. Elle repartait
+      // sinon ici, une trentaine de kilo-octets à chaque clic, sur le
+      // réseau montant, le plus lent.
       id_pays: id_pays || undefined,
       // Une chaîne vide est envoyée telle quelle : c'est ainsi qu'on
       // efface un champ. undefined le laisserait inchangé.
@@ -5455,11 +5612,15 @@ async function ouvrirConversation(id, nom) {
     return;
   }
   const moi = etat.utilisateur?.id;
+  // Le serveur renvoie les MESSAGES_PAR_PAGE derniers messages : une page
+  // pleine laisse supposer qu'il en reste avant.
+  const suitePossible = messages.length >= MESSAGES_PAR_PAGE;
   fil.innerHTML = `
     <header class="entete-conversation">
       <strong>${echapper(nom || 'Conversation')}</strong>
     </header>
     <div class="messages" id="messages-defilement">
+      ${suitePossible ? _boutonMessagesPrecedents(id) : ''}
       ${messages.length
         ? messages.map(m => blocMessage(m, moi)).join('')
         : '<p class="desc">Aucun message. Écrivez le premier.</p>'}
@@ -5512,6 +5673,48 @@ function blocMessage(m, moi) {
        personne ne regarde use la batterie sans rien apporter. */
 const RELEVE_CONVERSATION_MS = 15000;
 let _minuteurConversation = null;
+// Doit valoir LIMITE_MESSAGES côté serveur (routes/messagerie.py).
+const MESSAGES_PAR_PAGE = 100;
+
+function _dernierMessageAffiche(zone) {
+  const ids = [...zone.querySelectorAll('[data-msg]')]
+    .map(e => parseInt(e.dataset.msg, 10)).filter(n => !isNaN(n));
+  return ids.length ? Math.max(...ids) : 0;
+}
+
+function _boutonMessagesPrecedents(id) {
+  return `<button type="button" id="messages-precedents"
+            class="btn btn-fantome btn-petit btn-bloc"
+            onclick="chargerMessagesPrecedents(${id})">Afficher les messages précédents</button>`;
+}
+
+/* Remonte le fil d'une page, sans faire sauter la lecture : la hauteur
+   ajoutée au-dessus est compensée dans la position de défilement. */
+async function chargerMessagesPrecedents(id) {
+  const zone = document.getElementById('messages-defilement');
+  const bouton = document.getElementById('messages-precedents');
+  if (!zone || _conversationOuverte !== id) return;
+  const ids = [...zone.querySelectorAll('[data-msg]')]
+    .map(e => parseInt(e.dataset.msg, 10)).filter(n => !isNaN(n));
+  if (!ids.length) return bouton?.remove();
+  if (bouton) { bouton.disabled = true; bouton.textContent = 'Chargement…'; }
+  try {
+    const plusAncien = Math.min(...ids);
+    const anciens = await API.get(
+      `/messagerie/conversations/${id}/messages?avant=${plusAncien}`);
+    if (_conversationOuverte !== id) return;
+    const hauteur = zone.scrollHeight;
+    const moi = etat.utilisateur?.id;
+    bouton?.remove();
+    zone.insertAdjacentHTML('afterbegin',
+      (anciens.length >= MESSAGES_PAR_PAGE ? _boutonMessagesPrecedents(id) : '')
+      + anciens.map(m => blocMessage(m, moi)).join(''));
+    zone.scrollTop += zone.scrollHeight - hauteur;
+  } catch (err) {
+    if (bouton) { bouton.disabled = false; bouton.textContent = 'Afficher les messages précédents'; }
+    toast(err.message || 'Messages indisponibles.', 'erreur');
+  }
+}
 
 function demarrerReleveConversation(id) {
   arreterReleveConversation();
@@ -5533,7 +5736,10 @@ async function rafraichirConversation(id) {
 
   let messages;
   try {
-    messages = await API.get(`/messagerie/conversations/${id}/messages`);
+    // Seulement ce qui est arrivé après le dernier message affiché : la
+    // relève relisait la conversation entière toutes les quinze secondes.
+    const dernier = _dernierMessageAffiche(zone);
+    messages = await API.get(`/messagerie/conversations/${id}/messages?apres=${dernier}`);
   } catch (_) {
     return;            // une relève ratée n'interrompt rien
   }
@@ -5565,10 +5771,18 @@ async function envoyerMessage(id) {
   if (!contenu) return;
   champ.disabled = true;
   try {
-    await API.post(`/messagerie/conversations/${id}/messages`, { contenu });
+    const m = await API.post(`/messagerie/conversations/${id}/messages`, { contenu });
     champ.value = '';
-    const nom = document.querySelector('.entete-conversation strong')?.textContent;
-    await ouvrirConversation(id, nom);
+    // Le serveur renvoie le message enregistré : il suffit de l'ajouter.
+    // L'envoi relisait toute la conversation, puis toute la liste.
+    const zone = document.getElementById('messages-defilement');
+    if (zone && m && m.id_message
+        && !zone.querySelector(`[data-msg="${m.id_message}"]`)) {
+      zone.querySelector('.desc')?.remove();
+      zone.insertAdjacentHTML('beforeend', blocMessage(m, etat.utilisateur?.id));
+      zone.scrollTop = zone.scrollHeight;
+    }
+    rendreMessagerie();
   } catch (err) {
     toast(err.message || 'Message non envoyé.', 'erreur');
   } finally {
@@ -5600,8 +5814,10 @@ function majCompteurMessages(n) {
 async function chargerCompteurMessages() {
   if (!etat.utilisateur || !etat.utilisateur.email) return;
   try {
-    const liste = await API.get('/messagerie/conversations');
-    majCompteurMessages(liste.reduce((n, c) => n + (c.non_lus || 0), 0));
+    // Un nombre, et non plus la liste entière des conversations avec
+    // leurs photos, relue toutes les trente secondes.
+    const r = await API.get('/messagerie/non-lus');
+    majCompteurMessages((r && r.non_lus) || 0);
   } catch (_) { /* le compteur n'est pas essentiel */ }
 }
 
@@ -5667,7 +5883,9 @@ async function validerCodeInscription(bouton) {
       // La photo choisie à l'accueil n'a pas pu partir plus tôt : il
       // n'y avait pas encore de session.
       const enAttente = etat.utilisateur && etat.utilisateur.photo;
-      if (enAttente && !enAttente.startsWith('http')) {
+      // Seule une image encore locale est à envoyer : une adresse vient
+      // du serveur, elle y est déjà.
+      if (enAttente && enAttente.startsWith('data:')) {
         await enregistrerPhoto(enAttente);
       }
     }
@@ -5966,7 +6184,7 @@ function carteOpportunite(o) {
   const auteur = `${o.prenom || ''} ${o.nom || ''}`.trim();
   const officiel = o.role === 'admin' || o.role === 'super_admin';
   return `<article class="carte carte-opportunite${o.cloturee ? ' close' : ''}">
-    ${o.a_une_affiche ? `<img class="opp-affiche" loading="lazy"
+    ${o.a_une_affiche ? `<img class="opp-affiche" loading="lazy" decoding="async"
          src="/api/opportunites/${o.id_opportunite}/affiche"
          alt="Affiche de : ${echapper(o.titre)}" />` : ''}
     <div class="opp-entete">

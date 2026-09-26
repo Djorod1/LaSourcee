@@ -31,6 +31,7 @@ from utils.permissions import permission_requise
 from utils.securite import est_bloque, enregistrer_echec
 from utils.urls import url_publique
 from utils.email import Markup, envoyer, gabarit_html
+from utils import photos
 
 logger = logging.getLogger("lasourcee.equipe")
 
@@ -173,7 +174,8 @@ def lister():
         f"""SELECT m.id_message, m.categorie, m.message, m.page,
                    m.navigateur, m.statut, m.reponse, m.traite_le,
                    m.cree_le, m.nom, m.email, m.id_utilisateur,
-                   u.prenom, u.nom AS nom_compte, u.role, u.photo_url,
+                   u.prenom, u.nom AS nom_compte, u.role,
+                   {photos.colonnes("u")},
                    t.prenom AS traite_prenom, t.nom AS traite_nom
               FROM message_equipe m
          LEFT JOIN utilisateur u ON u.id_utilisateur = m.id_utilisateur
@@ -184,6 +186,7 @@ def lister():
                    m.cree_le DESC
              LIMIT 200""",
         tuple(params))
+    photos.remplacer(lignes)
     for ligne in lignes:
         ligne["categorie_libelle"] = CATEGORIES.get(ligne["categorie"],
                                                     "Autre chose")

@@ -5,9 +5,14 @@ from datetime import datetime
 from flask import Blueprint, g, jsonify, request
 
 from models.db import recuperer_un, recuperer_tous, executer, curseur
+from utils import photos
 from utils.auth_helpers import connexion_requise
 
 bp_messagerie = Blueprint("messagerie", __name__, url_prefix="/api/messagerie")
+
+# Messages renvoyés à l'ouverture d'une conversation, puis par page quand
+# on remonte le fil.
+LIMITE_MESSAGES = 100
 
 
 @bp_messagerie.get("/conversations")
@@ -16,11 +21,12 @@ def lister_conversations():
     id_user = g.utilisateur["id_utilisateur"]
     from routes.profil import _est_en_ligne
     lignes = recuperer_tous(
-        """SELECT c.id_conversation, c.dernier_msg_le,
+        f"""SELECT c.id_conversation, c.dernier_msg_le,
                   autre.id_utilisateur AS id_autre,
-                  autre.prenom, autre.nom, autre.photo_url, autre.role,
+                  autre.prenom, autre.nom, {photos.colonnes("autre")},
+                  autre.role,
                   autre.derniere_activite,
-                  (SELECT contenu FROM message
+                  (SELECT SUBSTR(contenu, 1, 120) FROM message
                      WHERE id_conversation = c.id_conversation
                      ORDER BY envoye_le DESC, id_message DESC
                      LIMIT 1) AS dernier_contenu,
@@ -46,7 +52,30 @@ def lister_conversations():
     for ligne in lignes:
         ligne["en_ligne"] = _est_en_ligne(ligne.get("derniere_activite"))
         ligne.pop("derniere_activite", None)
-    return jsonify(lignes)
+    return jsonify(photos.remplacer(lignes, cle_id="id_autre"))
+
+
+@bp_messagerie.get("/non-lus")
+@connexion_requise
+def compter_non_lus():
+    """Le nombre de messages non lus, et rien d'autre.
+
+    La pastille de la messagerie relisait toute la liste des
+    conversations toutes les trente secondes, photos comprises, pour en
+    tirer un seul nombre : 237 Ko par relève avec dix conversations,
+    près de 28 Mo par heure d'onglet ouvert, sur un forfait mobile.
+    """
+    id_user = g.utilisateur["id_utilisateur"]
+    ligne = recuperer_un(
+        """SELECT COUNT(*) AS n
+             FROM message m
+             JOIN conversation_participant cp
+               ON cp.id_conversation = m.id_conversation
+              AND cp.id_utilisateur = %s
+            WHERE m.id_expediteur <> %s
+              AND (cp.lu_jusqua IS NULL OR m.envoye_le > cp.lu_jusqua)""",
+        (id_user, id_user)) or {}
+    return jsonify({"non_lus": int(ligne.get("n") or 0)})
 
 
 def peut_ecrire_a(moi, id_autre):
@@ -195,19 +224,46 @@ def lire(id_conv):
     # le tri n'avait alors plus rien pour les departager, et une reponse
     # pouvait s'afficher avant la question qu'elle suit. L'identifiant,
     # lui, croit toujours.
-    messages = recuperer_tous(
-        """SELECT id_message, id_expediteur, contenu, envoye_le
-             FROM message
-            WHERE id_conversation = %s
-         ORDER BY envoye_le ASC, id_message ASC""",
-        (id_conv,),
-    )
-    executer(
-        """UPDATE conversation_participant
-              SET lu_jusqua = %s
-            WHERE id_conversation = %s AND id_utilisateur = %s""",
-        (datetime.utcnow(), id_conv, id_user), commit=True,
-    )
+    #
+    # Trois façons de lire, pour ne jamais tout renvoyer sans raison :
+    #   - sans paramètre : les LIMITE_MESSAGES derniers messages ;
+    #   - apres=<id>    : seulement les nouveaux, pour la relève toutes
+    #                     les quinze secondes, qui relisait jusqu'ici la
+    #                     conversation entière à chaque passage ;
+    #   - avant=<id>    : la page précédente, pour remonter le fil.
+    # L'identifiant suffit à ordonner : il croît avec l'envoi.
+    apres_id = request.args.get("apres", type=int)
+    avant_id = request.args.get("avant", type=int)
+    if apres_id is not None:
+        messages = recuperer_tous(
+            """SELECT id_message, id_expediteur, contenu, envoye_le
+                 FROM message
+                WHERE id_conversation = %s AND id_message > %s
+             ORDER BY id_message ASC
+                LIMIT %s""",
+            (id_conv, apres_id, LIMITE_MESSAGES))
+    else:
+        condition = "AND id_message < %s" if avant_id else ""
+        params = (id_conv, avant_id) if avant_id else (id_conv,)
+        messages = recuperer_tous(
+            f"""SELECT id_message, id_expediteur, contenu, envoye_le
+                  FROM message
+                 WHERE id_conversation = %s {condition}
+              ORDER BY id_message DESC
+                 LIMIT %s""",
+            params + (LIMITE_MESSAGES,))
+        messages.reverse()
+
+    # Rien de nouveau à la relève : rien à écrire. La relève réécrivait
+    # sinon la même date de lecture toutes les quinze secondes, pour
+    # chaque conversation ouverte.
+    if messages and avant_id is None:
+        executer(
+            """UPDATE conversation_participant
+                  SET lu_jusqua = %s
+                WHERE id_conversation = %s AND id_utilisateur = %s""",
+            (datetime.utcnow(), id_conv, id_user), commit=True,
+        )
     return jsonify(messages)
 
 
