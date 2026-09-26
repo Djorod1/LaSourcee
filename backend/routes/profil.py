@@ -3,11 +3,14 @@
 import json
 import re
 import unicodedata
+from datetime import datetime
 
 from flask import Blueprint, g, jsonify, request
 
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from services import evenements
+from utils import photos
+from utils.cache import cache_public
 from utils.auth_helpers import connexion_requise
 from utils.noms import normaliser_nom
 
@@ -275,6 +278,25 @@ def photo_acceptable(photo):
     return bool(_PHOTO_ENCODEE.fullmatch(photo)
                 or _PHOTO_GOOGLE.fullmatch(photo))
 
+
+def _entiers(valeurs):
+    """Les identifiants entiers positifs d'une liste reçue, sans doublon.
+
+    int() sur « abc » levait une erreur que rien ne rattrapait : une
+    liste de secteurs mal formée finissait en erreur 500.
+    """
+    if not isinstance(valeurs, list):
+        return []
+    vus = []
+    for v in valeurs:
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            continue
+        if n > 0 and n not in vus and not isinstance(v, bool):
+            vus.append(n)
+    return vus
+
 # Ce qu'un profil montre de l'activite recente. Au-dela, la page
 # devient un journal qu'on ne lit pas, et la requete s'alourdit
 # pour rien.
@@ -476,6 +498,7 @@ def profil_initial(bloc):
 
 
 @bp_profil.get("/referentiels-profil")
+@cache_public(3600)
 def referentiels_profil():
     """Valeurs proposees pour les champs a choix ferme.
 
@@ -498,6 +521,7 @@ def referentiels_profil():
 
 
 @bp_profil.get("/referentiels")
+@cache_public(3600)
 def referentiels():
     """Endpoint public : secteurs et pays disponibles."""
     return jsonify({
@@ -627,12 +651,34 @@ def modifier_profil():
     # une image entière.
     if "photo_url" in champs:
         photo = str(champs["photo_url"]).strip()
-        if len(photo) > LONGUEUR_PHOTO:
-            return jsonify({"erreur":
-                "Image trop lourde. Choisissez une photo plus légère."}), 400
-        if photo and not photo_acceptable(photo):
-            return jsonify({"erreur": "Format d'image non reconnu."}), 400
-        champs["photo_url"] = photo
+        # L'adresse courte que le serveur renvoie désormais à la place de
+        # l'image : une page ouverte avant la mise à jour peut encore la
+        # renvoyer telle quelle. Elle désigne la photo actuelle, donc ne
+        # change rien.
+        if photo.startswith("/api/profil/"):
+            champs.pop("photo_url")
+        else:
+            if len(photo) > LONGUEUR_PHOTO:
+                return jsonify({"erreur":
+                    "Image trop lourde. Choisissez une photo plus légère."}), 400
+            if photo and not photo_acceptable(photo):
+                return jsonify({"erreur": "Format d'image non reconnu."}), 400
+            champs["photo_url"] = photo
+            # La date fait la version de l'adresse de la photo, donc ce
+            # qui oblige les navigateurs à la recharger. À la
+            # microseconde : deux photos envoyées dans la même seconde
+            # auraient sinon la même adresse, et la seconde ne
+            # s'afficherait pas.
+            champs["photo_maj_le"] = datetime.utcnow().strftime(
+                "%Y-%m-%d %H:%M:%S.%f")
+            # La vignette accompagne la photo ou disparaît avec elle : une
+            # vignette de l'ancienne photo sous la nouvelle serait pire
+            # que pas de vignette du tout.
+            vignette = str(d.get("photo_vignette") or "").strip()
+            if vignette and not (photo and photos.acceptable(
+                    vignette, photos.LONGUEUR_VIGNETTE)):
+                return jsonify({"erreur": "Vignette de photo invalide."}), 400
+            champs["photo_vignette"] = vignette or None
 
     # La biographie n'était bornée qu'à l'inscription : modifiée ensuite,
     # elle acceptait 1,5 Mo, que l'annuaire renvoyait à chaque visiteur.
@@ -673,7 +719,7 @@ def modifier_profil():
                 "DELETE FROM utilisateur_secteur WHERE id_utilisateur = %s",
                 (id_user,),
             )
-            for id_sect in d["secteurs"] or []:
+            for id_sect in _entiers(d["secteurs"]):
                 cur.execute(
                     """INSERT INTO utilisateur_secteur
                           (id_utilisateur, id_secteur) VALUES (%s, %s)""",
@@ -693,7 +739,7 @@ def modifier_profil():
             executer(
                 """UPDATE mentor_details SET anciennete = %s
                     WHERE id_utilisateur = %s""",
-                (anciennete[:40], id_user), commit=True,
+                (str(anciennete)[:40], id_user), commit=True,
             )
 
     profil = _charger_profil(id_user)
@@ -726,10 +772,34 @@ def _est_en_ligne(derniere_activite):
     return datetime.utcnow() - vue < timedelta(seconds=DELAI_EN_LIGNE)
 
 
+@bp_profil.get("/<int:id_user>/photo")
+@connexion_requise
+def photo_membre(id_user):
+    """La photo d'un membre, servie en image aux personnes connectées.
+
+    « t=s » demande la vignette des listes, ou la photo en grand quand
+    aucune vignette n'existe encore. Voir utils/photos.py.
+    """
+    vignette = request.args.get("t") == "s"
+    colonne = ("COALESCE(photo_vignette, photo_url)" if vignette
+               else "photo_url")
+    ligne = recuperer_un(
+        f"SELECT {colonne} AS photo FROM utilisateur "
+        "WHERE id_utilisateur = %s", (id_user,)) or {}
+    valeur = ligne.get("photo") or ""
+    if valeur.startswith("https://") and photo_acceptable(valeur):
+        from flask import redirect
+        return redirect(valeur)
+    reponse = photos.reponse_image(valeur, request.args.get("v"))
+    if reponse is None:
+        return jsonify({"erreur": "Photo introuvable."}), 404
+    return reponse
+
+
 def _charger_profil(id_user, public=False):
     base = recuperer_un(
-        """SELECT u.id_utilisateur, u.prenom, u.nom, u.email,
-                  u.role, u.photo_url, u.bio, u.etudes, u.ville,
+        f"""SELECT u.id_utilisateur, u.prenom, u.nom, u.email,
+                  u.role, {photos.colonnes("u")}, u.bio, u.etudes, u.ville,
                   u.id_pays, p.libelle AS pays,
                   u.est_admin, u.doit_changer_mdp, u.cree_le,
                   u.derniere_activite,
@@ -747,6 +817,9 @@ def _charger_profil(id_user, public=False):
     )
     if not base:
         return None
+    # Le profil montre la photo en grand : l'adresse vise l'image de 320
+    # pixels, pas la vignette des listes.
+    photos.remplacer([base], taille=None)
     if public:
         base.pop("email", None)
         # Le numéro ne se montre pas au tout-venant : il sert à joindre
@@ -851,6 +924,7 @@ def _charger_profil(id_user, public=False):
 
 
 @bp_profil.get("/statistiques")
+@cache_public(300, 600)
 def statistiques_publiques():
     """Chiffres réels de la plateforme, pour la page d'accueil.
 

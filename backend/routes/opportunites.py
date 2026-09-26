@@ -33,6 +33,8 @@ from flask import Blueprint, current_app, g, jsonify, request
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from services import evenements
 from services.notifications import notifier
+from utils import photos
+from utils.cache import cache_public
 from utils.auth_helpers import connexion_requise
 from utils.audit import journaliser
 from utils.permissions import a_le_droit, permission_requise
@@ -110,6 +112,9 @@ def _referent_verifie(id_utilisateur):
 # bloque : il lui suffit qu'une de ses propositions soit tranchee.
 MAX_EN_ATTENTE = 3
 
+# Annonces renvoyées par le fil, ouvertes d'un côté, closes de l'autre.
+LIMITE_FIL = 100
+
 
 def _propositions_en_attente(id_utilisateur):
     ligne = recuperer_un(
@@ -174,6 +179,7 @@ def _cloturee(ligne):
 
 
 @bp_opportunites.get("/referentiels")
+@cache_public(3600)
 def referentiels():
     return jsonify({"categories": [{"cle": c, "libelle": l}
                                    for c, l in CATEGORIES.items()]})
@@ -192,34 +198,57 @@ def lister():
         conditions.append("o.categorie = %s")
         params.append(categorie)
 
-    lignes = recuperer_tous(
-        f"""SELECT o.id_opportunite, o.titre, o.categorie, o.organisme,
-                   o.description, o.pays, o.niveau, o.domaine,
-                   o.date_limite, o.lien, o.vues, o.cree_le,
-                   CASE WHEN o.affiche IS NULL OR o.affiche = ''
-                        THEN 0 ELSE 1 END AS a_une_affiche,
-                   u.id_utilisateur, u.prenom, u.nom, u.role, u.photo_url
-              FROM opportunite o
-         LEFT JOIN utilisateur u ON u.id_utilisateur = o.id_auteur
-             WHERE {' AND '.join(conditions)}
-          ORDER BY CASE WHEN o.date_limite IS NULL OR o.date_limite = ''
-                        THEN 1 ELSE 0 END,
-                   o.date_limite ASC, o.cree_le DESC
-             LIMIT 200""",
-        tuple(params))
+    # Ouvertes et closes se séparent en SQL, avant la limite. Elles
+    # étaient lues ensemble, deux cents au plus, puis triées en Python :
+    # passé deux cents annonces closes, plus une seule annonce ouverte
+    # n'arrivait jusqu'au fil. La date limite est un texte ISO, qui se
+    # compare correctement comme une chaîne.
+    aujourdhui = date.today().isoformat()
+    ouverte = ("(o.date_limite IS NULL OR o.date_limite = '' "
+               "OR SUBSTR(o.date_limite, 1, 10) >= %s)")
+    close = ("(o.date_limite IS NOT NULL AND o.date_limite <> '' "
+             "AND SUBSTR(o.date_limite, 1, 10) < %s)")
+    base = " AND ".join(conditions)
 
-    ouvertes, closes = [], []
-    for ligne in lignes:
+    def _lire(filtre, ordre):
+        return recuperer_tous(
+            f"""SELECT o.id_opportunite, o.titre, o.categorie, o.organisme,
+                       o.description, o.pays, o.niveau, o.domaine,
+                       o.date_limite, o.lien, o.vues, o.cree_le,
+                       CASE WHEN o.affiche IS NULL OR o.affiche = ''
+                            THEN 0 ELSE 1 END AS a_une_affiche,
+                       u.id_utilisateur, u.prenom, u.nom, u.role,
+                       {photos.colonnes("u")}
+                  FROM opportunite o
+             LEFT JOIN utilisateur u ON u.id_utilisateur = o.id_auteur
+                 WHERE {base} AND {filtre}
+              ORDER BY {ordre}
+                 LIMIT %s""",
+            tuple(params) + (aujourdhui, LIMITE_FIL))
+
+    ouvertes = _lire(ouverte, """CASE WHEN o.date_limite IS NULL
+                                      OR o.date_limite = ''
+                                      THEN 1 ELSE 0 END,
+                                 o.date_limite ASC, o.cree_le DESC""")
+    nb_closes = (recuperer_un(
+        f"SELECT COUNT(*) AS n FROM opportunite o WHERE {base} AND {close}",
+        tuple(params) + (aujourdhui,)) or {}).get("n", 0)
+    # Les closes ne partent que si on les demande, les plus récemment
+    # échues d'abord : ce sont les seules qu'on a une chance de relire.
+    closes = (_lire(close, "o.date_limite DESC, o.cree_le DESC")
+              if inclure_closes else [])
+
+    for ligne in ouvertes + closes:
         ligne["categorie_libelle"] = CATEGORIES.get(ligne["categorie"],
                                                     "Appel à candidatures")
         ligne["cloturee"] = _cloturee(ligne)
-        (closes if ligne["cloturee"] else ouvertes).append(ligne)
+    photos.remplacer(ouvertes + closes)
 
     # Les annonces closes vont a la fin, jamais melangees aux autres :
     # une date depassee lue en diagonale fait rater la suivante.
     return jsonify({
-        "opportunites": ouvertes + (closes if inclure_closes else []),
-        "nb_closes": len(closes),
+        "opportunites": ouvertes + closes,
+        "nb_closes": int(nb_closes or 0),
         "categories": CATEGORIES,
         # L'interface ne propose le bouton que s'il aboutira : offrir
         # une action qui repondra par un refus fait passer une regle
@@ -232,8 +261,18 @@ def lister():
 @bp_opportunites.get("/<int:id_opp>")
 @connexion_requise
 def detail(id_opp):
+    # Les colonnes sont nommées, et l'affiche n'en fait pas partie : « o.* »
+    # la faisait sortir de la base à chaque ouverture (jusqu'à 600 Ko),
+    # pour la jeter aussitôt. Seul compte de savoir qu'elle existe.
     ligne = recuperer_un(
-        """SELECT o.*, u.prenom, u.nom, u.role, u.photo_url
+        f"""SELECT o.id_opportunite, o.id_auteur, o.titre, o.categorie,
+                  o.organisme, o.description, o.pays, o.niveau, o.domaine,
+                  o.date_limite, o.lien, o.statut, o.motif_refus,
+                  o.decide_par, o.decide_le, o.vues, o.cree_le,
+                  CASE WHEN o.affiche IS NULL OR o.affiche = ''
+                       THEN 0 ELSE 1 END AS a_une_affiche,
+                  u.id_utilisateur, u.prenom, u.nom, u.role,
+                  {photos.colonnes("u")}
              FROM opportunite o
         LEFT JOIN utilisateur u ON u.id_utilisateur = o.id_auteur
             WHERE o.id_opportunite = %s""", (id_opp,))
@@ -254,7 +293,8 @@ def detail(id_opp):
     # navigateur charge paresseusement et met en cache. Transportee ici,
     # elle se retelechargerait a chaque ouverture et gonflerait une
     # reponse que l'on lit surtout pour son texte.
-    ligne["a_une_affiche"] = bool(ligne.pop("affiche", None))
+    ligne["a_une_affiche"] = bool(ligne.get("a_une_affiche"))
+    photos.remplacer([ligne])
     return jsonify(ligne)
 
 
@@ -304,10 +344,22 @@ def affiche(id_opp):
         return _erreur("Affiche illisible.", 404)
 
     reponse = current_app.response_class(octets, mimetype=type_mime)
-    # Une affiche ne change pas : la remettre en cache une semaine evite
-    # de la retelecharger a chaque passage dans le fil.
-    reponse.headers["Cache-Control"] = "public, max-age=604800"
-    return reponse
+    if ligne.get("statut") != "publiee":
+        # Vue par le seul relecteur : aucun cache partagé ne doit la
+        # garder, sans quoi elle se servirait ensuite à n'importe qui.
+        reponse.headers["Cache-Control"] = "private, no-store"
+        return reponse
+    # Une affiche ne change pas : le navigateur la garde un jour, et le
+    # réseau de diffusion une heure, ce qui évite de relire jusqu'à
+    # 600 Ko en base pour chaque nouveau visiteur. Une heure et pas une
+    # semaine : une affiche retirée par la modération ne doit pas rester
+    # servie longtemps après. L'empreinte permet au navigateur de
+    # revalider sans retélécharger.
+    import hashlib
+    reponse.set_etag(hashlib.sha1(donnees.encode()).hexdigest()[:20])
+    reponse.headers["Cache-Control"] = ("public, max-age=86400, "
+                                        "s-maxage=3600")
+    return reponse.make_conditional(request)
 
 
 @bp_opportunites.post("")
@@ -410,17 +462,18 @@ def _prevenir_relecteurs(titre):
 @bp_opportunites.get("/a-relire")
 @permission_requise("opportunites")
 def a_relire():
-    return jsonify(recuperer_tous(
-        """SELECT o.id_opportunite, o.titre, o.categorie, o.organisme,
+    return jsonify(photos.remplacer(recuperer_tous(
+        f"""SELECT o.id_opportunite, o.titre, o.categorie, o.organisme,
                   o.description, o.pays, o.niveau, o.domaine,
                   o.date_limite, o.lien, o.cree_le,
                   CASE WHEN o.affiche IS NULL OR o.affiche = ''
                        THEN 0 ELSE 1 END AS a_une_affiche,
-                  u.id_utilisateur, u.prenom, u.nom, u.photo_url
+                  u.id_utilisateur, u.prenom, u.nom, {photos.colonnes("u")}
              FROM opportunite o
         LEFT JOIN utilisateur u ON u.id_utilisateur = o.id_auteur
             WHERE o.statut = 'en_attente'
-         ORDER BY o.cree_le ASC"""))
+         ORDER BY o.cree_le ASC
+            LIMIT 200""")))
 
 
 @bp_opportunites.post("/<int:id_opp>/decision")

@@ -22,6 +22,7 @@ import hmac
 from utils.noms import normaliser_nom, depuis_adresse
 from models.db import recuperer_un, executer, curseur
 from utils.auth_helpers import creer_session, poser_cookie_session
+from utils.cache import cache_public
 from services import evenements
 
 bp_oauth = Blueprint("oauth", __name__, url_prefix="/api/auth")
@@ -33,6 +34,7 @@ logger = logging.getLogger("lasource.oauth")
 # ============================================================
 
 @bp_oauth.get("/config")
+@cache_public(300)
 def config_publique():
     """Expose aux frontend les clés publiques nécessaires (Client ID Google,
     flag LinkedIn). Pas de secret."""

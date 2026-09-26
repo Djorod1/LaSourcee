@@ -4509,6 +4509,240 @@ def executer_tests():
                  for q in (voisin.get("/api/questions").get_json() or [])))
     patron.post(f"/api/admin/utilisateurs/{id_eleve}/reactiver")
 
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  54. CE QUE LE FIL COÛTE SUR UNE CONNEXION LENTE")
+    print("═" * 70)
+
+    import base64 as _b64_54
+    # Une vraie petite image JPEG, en deux tailles distinctes.
+    JPEG = ("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkS"
+            "Ew8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAAB"
+            "AAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAA"
+            "AAD/2gAIAQEAAD8AKp//2Q==")
+    PHOTO = "data:image/jpeg;base64," + JPEG
+    # Distincte de la photo (deux octets après la fin de l'image, que
+    # les décodeurs ignorent) : sans cela, servir la photo à la place de
+    # la vignette passerait inaperçu.
+    VIGNETTE_OCTETS = _b64_54.b64decode(JPEG) + b"\x00\x00"
+    VIGNETTE = ("data:image/jpeg;base64,"
+                + _b64_54.b64encode(VIGNETTE_OCTETS).decode())
+
+    auteur54, id_auteur54 = _compte_membre("Sena", "sena.s54@test.io")
+    lecteur54, id_lecteur54 = _compte_membre("Yao", "yao.s54@test.io")
+    r = auteur54.put("/api/profil/moi", json={"photo_url": PHOTO,
+                                             "photo_vignette": VIGNETTE})
+    verifier("La photo et sa vignette s'enregistrent", r.status_code == 200,
+             r.get_data(as_text=True)[:120])
+
+    # Six questions, dont une longue, pour la pagination et l'extrait.
+    id_sec54 = jeton_sql("SELECT id_secteur FROM secteur ORDER BY id_secteur "
+                         "LIMIT 1")
+    ids54 = []
+    for i in range(6):
+        corps = ("Longue question. " * 60) if i == 0 else f"Question {i}."
+        r = auteur54.post("/api/questions", json={
+            "titre": f"Question de pagination numéro {i} pour le fil",
+            "corps": corps, "id_secteur": id_sec54})
+        ids54.append((r.get_json() or {}).get("id_question"))
+
+    # --- Plus aucune image encodée dans les listes.
+    r = lecteur54.get("/api/questions?limite=20")
+    texte = r.get_data(as_text=True)
+    verifier("Le fil ne transporte plus aucune image encodée",
+             "data:image" not in texte, f"{len(texte)} caractères")
+    fil = r.get_json() or []
+    carte = next((q for q in fil if q["id_question"] == ids54[-1]), {})
+    adresse_photo = carte.get("photo_url") or ""
+    verifier("L'auteur y porte une adresse courte vers sa vignette",
+             adresse_photo.startswith(f"/api/profil/{id_auteur54}/photo?v=")
+             and "t=s" in adresse_photo and len(adresse_photo) < 80,
+             adresse_photo)
+    for chemin in ("/api/mentors?limite=40", "/api/messagerie/conversations",
+                   f"/api/questions/{ids54[-1]}", "/api/opportunites"):
+        corps_rep = lecteur54.get(chemin).get_data(as_text=True)
+        verifier(f"{chemin} ne transporte aucune image encodée",
+                 "data:image" not in corps_rep)
+
+    # --- La photo se sert à part, et se garde.
+    r = lecteur54.get(adresse_photo)
+    verifier("L'adresse sert une image", r.status_code == 200
+             and r.headers.get("Content-Type", "").startswith("image/jpeg"),
+             f"{r.status_code} {r.headers.get('Content-Type')}")
+    verifier("Gardée un an par le navigateur, puisque l'adresse est versionnée",
+             "immutable" in r.headers.get("Cache-Control", "")
+             and "private" in r.headers.get("Cache-Control", ""),
+             r.headers.get("Cache-Control", "absent"))
+    verifier("Et jamais par un cache partagé : ce sont des photos de membres",
+             "public" not in r.headers.get("Cache-Control", ""))
+    verifier("Sans connexion, elle n'est pas servie",
+             app.test_client().get(adresse_photo).status_code == 401)
+    verifier("La vignette est celle qui a été envoyée",
+             r.get_data() == VIGNETTE_OCTETS)
+    grande = lecteur54.get(f"/api/profil/{id_auteur54}/photo")
+    verifier("La photo en grand est bien la photo, pas la vignette",
+             grande.status_code == 200
+             and grande.get_data() == _b64_54.b64decode(JPEG))
+
+    # Changer de photo change l'adresse, et efface l'ancienne vignette.
+    r = auteur54.put("/api/profil/moi", json={"photo_url": PHOTO})
+    verifier("Une nouvelle photo sans vignette efface l'ancienne vignette",
+             jeton_sql("SELECT photo_vignette FROM utilisateur "
+                       "WHERE id_utilisateur = ?", (id_auteur54,)) is None)
+    fil2 = lecteur54.get("/api/questions?limite=20").get_json() or []
+    nouvelle = next((q for q in fil2 if q["id_question"] == ids54[-1]),
+                    {}).get("photo_url")
+    verifier("Et l'adresse change, pour que les navigateurs la rechargent",
+             nouvelle and nouvelle != adresse_photo, f"{nouvelle}")
+    r = auteur54.put("/api/profil/moi", json={"photo_url": nouvelle,
+                                             "bio": "Bio à jour."})
+    verifier("Renvoyer l'adresse courte ne touche pas à la photo",
+             r.status_code == 200 and (jeton_sql(
+                 "SELECT photo_url FROM utilisateur WHERE id_utilisateur = ?",
+                 (id_auteur54,)) or "").startswith("data:image/jpeg"))
+    r = auteur54.put("/api/profil/moi", json={
+        "photo_url": PHOTO, "photo_vignette": "data:image/svg+xml;base64,AA"})
+    verifier("Une vignette qui n'est pas une image est refusée",
+             r.status_code == 400, f"reçu {r.status_code}")
+    donnees = auteur54.get("/api/profil/moi/donnees").get_data(as_text=True)
+    verifier("L'export de ses données garde la photo entière",
+             "data:image/jpeg" in donnees)
+
+    # --- Le fil se lit par pages, sans doublon ni trou.
+    p1 = lecteur54.get("/api/questions?limite=3").get_json() or []
+    verifier("Une page porte le nombre demandé", len(p1) == 3, str(len(p1)))
+    dernier = min(q["id_question"] for q in p1) if p1 else 0
+    p2 = lecteur54.get(f"/api/questions?limite=3&avant={dernier}"
+                       ).get_json() or []
+    ids_p1 = {q["id_question"] for q in p1}
+    verifier("La page suivante ne répète rien",
+             p2 and not (ids_p1 & {q["id_question"] for q in p2}))
+    verifier("Et reprend exactement où la précédente s'arrêtait",
+             p2 and max(q["id_question"] for q in p2) < dernier)
+    longue = next((q for q in lecteur54.get("/api/questions?limite=20"
+                                            ).get_json() or []
+                   if q["id_question"] == ids54[0]), {})
+    verifier("Une carte n'emporte qu'un extrait du texte",
+             len(longue.get("corps") or "") == 300
+             and longue.get("corps_complet") is False,
+             f"{len(longue.get('corps') or '')} / {longue.get('corps_complet')}")
+    detail = lecteur54.get(f"/api/questions/{ids54[0]}").get_json() or {}
+    verifier("Le détail porte le texte entier",
+             len(detail.get("corps") or "") > 300)
+    pop1 = lecteur54.get("/api/questions?tri=populaire&limite=2").get_json()
+    pop2 = lecteur54.get("/api/questions?tri=populaire&limite=2&page=2"
+                         ).get_json()
+    verifier("Le tri par popularité se lit aussi par pages",
+             pop1 and pop2 and not ({q["id_question"] for q in pop1}
+                                    & {q["id_question"] for q in pop2}))
+
+    # --- Les sauvegardes ne dépendent plus de la page chargée.
+    lecteur54.post(f"/api/questions/{ids54[0]}/sauvegarder")
+    sauv = lecteur54.get("/api/questions/sauvegardees").get_json() or []
+    verifier("Une question sauvegardée se retrouve, même hors de la page",
+             [q["id_question"] for q in sauv] == [ids54[0]],
+             str([q.get("id_question") for q in sauv]))
+
+    # --- Messagerie : un nombre pour la pastille, et une relève légère.
+    r = lecteur54.post("/api/messagerie/conversations",
+                       json={"id_utilisateur": id_auteur54})
+    id_conv54 = (r.get_json() or {}).get("id_conversation")
+    if not id_conv54:
+        # Deux bénéficiaires ne s'écrivent pas : l'auteure écrit donc à
+        # l'équipe, par le compte « patron ».
+        r = auteur54.post("/api/messagerie/conversations",
+                          json={"id_utilisateur": id_patron})
+        id_conv54 = (r.get_json() or {}).get("id_conversation")
+        envoyeur, receveur = auteur54, patron
+    else:
+        envoyeur, receveur = lecteur54, auteur54
+    verifier("Une conversation s'ouvre pour ces contrôles", bool(id_conv54),
+             r.get_data(as_text=True)[:120])
+    for i in range(105):
+        with app.app_context():
+            _maj("INSERT INTO message (id_conversation, id_expediteur, "
+                 "contenu) VALUES (%s, %s, %s)",
+                 (id_conv54, _id("sena.s54@test.io")
+                  if envoyeur is auteur54 else id_lecteur54,
+                  f"Message numéro {i}"), commit=True)
+    non_lus = (receveur.get("/api/messagerie/non-lus").get_json() or {})
+    liste_conv = receveur.get("/api/messagerie/conversations").get_json() or []
+    verifier("La pastille reçoit un nombre, cohérent avec la liste",
+             non_lus.get("non_lus") == sum(c.get("non_lus") or 0
+                                           for c in liste_conv),
+             f"{non_lus} contre {[c.get('non_lus') for c in liste_conv]}")
+    ouverture = receveur.get(
+        f"/api/messagerie/conversations/{id_conv54}/messages").get_json() or []
+    verifier("L'ouverture renvoie les cent derniers messages",
+             len(ouverture) == 100
+             and ouverture[-1]["contenu"] == "Message numéro 104",
+             str(len(ouverture)))
+    plus_ancien = ouverture[0]["id_message"] if ouverture else 0
+    avant54 = receveur.get(f"/api/messagerie/conversations/{id_conv54}/"
+                           f"messages?avant={plus_ancien}").get_json() or []
+    verifier("Et « avant » remonte au reste du fil",
+             len(avant54) == 5 and avant54[0]["contenu"] == "Message numéro 0",
+             str(len(avant54)))
+    dernier_msg = ouverture[-1]["id_message"] if ouverture else 0
+    lu_avant = jeton_sql("SELECT lu_jusqua FROM conversation_participant "
+                         "WHERE id_conversation = ? AND id_utilisateur = ?",
+                         (id_conv54, _id("sena.s54@test.io")
+                          if receveur is auteur54 else id_patron))
+    rien = receveur.get(f"/api/messagerie/conversations/{id_conv54}/"
+                        f"messages?apres={dernier_msg}").get_json()
+    verifier("Une relève sans nouveauté ne renvoie rien", rien == [],
+             str(rien)[:80])
+    verifier("Et n'écrit rien en base",
+             jeton_sql("SELECT lu_jusqua FROM conversation_participant "
+                       "WHERE id_conversation = ? AND id_utilisateur = ?",
+                       (id_conv54, _id("sena.s54@test.io")
+                        if receveur is auteur54 else id_patron)) == lu_avant)
+    r = envoyeur.post(f"/api/messagerie/conversations/{id_conv54}/messages",
+                      json={"contenu": "Le tout dernier."})
+    nouveaux = receveur.get(f"/api/messagerie/conversations/{id_conv54}/"
+                            f"messages?apres={dernier_msg}").get_json() or []
+    verifier("La relève ne ramène que le nouveau message",
+             [m["contenu"] for m in nouveaux] == ["Le tout dernier."],
+             str([m.get("contenu") for m in nouveaux]))
+
+    # --- Deux cents annonces closes ne cachent plus les ouvertes.
+    with app.app_context():
+        for i in range(205):
+            _maj("INSERT INTO opportunite (id_auteur, titre, categorie, "
+                 "description, date_limite, statut) VALUES "
+                 "(%s, %s, 'bourse', %s, '2020-01-01', 'publiee')",
+                 (id_patron, f"Annonce close {i}", "Échue."), commit=True)
+        _maj("INSERT INTO opportunite (id_auteur, titre, categorie, "
+             "description, date_limite, statut) VALUES "
+             "(%s, 'Annonce ouverte du contrôle 54', 'bourse', "
+             "'Encore ouverte.', '2099-01-01', 'publiee')",
+             (id_patron,), commit=True)
+    opp = lecteur54.get("/api/opportunites").get_json() or {}
+    titres = [o["titre"] for o in opp.get("opportunites", [])]
+    verifier("L'annonce ouverte apparaît malgré 205 annonces closes",
+             "Annonce ouverte du contrôle 54" in titres)
+    verifier("Les closes ne partent pas sans qu'on les demande",
+             not any(t.startswith("Annonce close") for t in titres))
+    verifier("Mais leur nombre est juste",
+             (opp.get("nb_closes") or 0) >= 205, str(opp.get("nb_closes")))
+    opp_c = lecteur54.get("/api/opportunites?closes=1").get_json() or {}
+    verifier("Demandées, elles arrivent après les ouvertes",
+             any(o["titre"].startswith("Annonce close")
+                 for o in opp_c.get("opportunites", [])))
+
+    # --- Ce qui est public se met en cache ; le reste, jamais.
+    for chemin in ("/api/profil/referentiels", "/api/opportunites/referentiels",
+                   "/api/questions/vedette", "/api/profil/statistiques"):
+        cc = app.test_client().get(chemin).headers.get("Cache-Control", "")
+        verifier(f"{chemin} se met en cache au réseau de diffusion",
+                 "public" in cc and "s-maxage" in cc, cc)
+    verifier("La sonde de santé, elle, ne se met jamais en cache",
+             app.test_client().get("/api/sante").headers.get(
+                 "Cache-Control") == "no-store")
+    verifier("Une réponse de membre non plus",
+             lecteur54.get("/api/questions").headers.get("Cache-Control")
+             == "no-store")
+
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)
     reussis = sum(1 for _, ok, _ in _resultats if ok)

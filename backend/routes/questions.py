@@ -5,6 +5,8 @@ from flask import Blueprint, g, jsonify, request
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from services import evenements
 from routes.recherche import motif_like
+from utils import photos
+from utils.cache import cache_public
 from utils.audit import journaliser
 from utils.auth_helpers import connexion_requise
 from utils.permissions import a_le_droit
@@ -17,6 +19,9 @@ TRIS_AUTORISES = {"recent", "populaire", "sansrep"}
 
 LONGUEUR_MAX_CORPS = 5000
 
+# Ce qu'une carte du fil emporte du texte d'une question.
+LONGUEUR_EXTRAIT = 300
+
 # Signalements par membre et par quart d'heure. Assez pour qui tombe sur
 # plusieurs contenus déplacés, trop peu pour noyer la modération.
 MAX_SIGNALEMENTS = 10
@@ -28,11 +33,21 @@ def lister():
     tri        = request.args.get("tri", "recent")
     id_secteur = request.args.get("id_secteur", type=int)
     id_pays    = request.args.get("id_pays", type=int)
-    terme      = (request.args.get("q") or "").strip()
+    terme      = (request.args.get("q") or "").strip()[:100]
     # Borné des deux côtés : « limite=-1 » renvoyait tout le fil sous
     # SQLite, et une erreur 500 sous PostgreSQL (LIMIT négatif refusé).
-    limite     = max(1, min(request.args.get("limite", default=30, type=int),
+    limite     = max(1, min(request.args.get("limite", default=20, type=int),
                             100))
+    # Pagination. Le fil s'arrêtait aux trente dernières questions, sans
+    # suite possible : tout ce qui était plus ancien devenait
+    # inatteignable, et les filtres ne s'appliquaient qu'à ces trente-là.
+    #   - « récentes » : curseur sur l'identifiant (avant=<id>). Une
+    #     question publiée entre deux pages ne décale rien, ce qu'un
+    #     simple décalage ne garantit pas ;
+    #   - autres tris : numéro de page, leur ordre n'ayant pas de clé
+    #     simple sur laquelle reprendre.
+    avant      = request.args.get("avant", type=int)
+    page       = max(1, request.args.get("page", default=1, type=int))
 
     if tri not in TRIS_AUTORISES:
         tri = "recent"
@@ -61,20 +76,33 @@ def lister():
         conditions.append(
             "NOT EXISTS (SELECT 1 FROM reponse r WHERE r.id_question = q.id_question)"
         )
+    decalage = 0
+    if tri == "recent" and avant:
+        conditions.append("q.id_question < %s")
+        params.append(avant)
+    elif tri != "recent":
+        decalage = (page - 1) * limite
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
     if tri == "populaire":
         ordre = """ORDER BY (SELECT COUNT(*) FROM marquage_question m
                               WHERE m.id_question = q.id_question
                                 AND m.type_marquage = 'utile') DESC,
-                            q.publiee_le DESC"""
+                            q.id_question DESC"""
     else:
-        ordre = "ORDER BY q.publiee_le DESC"
+        ordre = "ORDER BY q.id_question DESC"
 
+    # Un extrait suffit à une carte, qui n'en montre que deux lignes ; la
+    # question entière arrive avec son détail. corps_complet dit à
+    # l'interface s'il reste de quoi lire.
     sql = f"""
-        SELECT q.id_question, q.titre, q.corps, q.publiee_le,
+        SELECT q.id_question, q.titre,
+               SUBSTR(q.corps, 1, {LONGUEUR_EXTRAIT}) AS corps,
+               CASE WHEN LENGTH(q.corps) > {LONGUEUR_EXTRAIT}
+                    THEN 0 ELSE 1 END AS corps_complet,
+               q.publiee_le,
                s.id_secteur, s.libelle  AS secteur, s.couleur,
-               u.id_utilisateur, u.prenom, u.nom, u.photo_url,
+               u.id_utilisateur, u.prenom, u.nom, {photos.colonnes("u")},
                p.libelle AS pays,
                (SELECT COUNT(*) FROM reponse r
                   WHERE r.id_question = q.id_question)        AS nb_reponses,
@@ -87,10 +115,51 @@ def lister():
      LEFT JOIN pays p        ON p.id_pays = u.id_pays
         {where}
         {ordre}
-        LIMIT %s
+        LIMIT %s OFFSET %s
     """
-    params.append(limite)
-    return jsonify(recuperer_tous(sql, params))
+    params.extend([limite, decalage])
+    lignes = recuperer_tous(sql, params)
+    for ligne in lignes:
+        ligne["corps_complet"] = bool(ligne.get("corps_complet"))
+    return jsonify(photos.remplacer(lignes))
+
+
+@bp_questions.get("/sauvegardees")
+@connexion_requise
+def sauvegardees():
+    """Les questions que la personne a sauvegardées, les dernières d'abord.
+
+    L'onglet « Sauvegardées » du profil les cherchait dans le fil déjà
+    chargé : une question sauvegardée qui n'y figurait plus disparaissait
+    de l'onglet, alors qu'elle était bien sauvegardée. Le fil étant
+    désormais chargé par pages, c'était le cas de presque toutes.
+    """
+    lignes = recuperer_tous(
+        f"""SELECT q.id_question, q.titre,
+                   SUBSTR(q.corps, 1, {LONGUEUR_EXTRAIT}) AS corps,
+                   CASE WHEN LENGTH(q.corps) > {LONGUEUR_EXTRAIT}
+                        THEN 0 ELSE 1 END AS corps_complet,
+                   q.publiee_le,
+                   s.id_secteur, s.libelle AS secteur, s.couleur,
+                   u.id_utilisateur, u.prenom, u.nom, {photos.colonnes("u")},
+                   p.libelle AS pays,
+                   (SELECT COUNT(*) FROM reponse r
+                      WHERE r.id_question = q.id_question) AS nb_reponses,
+                   (SELECT COUNT(*) FROM marquage_question m
+                      WHERE m.id_question = q.id_question
+                        AND m.type_marquage = 'utile') AS nb_utiles
+              FROM sauvegarde sv
+              JOIN question q    ON q.id_question = sv.id_question
+              JOIN utilisateur u ON u.id_utilisateur = q.id_auteur
+         LEFT JOIN secteur s     ON s.id_secteur = q.id_secteur
+         LEFT JOIN pays p        ON p.id_pays = u.id_pays
+             WHERE sv.id_utilisateur = %s AND u.est_actif = 1
+          ORDER BY sv.cree_le DESC, q.id_question DESC
+             LIMIT 100""",
+        (g.utilisateur["id_utilisateur"],))
+    for ligne in lignes:
+        ligne["corps_complet"] = bool(ligne.get("corps_complet"))
+    return jsonify(photos.remplacer(lignes))
 
 
 @bp_questions.post("")
@@ -140,10 +209,10 @@ def publier():
 @connexion_requise
 def detail(id_q):
     q = recuperer_un(
-        """SELECT q.id_question, q.titre, q.corps, q.publiee_le, q.statut,
+        f"""SELECT q.id_question, q.titre, q.corps, q.publiee_le, q.statut,
                   q.id_auteur, q.id_reponse_retenue, q.resolue_le,
                   s.id_secteur, s.libelle AS secteur, s.couleur,
-                  u.id_utilisateur, u.prenom, u.nom, u.photo_url,
+                  u.id_utilisateur, u.prenom, u.nom, {photos.colonnes("u")},
                   p.libelle AS pays,
                   (SELECT COUNT(*) FROM marquage_question m
                      WHERE m.id_question = q.id_question
@@ -157,6 +226,7 @@ def detail(id_q):
     )
     if not q:
         return jsonify({"erreur": "Question introuvable."}), 404
+    photos.remplacer([q])
 
     # Une vue par consultation, y compris repetee : distinguer les
     # visiteurs uniques demanderait de garder qui a vu quoi, donc un
@@ -173,8 +243,9 @@ def detail(id_q):
     # enregistre.
     id_moi = g.utilisateur["id_utilisateur"]
     q["reponses"] = recuperer_tous(
-        """SELECT r.id_reponse, r.id_parent_reponse, r.contenu, r.cree_le,
-                  u.id_utilisateur, u.prenom, u.nom, u.photo_url, u.role,
+        f"""SELECT r.id_reponse, r.id_parent_reponse, r.contenu, r.cree_le,
+                  u.id_utilisateur, u.prenom, u.nom, {photos.colonnes("u")},
+                  u.role,
                   -- 0 et non FALSE : la colonne est un entier sur les
                   -- trois moteurs, et PostgreSQL refuse de mélanger un
                   -- entier et un booléen dans un COALESCE. Cette route
@@ -203,6 +274,7 @@ def detail(id_q):
          ORDER BY r.cree_le ASC""",
         (id_moi, id_moi, id_q),
     )
+    photos.remplacer(q["reponses"])
     for r in q["reponses"]:
         r["mon_utile"] = bool(r.get("mon_utile"))
         r["note_moyenne"] = round(float(r["note_moyenne"] or 0), 1)
@@ -475,6 +547,7 @@ def signaler(id_q):
 
 
 @bp_questions.get("/vedette")
+@cache_public(300)
 def vedette():
     """Quelques questions pour la page d'accueil, sans authentification.
 

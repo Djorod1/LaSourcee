@@ -27,6 +27,7 @@ from flask import Blueprint, jsonify, request
 
 from models.db import recuperer_tous
 from services import evenements
+from utils import photos
 from utils.auth_helpers import connexion_requise
 
 bp_recherche = Blueprint("recherche", __name__, url_prefix="/api/recherche")
@@ -59,7 +60,7 @@ def globale():
     motif = motif_like(terme)
 
     mentors = recuperer_tous(
-        """SELECT u.id_utilisateur, u.prenom, u.nom, u.photo_url,
+        f"""SELECT u.id_utilisateur, u.prenom, u.nom, {photos.colonnes("u")},
                   md.est_verifie, md.note_moyenne, md.nb_reponses
              FROM utilisateur u
              JOIN mentor_details md ON md.id_utilisateur = u.id_utilisateur
@@ -72,6 +73,7 @@ def globale():
             LIMIT %s""",
         (motif, motif, motif, MAX_RESULTATS),
     )
+    photos.remplacer(mentors)
 
     questions = recuperer_tous(
         """SELECT id_question, titre, publiee_le

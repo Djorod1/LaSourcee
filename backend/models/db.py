@@ -411,6 +411,11 @@ COLONNES_ATTENDUES = [
     ("signalement", "action", "TEXT"),
     ("signalement", "traite_par", "INTEGER"),
     ("signalement", "traite_le", "TEXT"),
+    # Photo de profil servie à part (utils/photos.py). La date de mise à
+    # jour fait la version de l'adresse, donc la durée du cache ; la
+    # vignette sert aux avatars des listes, dix fois plus légère.
+    ("utilisateur", "photo_maj_le", "TEXT"),
+    ("utilisateur", "photo_vignette", "TEXT"),
 ]
 
 

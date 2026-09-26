@@ -36,6 +36,7 @@ from flask import Blueprint, Response, abort, current_app, request
 
 from models.db import recuperer_un, recuperer_tous
 from utils.urls import url_publique
+from utils.cache import cache_public
 
 logger = logging.getLogger("lasourcee.public")
 
@@ -185,6 +186,7 @@ def _questions_publiques(limite=PAR_PAGE, decalage=0):
 
 
 @bp_public.get("/questions")
+@cache_public(300)
 def liste_questions():
     """Toutes les questions, en une page qu'un robot sait lire."""
     if not _actif():
@@ -235,6 +237,7 @@ def liste_questions():
 
 @bp_public.get("/question/<int:id_q>")
 @bp_public.get("/question/<int:id_q>-<path:slug>")
+@cache_public(300)
 def page_question(id_q, slug=None):
     """Une question et ses réponses, lisibles sans compte."""
     if not _actif():
@@ -332,6 +335,7 @@ def page_question(id_q, slug=None):
 
 
 @bp_public.get("/sitemap.xml")
+@cache_public(3600)
 def sitemap():
     """Plan du site, construit à partir de ce qui existe réellement.
 
