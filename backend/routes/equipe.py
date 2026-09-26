@@ -30,7 +30,7 @@ from utils.noms import normaliser_nom
 from utils.permissions import permission_requise
 from utils.securite import est_bloque, enregistrer_echec
 from utils.urls import url_publique
-from utils.email import envoyer, gabarit_html
+from utils.email import Markup, envoyer, gabarit_html
 
 logger = logging.getLogger("lasourcee.equipe")
 
@@ -263,11 +263,15 @@ def _remettre_reponse(id_message, ligne, reponse):
         + "Vous pouvez répondre directement à cet e-mail.\n\n"
         "L'équipe de LaSourcee"
     )
+    # Le gabarit échappe chaque paragraphe : le message d'un visiteur
+    # anonyme ne peut plus y glisser de HTML. Les retours à la ligne de
+    # la réponse sont gardés, un par un, sans ouvrir la porte au reste.
     html = gabarit_html(
         "Réponse de l'équipe de LaSourcee",
         [bonjour, "Vous nous avez écrit, voici notre réponse :",
-         reponse] + ([f"Pour mémoire, votre message : « {rappel[:500]} »"]
-                     if rappel else []),
+         Markup("<br>").join(reponse.splitlines())]
+        + ([f"Pour mémoire, votre message : « {rappel[:500]} »"]
+           if rappel else []),
         bouton_texte="Ouvrir LaSourcee", bouton_lien=url_publique("/index.html"))
     envoye = envoyer(adresse, "Réponse de l'équipe de LaSourcee", corps, html)
     if not envoye:

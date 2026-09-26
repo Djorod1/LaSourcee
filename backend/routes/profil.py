@@ -1,6 +1,7 @@
 """Lecture et mise à jour du profil utilisateur."""
 
 import json
+import re
 import unicodedata
 
 from flask import Blueprint, g, jsonify, request
@@ -254,6 +255,25 @@ LONGUEUR_FILIERE = 120
 # Une image de 320 pixels de côté encodée en JPEG tient largement
 # dessous ; au-delà, c'est qu'elle n'a pas été réduite.
 LONGUEUR_PHOTO = 400_000
+
+LONGUEUR_BIO = 2000
+
+# Ce qu'une photo de profil peut être : une image encodée par la page
+# elle-même, ou l'adresse que Google fournit à la connexion. Tout ce qui
+# commençait par « https:// » passait, y compris une adresse portant un
+# guillemet suivi d'un « onerror= » : recopiée dans une balise <img>,
+# elle devenait du code. La politique de sécurité du contenu n'autorise
+# de toute façon que ces deux sources.
+_PHOTO_ENCODEE = re.compile(
+    r"data:image/(?:jpeg|png|webp|gif);base64,[A-Za-z0-9+/]+={0,2}")
+_PHOTO_GOOGLE = re.compile(
+    r"https://[a-z0-9-]+\.googleusercontent\.com/[A-Za-z0-9._~/=+%-]*")
+
+
+def photo_acceptable(photo):
+    """Vrai si la valeur est une photo que la plateforme sait afficher."""
+    return bool(_PHOTO_ENCODEE.fullmatch(photo)
+                or _PHOTO_GOOGLE.fullmatch(photo))
 
 # Ce qu'un profil montre de l'activite recente. Au-dela, la page
 # devient un journal qu'on ne lit pas, et la requete s'alourdit
@@ -565,7 +585,8 @@ def modifier_profil():
         propre = normaliser_nom(champs[cle])
         if not propre:
             return jsonify({"erreur":
-                "Le prénom et le nom doivent contenir des lettres."}), 400
+                "Le prénom et le nom ne peuvent contenir que des lettres, "
+                "des espaces, des traits d'union et des apostrophes."}), 400
         champs[cle] = propre
 
     # Plusieurs objectifs a la fois. Personne ne cherche une seule chose
@@ -609,10 +630,14 @@ def modifier_profil():
         if len(photo) > LONGUEUR_PHOTO:
             return jsonify({"erreur":
                 "Image trop lourde. Choisissez une photo plus légère."}), 400
-        if photo and not photo.startswith(("data:image/", "http://",
-                                           "https://")):
+        if photo and not photo_acceptable(photo):
             return jsonify({"erreur": "Format d'image non reconnu."}), 400
         champs["photo_url"] = photo
+
+    # La biographie n'était bornée qu'à l'inscription : modifiée ensuite,
+    # elle acceptait 1,5 Mo, que l'annuaire renvoyait à chaque visiteur.
+    if "bio" in champs:
+        champs["bio"] = str(champs["bio"]).strip()[:LONGUEUR_BIO]
 
     if "etablissement" in champs:
         champs["etablissement"] = \
@@ -1031,8 +1056,17 @@ def supprimer_mon_compte():
     if not ligne:
         return jsonify({"erreur": "Compte introuvable."}), 404
 
+    # Le mot de passe redemandé est ce qui protège d'une session laissée
+    # ouverte ; sans limite d'essais, il se devinait depuis cette session.
+    from utils.securite import est_bloque, enregistrer_echec, reinitialiser
+    cle_essais = f"mdp-session|{id_user}"
+    if est_bloque(cle_essais):
+        return jsonify({"erreur": "Trop d'essais. Réessayez dans quelques "
+                                  "minutes."}), 429
     if not verifier_mot_de_passe(motdepasse, ligne["mot_de_passe"]):
+        enregistrer_echec(cle_essais)
         return jsonify({"erreur": "Mot de passe incorrect."}), 401
+    reinitialiser(cle_essais)
 
     if ligne.get("est_admin"):
         restants = (recuperer_un(
@@ -1045,8 +1079,14 @@ def supprimer_mon_compte():
                           "quelqu'un d'autre avant de supprimer ce compte."
             }), 409
 
-    executer("DELETE FROM utilisateur WHERE id_utilisateur = %s",
-             (id_user,), commit=True)
+    # Un compte qui a pris des décisions d'administration est vidé et
+    # fermé, pas effacé : la cascade emportait sinon son journal d'audit.
+    from services import comptes
+    if comptes.a_des_decisions(id_user):
+        comptes.anonymiser(id_user)
+    else:
+        executer("DELETE FROM utilisateur WHERE id_utilisateur = %s",
+                 (id_user,), commit=True)
     evenements.enregistrer("compte_supprime", type_cible="utilisateur",
                            contexte={"par": "le titulaire"})
 

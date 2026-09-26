@@ -839,6 +839,16 @@ def executer():
              "getAttribute('role') !== 'button'" in script
              and "cible.click()" in script)
 
+    # Dans un gestionnaire écrit dans le HTML, echapper() ne protège
+    # pas : l'analyseur HTML redonne l'apostrophe à JavaScript avant
+    # l'exécution. Un prénom comme « x'),alert(1),(' » sortait ainsi de
+    # la chaîne dans la liste des conversations, et s'exécutait chez
+    # l'administrateur qui l'ouvrait. Seul chaineJS() convient là.
+    fautifs = re.findall(r"""on[a-z]+="[^"]*'\$\{echapper\(""", script)
+    verifier("Aucun gestionnaire en ligne n'encadre echapper() "
+             "d'apostrophes (utiliser chaineJS)", not fautifs,
+             "; ".join(fautifs[:3]))
+
     titre("TÂCHES PLANIFIÉES")
 
     # L'ordonnanceur de la plateforme appelle en GET. La route du résumé

@@ -668,7 +668,7 @@ function choisirPhotoOnboarding() {
     const reduite = await reduireImage(dataUrl);
     etat.utilisateur.photo = reduite;
     const av = document.getElementById('avatar-onboarding');
-    if (av) av.innerHTML = `<img src="${reduite}" class="photo-avatar" alt="">`;
+    if (av) av.innerHTML = `<img src="${echapper(reduite)}" class="photo-avatar" alt="">`;
     toast('Photo de profil ajoutée.');
   });
 }
@@ -980,8 +980,8 @@ async function enregistrerPhoto(dataUrl) {
   etat.utilisateur.photo = dataUrl;
   const navAv = document.getElementById('avatar-nav');
   const filAv = document.getElementById('avatar-fil');
-  if (navAv) navAv.innerHTML = `<img src="${dataUrl}" class="photo-avatar" alt="">`;
-  if (filAv) filAv.innerHTML = `<img src="${dataUrl}" class="photo-avatar" alt="">`;
+  if (navAv) navAv.innerHTML = `<img src="${echapper(dataUrl)}" class="photo-avatar" alt="">`;
+  if (filAv) filAv.innerHTML = `<img src="${echapper(dataUrl)}" class="photo-avatar" alt="">`;
   rendreSidebarProfil();
   if (etat.sectionActive === 'profil') { profilCible = null; rendreProfil(); }
 
@@ -1024,7 +1024,7 @@ async function initApp() {
   }
 
   document.getElementById('avatar-nav').innerHTML = etat.utilisateur.photo
-    ? `<img src="${etat.utilisateur.photo}" class="photo-avatar" alt="">` : etat.utilisateur.initiales;
+    ? `<img src="${echapper(etat.utilisateur.photo)}" class="photo-avatar" alt="">` : echapper(etat.utilisateur.initiales);
   document.getElementById('avatar-fil').innerHTML = document.getElementById('avatar-nav').innerHTML;
   document.getElementById('lien-admin').style.display = etat.utilisateur.estAdmin ? 'flex' : 'none';
   document.getElementById('lien-mentor').style.display = (etat.utilisateur.role === 'mentor') ? 'flex' : 'none';
@@ -5428,7 +5428,7 @@ async function rendreMessagerie() {
   }
   zone.innerHTML = liste.map(c => `
     <button class="conversation ${c.id_conversation === _conversationOuverte ? 'active' : ''}"
-            onclick="ouvrirConversation(${c.id_conversation}, '${echapper((c.prenom || '') + ' ' + (c.nom || ''))}')">
+            onclick="ouvrirConversation(${c.id_conversation}, ${chaineJS((c.prenom || '') + ' ' + (c.nom || ''))})">
       <span class="avatar-presence">
         ${avatarHTML(initialesDe(c.prenom, c.nom), 's', c.photo_url)}
         ${pastillePresence(c.en_ligne, c.derniere_activite)}

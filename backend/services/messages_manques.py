@@ -141,19 +141,20 @@ def _corps(prenom, qui, nb, lien, lien_stop):
 
 
 def _html(prenom, qui, nb, lien, lien_stop):
-    from utils.email import gabarit_html
+    from utils.email import Markup, gabarit_html
     bonjour = f"Bonjour {prenom}," if prenom else "Bonjour,"
     quoi = ("Un message vous attend" if nb == 1
             else f"{nb} messages vous attendent")
+    # Le nom de l'expéditeur est une saisie : Markup.format l'échappe.
     return gabarit_html(
         "Un message vous attend",
         [bonjour,
-         f"Sur LaSourcee, <b>{quoi}</b> de la part de {qui}.",
+         Markup("Sur LaSourcee, <b>{}</b> de la part de {}.").format(quoi, qui),
          "Nous ne recopions pas le contenu ici : il reste là où son "
          "auteur l'a écrit."],
         bouton_texte="Lire le message", bouton_lien=lien,
-        note_bas=f'Ne plus recevoir ces avertissements : '
-                 f'<a href="{lien_stop}">se désinscrire</a>.',
+        note_bas=Markup('Ne plus recevoir ces avertissements : '
+                        '<a href="{}">se désinscrire</a>.').format(lien_stop),
     )
 
 

@@ -17,7 +17,9 @@ def lister():
     id_pays = request.args.get("id_pays", type=int)
     dispo = request.args.get("dispo")
     terme = (request.args.get("q") or "").strip()
-    limite = min(request.args.get("limite", default=30, type=int), 100)
+    # Borné des deux côtés, comme le fil : une limite négative renvoyait
+    # tout l'annuaire sous SQLite et une erreur 500 sous PostgreSQL.
+    limite = max(1, min(request.args.get("limite", default=30, type=int), 100))
 
     # md.est_verifie s'ajoute au rôle plutôt que de s'y substituer.
     # L'annuaire est ce qu'un bénéficiaire consulte pour choisir à qui

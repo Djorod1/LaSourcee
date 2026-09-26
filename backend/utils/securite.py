@@ -200,6 +200,45 @@ POLITIQUE_CSP = (
 )
 
 
+# --- Origine des requêtes qui modifient ----------------------------------
+#
+# La protection contre les requêtes forgées depuis un autre site reposait
+# sur un seul verrou : le cookie de session en SameSite=Lax, que le
+# navigateur n'envoie pas sur un POST venu d'ailleurs. C'est solide sur
+# un navigateur récent, et c'est tout. Un navigateur ancien, courant sur
+# les téléphones d'entrée de gamme, n'applique pas toujours SameSite.
+#
+# Second verrou, indépendant du premier : toute requête de l'API qui
+# modifie quelque chose et qui déclare venir d'une autre origine est
+# refusée. Le navigateur pose lui-même Origin et Sec-Fetch-Site ; une
+# page tierce ne peut pas les falsifier. Une requête qui n'en porte
+# aucun (tâche planifiée, client de test, outil en ligne de commande)
+# passe comme avant : elle ne transporte pas le cookie d'un visiteur.
+
+METHODES_SURES = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def verifier_origine():
+    """before_request : refuse une écriture de l'API venue d'un autre site."""
+    if request.method in METHODES_SURES or not request.path.startswith("/api/"):
+        return None
+    site = (request.headers.get("Sec-Fetch-Site") or "").lower()
+    origine = (request.headers.get("Origin") or "").strip()
+    etrangere = site == "cross-site"
+    if origine and not etrangere:
+        from urllib.parse import urlparse
+        hote = urlparse(origine).netloc.lower() if origine != "null" else ""
+        etrangere = hote != (request.host or "").lower()
+    if etrangere:
+        from flask import jsonify
+        logger.warning("Écriture refusée : origine %s pour l'hôte %s (%s %s)",
+                       origine or site, request.host, request.method,
+                       request.path)
+        return jsonify({"erreur": "Requête refusée : elle ne vient pas de "
+                                  "LaSourcee."}), 403
+    return None
+
+
 def appliquer_entetes_securite(reponse):
     """Durcit chaque réponse contre le clickjacking, le sniffing MIME et
     les fuites de référent, et applique la politique de sécurité du

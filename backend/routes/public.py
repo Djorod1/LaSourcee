@@ -64,6 +64,24 @@ def _e(valeur):
     return html.escape(str(valeur or ""), quote=True)
 
 
+def bloc_json_ld(structure):
+    """Données structurées prêtes à poser dans le <head>.
+
+    json.dumps n'échappe ni « < » ni « / » : un membre qui écrivait
+    « </script><script>… » dans sa question fermait la balise et faisait
+    exécuter son propre script à chaque visiteur de la page, sur le
+    domaine de la plateforme, donc avec la session de la personne qui
+    lisait — administrateur compris. Les trois caractères qui comptent
+    pour l'analyseur HTML sont remplacés par leur forme \\u, que tout
+    lecteur JSON relit à l'identique.
+    """
+    import json
+    texte = (json.dumps(structure, ensure_ascii=False)
+             .replace("<", "\\u003c").replace(">", "\\u003e")
+             .replace("&", "\\u0026"))
+    return f'<script type="application/ld+json">{texte}</script>'
+
+
 def _auteur(ligne):
     """Prénom et initiale du nom, jamais le nom complet."""
     prenom = (ligne.get("prenom") or "").strip()
@@ -136,17 +154,31 @@ def _page(titre, description, corps, chemin, extra_tete=""):
 </html>"""
 
 
+# Ce qu'une page publique a le droit de montrer.
+#
+# Un compte suspendu gardait ses questions et ses réponses en ligne, et
+# indexées : la suspension ne retirait rien de ce qui l'avait motivée.
+# Le compte de réponses suit la même règle que la page d'une question,
+# qui n'affiche que les réponses de premier niveau : la liste annonçait
+# « 3 réponses » là où la page en montrait deux.
+_QUESTION_VISIBLE = "q.statut <> 'fermee' AND u.est_actif = 1"
+_REPONSES_VISIBLES = """(SELECT COUNT(*) FROM reponse r
+                           JOIN utilisateur ur ON ur.id_utilisateur = r.id_auteur
+                          WHERE r.id_question = q.id_question
+                            AND r.id_parent_reponse IS NULL
+                            AND ur.est_actif = 1)"""
+
+
 def _questions_publiques(limite=PAR_PAGE, decalage=0):
     return recuperer_tous(
-        """SELECT q.id_question, q.titre, q.corps, q.publiee_le, q.maj_le,
+        f"""SELECT q.id_question, q.titre, q.corps, q.publiee_le, q.maj_le,
                   s.libelle AS secteur,
                   u.prenom, u.nom,
-                  (SELECT COUNT(*) FROM reponse r
-                    WHERE r.id_question = q.id_question) AS nb_reponses
+                  {_REPONSES_VISIBLES} AS nb_reponses
              FROM question q
              JOIN utilisateur u ON u.id_utilisateur = q.id_auteur
         LEFT JOIN secteur s     ON s.id_secteur = q.id_secteur
-            WHERE q.statut <> 'fermee'
+            WHERE {_QUESTION_VISIBLE}
          ORDER BY q.publiee_le DESC
             LIMIT %s OFFSET %s""",
         (limite, decalage))
@@ -215,7 +247,7 @@ def page_question(id_q, slug=None):
              JOIN utilisateur u ON u.id_utilisateur = q.id_auteur
         LEFT JOIN secteur s     ON s.id_secteur = q.id_secteur
         LEFT JOIN pays p        ON p.id_pays = u.id_pays
-            WHERE q.id_question = %s AND q.statut <> 'fermee'""",
+            WHERE q.id_question = %s AND """ + _QUESTION_VISIBLE,
         (id_q,))
     if not q:
         abort(404)
@@ -230,6 +262,7 @@ def page_question(id_q, slug=None):
              JOIN utilisateur u ON u.id_utilisateur = r.id_auteur
         LEFT JOIN mentor_details md ON md.id_utilisateur = u.id_utilisateur
             WHERE r.id_question = %s AND r.id_parent_reponse IS NULL
+              AND u.est_actif = 1
          ORDER BY r.cree_le ASC""",
         (id_q,))
 
@@ -248,7 +281,6 @@ def page_question(id_q, slug=None):
     # Donnees structurees QAPage : c'est ce format que les moteurs
     # exploitent pour afficher une question et sa meilleure reponse
     # directement dans leurs resultats.
-    import json as _json
     structure = {
         "@context": "https://schema.org",
         "@type": "QAPage",
@@ -269,8 +301,7 @@ def page_question(id_q, slug=None):
             "author": {"@type": "Person", "name": _auteur(reponses[0])},
             "upvoteCount": reponses[0].get("nb_utiles") or 0,
         }
-    tete = ('<script type="application/ld+json">'
-            + _json.dumps(structure, ensure_ascii=False) + "</script>")
+    tete = bloc_json_ld(structure)
 
     corps = f"""
 <article class="carte carte-publique">
@@ -309,10 +340,12 @@ def sitemap():
     ignore n'existent pas pour lui.
     """
     base = _adresse()
-    urls = [(base + "/", None, "daily", "1.0"),
-            (base + "/questions", None, "daily", "0.9")]
+    urls = [(base + "/", None, "daily", "1.0")]
 
+    # /questions répond 404 quand les pages publiques sont coupées : la
+    # déclarer quand même envoyait les robots vers une erreur.
     if _actif():
+        urls.append((base + "/questions", None, "daily", "0.9"))
         for l in _questions_publiques(MAX_SITEMAP, 0):
             urls.append((
                 f"{base}/question/{l['id_question']}-{_slug(l['titre'])}",

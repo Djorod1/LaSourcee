@@ -29,6 +29,9 @@ import ssl
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 
+# Fourni par Flask (via Werkzeug et Jinja) : aucune dépendance en plus.
+from markupsafe import Markup, escape  # noqa: F401  (Markup réexporté)
+
 logger = logging.getLogger("lasource.email")
 
 # Timeout réseau : évite qu'une requête HTTP reste bloquée si le serveur
@@ -279,10 +282,23 @@ def gabarit_html(titre, paragraphes, bouton_texte=None, bouton_lien=None,
 
     Les styles sont en ligne : c'est la seule méthode fiable dans les
     clients de messagerie (Gmail supprime les feuilles de style).
+
+    Tout ce qui arrive ici est échappé, sauf ce qui est explicitement
+    marqué comme HTML voulu, avec ``Markup``. Le gabarit insérait ses
+    paragraphes tels quels : la motivation d'un candidat référent, son
+    poste ou son lien professionnel partaient donc en HTML brut vers
+    tous les administrateurs, et un visiteur anonyme de la page
+    « Contacter l'équipe » pouvait faire envoyer par LaSourcee, au nom
+    de LaSourcee, le message de son choix à l'adresse de son choix.
+    Pour du gras autour d'une donnée : ``Markup("<b>{}</b>").format(x)``,
+    qui échappe ``x``.
     """
+    titre, bouton_texte, note_bas = (
+        escape(titre), escape(bouton_texte or ""), escape(note_bas or ""))
+    bouton_lien = escape(bouton_lien or "")
     corps = "".join(
         f'<p style="margin:0 0 16px;font-size:15px;line-height:1.6;'
-        f'color:#333333;">{p}</p>'
+        f'color:#333333;">{escape(p)}</p>'
         for p in paragraphes
     )
 

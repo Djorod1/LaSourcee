@@ -280,16 +280,23 @@ def _prevenir_administrateurs(profil, profession, organisation, annees,
     poste = profession + (f" chez {organisation}" if organisation else "")
     lien_admin = url_publique("/index.html")
 
+    # Tout ce qui suit a été saisi par le candidat : poste, lien,
+    # motivation. Markup.format l'échappe ; sans cela, une candidature
+    # pouvait glisser un lien piégé dans le courriel des administrateurs.
+    Markup = mod_email.Markup
     for admin in admins:
         html = mod_email.gabarit_html(
             "Nouvelle candidature de référent",
             [f"Bonjour {admin['prenom']},",
-             f"<b>{candidat}</b> souhaite devenir référent sur LaSourcee.",
-             f"<b>Poste :</b> {poste}<br>"
-             f"<b>Expérience :</b> {annees} an{'s' if annees > 1 else ''}<br>"
-             f"<b>Contact :</b> {profil['email']}"
-             + (f"<br><b>Profil professionnel :</b> {lien_pro}" if lien_pro else ""),
-             f"<b>Motivation :</b><br><i>{motivation[:600]}</i>"],
+             Markup("<b>{}</b> souhaite devenir référent sur "
+                    "LaSourcee.").format(candidat),
+             Markup("<b>Poste :</b> {}<br><b>Expérience :</b> {} an{}<br>"
+                    "<b>Contact :</b> {}").format(
+                 poste, annees, "s" if annees > 1 else "", profil["email"])
+             + (Markup("<br><b>Profil professionnel :</b> {}").format(lien_pro)
+                if lien_pro else ""),
+             Markup("<b>Motivation :</b><br><i>{}</i>").format(
+                 motivation[:600])],
             bouton_texte="Examiner la candidature",
             bouton_lien=lien_admin,
             note_bas="Espace d'administration → Validation référents.",
@@ -313,8 +320,9 @@ def _accuser_reception(profil):
     html = mod_email.gabarit_html(
         "Votre candidature a bien été reçue",
         [f"Bonjour {profil['prenom']},",
-         "Nous avons bien reçu votre candidature au statut de "
-         "<b>référent vérifié</b> sur LaSourcee.",
+         mod_email.Markup("Nous avons bien reçu votre candidature au "
+                          "statut de <b>référent vérifié</b> sur "
+                          "LaSourcee."),
          "Un administrateur va l'examiner. Vous recevrez un e-mail dès "
          "qu'une décision sera prise, généralement sous quelques jours.",
          "En attendant, vous pouvez déjà répondre aux questions de la "
@@ -357,9 +365,10 @@ def notifier_decision(id_mentor, acceptee, motif=""):
         html = mod_email.gabarit_html(
             "Vous êtes désormais référent vérifié",
             [f"Félicitations {u['prenom']},",
-             "Votre candidature a été <b>acceptée</b>. Votre compte porte "
-             "maintenant le badge <b>Référent vérifié</b>, visible par tous "
-             "les membres de la plateforme.",
+             mod_email.Markup(
+                 "Votre candidature a été <b>acceptée</b>. Votre compte "
+                 "porte maintenant le badge <b>Référent vérifié</b>, "
+                 "visible par tous les membres de la plateforme."),
              "Vous pouvez répondre aux questions, apparaître dans "
              "l'annuaire des référents et proposer des bourses et des "
              "opportunités aux bénéficiaires."],
@@ -375,12 +384,14 @@ def notifier_decision(id_mentor, acceptee, motif=""):
         )
         sujet = "Votre candidature de référent est acceptée"
     else:
-        raison = (f"<br><br><b>Motif :</b> {motif}" if motif else "")
+        Markup = mod_email.Markup
+        raison = (Markup("<br><br><b>Motif :</b> {}").format(motif)
+                  if motif else "")
         html = mod_email.gabarit_html(
             "Suite à votre candidature de référent",
             [f"Bonjour {u['prenom']},",
-             "Après examen, votre candidature au statut de référent vérifié "
-             "n'a pas été retenue pour le moment." + raison,
+             Markup("Après examen, votre candidature au statut de référent "
+                    "vérifié n'a pas été retenue pour le moment.") + raison,
              "Votre compte reste actif : vous pouvez continuer à poser des "
              "questions et à participer à la communauté. Vous pourrez "
              "déposer une nouvelle candidature plus tard, en détaillant "

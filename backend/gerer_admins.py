@@ -90,23 +90,26 @@ def _envoyer_invitation(prenom, nom, email, mot_de_passe, nouveau=True):
     """Envoie l'e-mail d'invitation ou de réinitialisation."""
     lien = url_publique("/index.html")
 
+    # Le gabarit échappe tout ce qui n'est pas marqué comme HTML voulu :
+    # les données passent par Markup.format, qui les échappe à leur tour.
+    Markup = mod_email.Markup
     if nouveau:
         titre = "Votre compte administrateur LaSourcee"
-        intro = (f"Bonjour {prenom},<br><br>"
-                 f"Un compte <b>administrateur</b> vient d'être créé pour vous "
-                 f"sur la plateforme LaSourcee.")
+        intro = Markup("Bonjour {},<br><br>Un compte <b>administrateur</b> "
+                       "vient d'être créé pour vous sur la plateforme "
+                       "LaSourcee.").format(prenom)
     else:
         titre = "Nouveau mot de passe administrateur LaSourcee"
-        intro = (f"Bonjour {prenom},<br><br>"
-                 f"Le mot de passe de votre compte administrateur LaSourcee "
-                 f"vient d'être réinitialisé.")
+        intro = Markup("Bonjour {},<br><br>Le mot de passe de votre compte "
+                       "administrateur LaSourcee vient d'être "
+                       "réinitialisé.").format(prenom)
 
-    identifiants = (
-        f'<b>Adresse e-mail :</b> {email}<br>'
-        f'<b>Mot de passe temporaire :</b> '
-        f'<code style="background:#f0f0f0;padding:3px 8px;border-radius:4px;'
-        f'font-size:15px;letter-spacing:0.5px;">{mot_de_passe}</code>'
-    )
+    identifiants = Markup(
+        '<b>Adresse e-mail :</b> {}<br>'
+        '<b>Mot de passe temporaire :</b> '
+        '<code style="background:#f0f0f0;padding:3px 8px;border-radius:4px;'
+        'font-size:15px;letter-spacing:0.5px;">{}</code>'
+    ).format(email, mot_de_passe)
 
     droits = (
         "En tant qu'administrateur, vous pouvez : valider les mentors, "
