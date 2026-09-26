@@ -10,8 +10,8 @@ from utils.noms import normaliser_nom
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from utils.auth_helpers import admin_requis
 from utils.permissions import (PERMISSIONS, PERMISSIONS_PAR_DEFAUT,
-                               permission_requise, permissions_de,
-                               normaliser)
+                               a_le_droit, permission_requise,
+                               permissions_de, normaliser)
 from utils.audit import journaliser
 from services import evenements
 from services.notifications import notifier
@@ -47,6 +47,17 @@ def _refus_sur_administrateur(cible, verbe):
         return None
     return (f"Seul un super administrateur peut {verbe} le compte d'un "
             "autre administrateur.")
+
+
+def _adresse_masquee(email):
+    """« r***@gmail.com » : de quoi reconnaître une demande, pas plus.
+
+    Le journal gardait l'adresse complète de chaque compte supprimé,
+    c'est-à-dire exactement la donnée que la personne avait demandé
+    d'effacer.
+    """
+    local, _, domaine = (email or "").partition("@")
+    return f"{local[:1]}***@{domaine}" if domaine else "***"
 
 
 def _dernier_super_admin(id_user):
@@ -122,10 +133,14 @@ def lister_utilisateurs():
     if verifie in ("0", "1"):
         conditions.append("u.email_verifie = %s"); params.append(int(verifie))
     if recherche:
+        # Les jokers sont échappés comme dans les autres recherches :
+        # « % » ou « _ » tapés seuls renvoyaient tous les comptes.
+        from routes.recherche import motif_like
         conditions.append(
-            "(LOWER(u.prenom) LIKE %s OR LOWER(u.nom) LIKE %s "
-            " OR LOWER(u.email) LIKE %s)")
-        m = f"%{recherche.lower()}%"
+            "(LOWER(u.prenom) LIKE %s ESCAPE '\\' "
+            " OR LOWER(u.nom) LIKE %s ESCAPE '\\' "
+            " OR LOWER(u.email) LIKE %s ESCAPE '\\')")
+        m = motif_like(recherche)
         params.extend([m, m, m])
 
     where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
@@ -136,7 +151,7 @@ def lister_utilisateurs():
     lignes = recuperer_tous(
         f"""SELECT u.id_utilisateur, u.prenom, u.nom, u.email, u.role,
                    u.est_actif, u.email_verifie, u.cree_le, u.derniere_co,
-                   u.derniere_activite, u.photo_url,
+                   u.derniere_activite,
                    p.libelle AS pays
               FROM utilisateur u
          LEFT JOIN pays p ON p.id_pays = u.id_pays
@@ -209,8 +224,10 @@ def modifier_utilisateur(id_user):
         if cle in champs:
             propre = normaliser_nom(champs[cle])
             if not propre:
-                return jsonify({"erreur": "Le prénom et le nom doivent "
-                                          "contenir des lettres."}), 400
+                return jsonify({"erreur": "Le prénom et le nom ne peuvent "
+                                          "contenir que des lettres, des "
+                                          "espaces, des traits d'union et "
+                                          "des apostrophes."}), 400
             champs[cle] = propre
 
     fragments = ", ".join(f"{k} = %s" for k in champs)
@@ -268,6 +285,22 @@ def suspendre(id_user):
 @bp_admin.post("/utilisateurs/<int:id_user>/reactiver")
 @permission_requise("utilisateurs")
 def reactiver(id_user):
+    cible = _compte(id_user)
+    if not cible:
+        return jsonify({"erreur": "Utilisateur introuvable."}), 404
+    # Rouvrir est aussi sensible que fermer : un administrateur ordinaire
+    # pouvait rouvrir le compte d'un administrateur qu'un super
+    # administrateur venait de suspendre.
+    refus = _refus_sur_administrateur(cible, "réactiver")
+    if refus:
+        return jsonify({"erreur": refus}), 403
+    # Un compte anonymisé n'a plus de titulaire : le rouvrir rendait un
+    # compte « Compte supprimé » utilisable, avec son ancien mot de passe.
+    from services.comptes import est_vide
+    if est_vide(cible.get("email")):
+        return jsonify({"erreur": "Ce compte a été supprimé et vidé de ses "
+                                  "données : il ne peut pas être "
+                                  "réactivé."}), 400
     n = executer(
         "UPDATE utilisateur SET est_actif = 1 WHERE id_utilisateur = %s",
         (id_user,), commit=True,
@@ -309,23 +342,11 @@ def supprimer_utilisateur(id_user):
                                   "actif : le supprimer fermerait "
                                   "l'administration à tout le monde."}), 400
 
-    decisions = (recuperer_un(
-        "SELECT COUNT(*) AS n FROM audit_admin WHERE id_acteur = %s",
-        (id_user,)) or {}).get("n", 0)
+    from services import comptes
+    decisions = comptes.a_des_decisions(id_user)
 
     if decisions:
-        executer(
-            """UPDATE utilisateur
-                  SET prenom = 'Compte', nom = 'supprimé',
-                      email = %s, bio = NULL, photo_url = NULL,
-                      telephone = NULL, etablissement = NULL,
-                      filiere = NULL, profil_pro = NULL,
-                      est_actif = 0, est_admin = 0, role = 'visiteur',
-                      permissions = '[]'
-                WHERE id_utilisateur = %s""",
-            (f"supprime-{id_user}@lasourcee.invalid", id_user), commit=True)
-        executer("DELETE FROM session_web WHERE id_utilisateur = %s",
-                 (id_user,), commit=True)
+        comptes.anonymiser(id_user)
         journaliser(g.utilisateur["id_utilisateur"], "anonymiser_utilisateur",
                     "utilisateur", id_user,
                     f"{decisions} décision(s) au journal : compte vidé et "
@@ -340,7 +361,7 @@ def supprimer_utilisateur(id_user):
              (id_user,), commit=True)
     journaliser(g.utilisateur["id_utilisateur"], "supprimer_utilisateur",
                 "utilisateur", id_user,
-                f"{cible.get('email')}")
+                _adresse_masquee(cible.get("email")))
     # Les lignes d'evenement de ce compte partent avec lui : celle-ci
     # n'en porte pas l'identifiant, seulement le fait qu'un depart a eu
     # lieu. Sans quoi la courbe des inscrits ne se lit plus, les departs
@@ -571,8 +592,11 @@ def verifier_mentor(id_mentor):
     if not n:
         return jsonify({"erreur": "Référent introuvable."}), 404
 
-    # S'assure que le rôle suit la validation
-    executer("UPDATE utilisateur SET role = 'mentor' WHERE id_utilisateur = %s",
+    # S'assure que le rôle suit la validation, sans jamais rétrograder :
+    # un administrateur qui a aussi déposé un dossier de référent
+    # perdait son rôle d'administrateur au moment où on le validait.
+    executer("UPDATE utilisateur SET role = 'mentor' "
+             "WHERE id_utilisateur = %s AND role IN ('etudiant', 'visiteur')",
              (id_mentor,), commit=True)
 
     journaliser(g.utilisateur["id_utilisateur"], "verifier_mentor",
@@ -590,14 +614,26 @@ def verifier_mentor(id_mentor):
 @permission_requise("referents")
 def refuser_mentor(id_mentor):
     """Refuse la candidature : retour au rôle étudiant + e-mail motivé."""
-    motif = (request.get_json(silent=True) or {}).get("motif", "")
+    motif = str((request.get_json(silent=True) or {}).get("motif") or "")[:500]
 
-    n = executer(
-        "UPDATE utilisateur SET role = 'etudiant' WHERE id_utilisateur = %s",
+    # Il n'y a de refus que d'une candidature en attente. La route
+    # rétrogradait n'importe quel identifiant en « étudiant » : un
+    # référent déjà vérifié, ou un administrateur, perdait son rôle sur
+    # une simple erreur de clic ou d'identifiant.
+    dossier = recuperer_un(
+        """SELECT u.role, u.est_admin FROM utilisateur u
+             JOIN mentor_details md ON md.id_utilisateur = u.id_utilisateur
+            WHERE u.id_utilisateur = %s AND md.est_verifie = 0""",
+        (id_mentor,))
+    if not dossier:
+        return jsonify({"erreur": "Aucune candidature en attente pour ce "
+                                  "compte."}), 404
+
+    executer(
+        "UPDATE utilisateur SET role = 'etudiant' "
+        "WHERE id_utilisateur = %s AND role IN ('mentor', 'visiteur')",
         (id_mentor,), commit=True,
     )
-    if not n:
-        return jsonify({"erreur": "Référent introuvable."}), 404
 
     # Prévient AVANT de supprimer les détails, pour disposer des infos
     from routes.candidature_mentor import notifier_decision
@@ -691,7 +727,14 @@ def signalements():
           ORDER BY s.cree_le DESC
              LIMIT 100""", params)
 
+    # L'adresse de qui signale n'est pas nécessaire pour juger un
+    # contenu. Elle est réservée au droit « utilisateurs », comme partout
+    # ailleurs : sans quoi un modérateur pouvait relever l'adresse de
+    # chaque membre qui avait osé signaler.
+    voit_adresses = a_le_droit(g.utilisateur, "utilisateurs")
     for ligne in lignes:
+        if not voit_adresses:
+            ligne.pop("email", None)
         ligne["contenu"] = _contenu_signale(ligne["type_contenu"],
                                             ligne["id_contenu"])
         # Plusieurs PERSONNES signalant la meme chose, c'est un signal
@@ -736,6 +779,16 @@ def traiter_signalement(id_sig):
         "FROM signalement WHERE id_signalement = %s", (id_sig,))
     if not sig:
         return jsonify({"erreur": "Signalement introuvable."}), 404
+    # Deux administrateurs sur le même signalement : le second écrasait
+    # la décision du premier, et le journal gardait deux décisions
+    # contradictoires sans dire laquelle valait.
+    if sig.get("statut") != "ouvert":
+        return jsonify({"erreur": "Ce signalement a déjà été traité."}), 409
+    if (action in ("supprimer", "supprimer_avertir")
+            and sig["type_contenu"] not in ("question", "reponse")):
+        return jsonify({"erreur": "Un profil ne se supprime pas depuis un "
+                                  "signalement : avertissez ou suspendez "
+                                  "le compte."}), 400
 
     cible = _contenu_signale(sig["type_contenu"], sig["id_contenu"])
     id_auteur = cible.get("id_auteur")
@@ -766,6 +819,8 @@ def traiter_signalement(id_sig):
     if action == "suspendre" and id_auteur:
         executer("UPDATE utilisateur SET est_actif = 0 WHERE id_utilisateur = %s",
                  (id_auteur,), commit=True)
+        executer("DELETE FROM session_web WHERE id_utilisateur = %s",
+                 (id_auteur,), commit=True)
 
     if action in ("avertir", "supprimer_avertir", "suspendre") and id_auteur:
         messages = {
@@ -791,7 +846,7 @@ def traiter_signalement(id_sig):
     executer(
         """UPDATE signalement
               SET statut = %s, action = %s, traite_par = %s, traite_le = %s
-            WHERE id_signalement = %s""",
+            WHERE id_signalement = %s AND statut = 'ouvert'""",
         (statut, action, moi,
          datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"), id_sig),
         commit=True,
@@ -1142,19 +1197,20 @@ def creer_administrateur():
     parti = False
     if cree:
         lien = url_publique("/index.html")
+        Markup = mod_email.Markup
         html = mod_email.gabarit_html(
             "Votre accès d'administration LaSourcee",
             [f"Bonjour {prenom},",
              "Un compte d'administration vient d'être créé pour vous sur "
              "LaSourcee.",
-             f"<b>Adresse :</b> {email}<br>"
-             f"<b>Mot de passe provisoire :</b> {motdepasse}",
+             Markup("<b>Adresse :</b> {}<br><b>Mot de passe provisoire :</b> "
+                    "{}").format(email, motdepasse),
              "Ce mot de passe est à usage unique : l'interface vous "
              "demandera d'en choisir un autre dès votre première "
              "connexion.",
-             "<b>Vos droits :</b> "
-             + (", ".join(PERMISSIONS[p] for p in droits) if droits
-                else "tous les droits")],
+             Markup("<b>Vos droits :</b> {}").format(
+                 ", ".join(PERMISSIONS[p] for p in droits) if droits
+                 else "tous les droits")],
             bouton_texte="Me connecter", bouton_lien=lien,
             note_bas="Ce message contient un accès : ne le transférez pas.")
         texte = (

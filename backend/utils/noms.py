@@ -113,7 +113,23 @@ def normaliser_nom(valeur):
     # vient d'un formulaire rempli au hasard ou d'un robot.
     if not any(c.isalpha() for c in texte):
         return None
+    # Et il ne contient rien d'autre que des lettres, leurs accents, et
+    # les quelques signes qui lient les parties d'un nom. Une lettre
+    # suffisait jusqu'ici : « x'),alert(document.domain),(' » passait pour
+    # un prénom, et l'interface le recopiait dans un gestionnaire de clic
+    # de la messagerie, où il s'exécutait chez la personne qui ouvrait la
+    # conversation — un administrateur, puisque tout membre peut écrire
+    # à l'équipe. Aucun nom réel ne porte de parenthèse ni de chevron.
+    if any(not _caractere_de_nom(c) for c in texte):
+        return None
     return _casse(texte)
+
+
+def _caractere_de_nom(c):
+    """Lettre de n'importe quelle écriture, accent, ou signe de liaison."""
+    if c in SEPARATEURS or c in (".", "ʼ"):
+        return True
+    return unicodedata.category(c)[0] in ("L", "M")
 
 
 def initiales(prenom, nom=""):

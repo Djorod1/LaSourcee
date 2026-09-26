@@ -36,6 +36,19 @@ logger = logging.getLogger("lasourcee.auth")
 bp_auth = Blueprint("auth", __name__, url_prefix="/api/auth")
 
 REGEX_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+_LEURRE = []
+
+
+def _hachage_leurre():
+    """Un hachage au même coût que les vrais, calculé une seule fois.
+
+    Calculé à la première demande et non au chargement : un démarrage à
+    froid n'a pas à payer un hachage dont il n'aura peut-être pas besoin.
+    """
+    if not _LEURRE:
+        _LEURRE.append(hacher_mot_de_passe("leurre-" + secrets.token_hex(8)))
+    return _LEURRE[0]
 ROLES_AUTORISES = {"etudiant", "mentor"}
 
 # Version des textes acceptes a l'inscription. A incrementer quand les
@@ -74,7 +87,9 @@ def inscription():
     role   = d.get("role") or "etudiant"
 
     if prenom is None or nom is None:
-        return _erreur("Le prénom et le nom doivent contenir des lettres.")
+        return _erreur("Le prénom et le nom ne peuvent contenir que des "
+                       "lettres, des espaces, des traits d'union et des "
+                       "apostrophes.")
 
     # Le consentement est exigé, puis enregistré daté et versionné. Un
     # accord dont on ne sait ni quand il a été donné ni à quel texte il
@@ -212,7 +227,7 @@ def _prevenir_compte_existant(email: str, prenom: str):
     quelqu'un qui a oublié qu'il avait un compte attendrait un code qui
     ne viendrait jamais.
     """
-    from utils.email import envoyer, gabarit_html
+    from utils.email import Markup, envoyer, gabarit_html
     bonjour = f"Bonjour {prenom}," if prenom else "Bonjour,"
     lien = url_publique("/index.html")
     try:
@@ -232,9 +247,9 @@ def _prevenir_compte_existant(email: str, prenom: str):
             corps_html=gabarit_html(
                 "Vous avez déjà un compte LaSourcee",
                 [bonjour,
-                 "Quelqu'un vient d'essayer de créer un compte avec cette "
-                 "adresse. <b>Un compte existe déjà</b> : il n'y en a pas de "
-                 "nouveau, et rien n'a changé.",
+                 Markup("Quelqu'un vient d'essayer de créer un compte avec "
+                        "cette adresse. <b>Un compte existe déjà</b> : il "
+                        "n'y en a pas de nouveau, et rien n'a changé."),
                  "Si c'était vous, connectez-vous. Mot de passe oublié ? "
                  "Utilisez le lien prévu sur la page de connexion.",
                  "Si ce n'était pas vous, vous n'avez rien à faire : votre "
@@ -335,6 +350,12 @@ def connexion():
              FROM utilisateur WHERE email = %s""",
         (email,),
     )
+    # Une adresse inconnue répondait sans calculer de hachage, donc
+    # beaucoup plus vite qu'un mauvais mot de passe : le temps de
+    # réponse suffisait à savoir qui a un compte. On paie le même calcul
+    # dans les deux cas.
+    if not user:
+        verifier_mot_de_passe(mdp, _hachage_leurre())
     if not user or not verifier_mot_de_passe(mdp, user["mot_de_passe"]):
         enregistrer_echec(cle_throttle)
         return _erreur("Identifiants incorrects.", 401)
@@ -435,17 +456,19 @@ def _gabarit_code(prenom, code_espace):
     espacés, et reste sélectionnable d'un geste.
     """
     from utils import email as mod_email
+    Markup = mod_email.Markup
     return mod_email.gabarit_html(
         "Votre code de confirmation",
         [f"Bonjour {prenom},",
          "Saisissez ce code sur la page qui vous le demande :",
-         f'<div style="font-size:34px; font-weight:700; letter-spacing:.18em;'
-         f' text-align:center; padding:18px 0; font-family:monospace;'
-         f' color:#1E3A8A;">{code_espace}</div>',
+         Markup('<div style="font-size:34px; font-weight:700; '
+                'letter-spacing:.18em; text-align:center; padding:18px 0; '
+                'font-family:monospace; color:#1E3A8A;">{}</div>'
+                ).format(code_espace),
          f"Il est valable {DUREE_CODE_HEURES} heures.",
-         "<b>Ce message ne contient aucun lien.</b> Si vous recevez un "
-         "message qui prétend venir de LaSourcee et vous demande de "
-         "cliquer quelque part, ne le suivez pas."],
+         Markup("<b>Ce message ne contient aucun lien.</b> Si vous recevez "
+                "un message qui prétend venir de LaSourcee et vous demande "
+                "de cliquer quelque part, ne le suivez pas.")],
         note_bas="Si vous n'avez pas créé ce compte, ignorez ce message.")
 
 
@@ -669,12 +692,23 @@ def changer_mdp():
     actuel = d.get("mot_de_passe_actuel") or ""
     nouveau = d.get("nouveau_mot_de_passe") or ""
 
+    # Le mot de passe actuel est la dernière barrière devant une session
+    # laissée ouverte dans un cybercafé : sans limite, il se devinait
+    # depuis cette session, puis se remplaçait, et le compte changeait de
+    # mains.
+    cle_essais = f"mdp-session|{user['id_utilisateur']}"
+    reste = est_bloque(cle_essais)
+    if reste:
+        return _erreur("Trop d'essais. Réessayez dans environ "
+                       f"{max(1, reste // 60)} minute(s).", 429)
     ligne = recuperer_un(
         "SELECT mot_de_passe FROM utilisateur WHERE id_utilisateur = %s",
         (user["id_utilisateur"],),
     )
     if not ligne or not verifier_mot_de_passe(actuel, ligne["mot_de_passe"]):
+        enregistrer_echec(cle_essais)
         return _erreur("Mot de passe actuel incorrect.", 401)
+    reinitialiser(cle_essais)
     ok, msg = mot_de_passe_valide(nouveau)
     if not ok:
         return _erreur(msg, 400)

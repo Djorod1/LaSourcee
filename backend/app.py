@@ -25,7 +25,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from config import Config, anomalies_configuration
 from models.db import (fermer_connexion, initialiser_si_necessaire,
                        completer_colonnes)
-from utils.securite import appliquer_entetes_securite
+from utils.securite import appliquer_entetes_securite, verifier_origine
 
 from routes.auth          import bp_auth
 from routes.oauth         import bp_oauth
@@ -186,6 +186,7 @@ def creer_application():
         app.register_blueprint(bp)
 
     app.teardown_appcontext(fermer_connexion)
+    app.before_request(verifier_origine)
     app.after_request(appliquer_entetes_securite)
 
     _signaler_configuration()

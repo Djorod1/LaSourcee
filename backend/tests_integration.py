@@ -3359,26 +3359,35 @@ def executer_tests():
     verifier("Il redescend à la suppression", apres == reelles,
              f"{apres} annonce(s) pour {reelles} réponse(s)")
 
+    # On ne signale pas son propre contenu : la question est celle de
+    # « lecteur », qui peut la supprimer s'il le souhaite. Le signalement
+    # vient donc ici du référent.
+    r = lecteur.post(f"/api/questions/{id_q}/signaler",
+                     json={"motif": "Ma propre question"})
+    verifier("On ne signale pas sa propre question", r.status_code == 400,
+             f"reçu {r.status_code}")
+
     # Signaler douze fois la meme question faisait croire a la
     # moderation qu'un probleme collectif se posait, alors qu'une seule
     # personne etait en cause.
-    r = lecteur.post(f"/api/questions/{id_q}/signaler",
-                     json={"motif": "Premier signalement"})
-    verifier("Un signalement est accepté", r.status_code == 200)
-    r = lecteur.post(f"/api/questions/{id_q}/signaler",
-                     json={"motif": "Motif précisé"})
+    r = cand.post(f"/api/questions/{id_q}/signaler",
+                  json={"motif": "Premier signalement"})
+    verifier("Un signalement est accepté", r.status_code == 200,
+             f"reçu {r.status_code} : {r.get_data(as_text=True)[:120]}")
+    r = cand.post(f"/api/questions/{id_q}/signaler",
+                  json={"motif": "Motif précisé"})
     verifier("Le second signalement de la même personne ne s'ajoute pas",
              (r.get_json() or {}).get("deja_signale") is True)
     verifier("Une seule ligne reste en base",
              jeton_sql("SELECT COUNT(*) FROM signalement "
                        "WHERE type_contenu = 'question' AND id_contenu = ? "
                        "  AND id_signaleur = ?",
-                       (id_q, _id("ife@test.io"))) == 1)
+                       (id_q, id_ref)) == 1)
     verifier("Le motif a bien été mis à jour",
              jeton_sql("SELECT motif FROM signalement "
                        "WHERE type_contenu = 'question' AND id_contenu = ? "
                        "  AND id_signaleur = ?",
-                       (id_q, _id("ife@test.io"))) == "Motif précisé")
+                       (id_q, id_ref)) == "Motif précisé")
     verifier("Signaler une question inexistante répond 404",
              lecteur.post("/api/questions/999999/signaler",
                           json={"motif": "x"}).status_code == 404)
@@ -4179,6 +4188,326 @@ def executer_tests():
                  patron.get(
                      f"/api/opportunites/{id_attente}/affiche"
                  ).status_code == 200)
+
+    # ---------------------------------------------------------------
+    print("\n" + "═" * 70)
+    print("  53. CE QU'UN MEMBRE ÉCRIT RESTE DU TEXTE, ET CHAQUE DROIT TIENT")
+    print("═" * 70)
+
+    def _compte_membre(prenom, email, role="etudiant",
+                       mdp="MembreTest2026!", verifie=1):
+        """Compte ordinaire (est_admin = 0), créé en base puis connecté.
+
+        Les comptes de test plus haut portent tous est_admin = 1 : un
+        contrôle « un membre ne peut pas… » fait avec eux passerait par
+        le passe-droit administrateur et ne prouverait rien.
+        """
+        from utils.auth_helpers import hacher_mot_de_passe
+        with app.app_context():
+            _maj("""INSERT INTO utilisateur
+                      (prenom, nom, email, mot_de_passe, role, est_admin,
+                       est_actif, email_verifie)
+                    VALUES (%s, 'Essai', %s, %s, %s, 0, 1, 1)""",
+                 (prenom, email, hacher_mot_de_passe(mdp), role),
+                 commit=True)
+            if role == "mentor":
+                _maj("INSERT INTO mentor_details (id_utilisateur, est_verifie) "
+                     "VALUES (%s, %s)", (_id(email), verifie), commit=True)
+        client = app.test_client()
+        r = client.post("/api/auth/connexion",
+                        json={"email": email, "mot_de_passe": mdp})
+        assert r.status_code == 200, r.get_data(as_text=True)[:120]
+        return client, _id(email)
+
+    eleve, id_eleve = _compte_membre("Nafi", "nafi.s53@test.io")
+    referente, id_referente = _compte_membre("Adjoa", "adjoa.s53@test.io",
+                                             role="mentor")
+    voisin, id_voisin = _compte_membre("Koffi", "koffi.s53@test.io")
+    classeur, _ = _compte_admin("Classe", "classe.s53@test.io",
+                                "ClasseTest2026!", "admin", '["categories"]')
+    moderatrice, id_moderatrice = _compte_admin(
+        "Modo", "modo.s53@test.io", "ModoTest2026!", "admin",
+        '["signalements"]')
+    # Administrateur ordinaire, neuf : « ordinaire », plus haut, a vu
+    # ses sessions fermées par la section 46 et répondrait 401.
+    gestionnaire, _ = _compte_admin(
+        "Gestion", "gestion.s53@test.io", "GestionTest2026!", "admin",
+        '["utilisateurs", "referents"]')
+    id_sec = jeton_sql("SELECT id_secteur FROM secteur ORDER BY id_secteur "
+                       "LIMIT 1")
+
+    # --- Pages publiques : une question ne ferme pas la balise script.
+    # json.dumps n'échappe pas « < » : un corps contenant </script> sortait
+    # du bloc de données structurées et s'exécutait chez chaque visiteur.
+    charge = "</script><script>alert(document.domain)</script>"
+    r = eleve.post("/api/questions", json={
+        "titre": "Quelle filière choisir après le bac scientifique ?",
+        "corps": "Je voudrais comprendre. " + charge,
+        "id_secteur": id_sec})
+    id_q53 = (r.get_json() or {}).get("id_question")
+    verifier("La question piégée est publiée (le texte est libre)",
+             bool(id_q53), r.get_data(as_text=True)[:120])
+    page = app.test_client().get(f"/question/{id_q53}").get_data(as_text=True)
+    verifier("Le script du membre n'apparaît nulle part tel quel",
+             charge not in page and "<script>alert" not in page)
+    verifier("Les données structurées le portent sous forme échappée",
+             "\\u003c/script\\u003e" in page)
+    import json as _json53
+    bloc = page.split('<script type="application/ld+json">', 1)[1]
+    bloc = bloc.split("</script>", 1)[0]
+    verifier("Et elles restent du JSON valide qui redonne le texte exact",
+             _json53.loads(bloc)["mainEntity"]["text"].endswith(charge))
+
+    # --- Un nom ne contient que ce qui fait un nom.
+    r = app.test_client().post("/api/auth/inscription", json={
+        "prenom": "x'),alert(document.domain),('", "nom": "Test",
+        "email": "piege.s53@test.io", "mot_de_passe": "PiegeTest2026!",
+        "role": "etudiant", "consentement": CONSENT_TESTS})
+    verifier("Un prénom fait de code est refusé à l'inscription",
+             r.status_code == 400, f"reçu {r.status_code}")
+    r = eleve.put("/api/profil/moi", json={"prenom": "Nafi<b>"})
+    verifier("Et à la modification du profil", r.status_code == 400,
+             f"reçu {r.status_code}")
+    from utils.noms import normaliser_nom as _nn
+    verifier("Les noms réels passent toujours",
+             _nn("N'Guessan") == "N'Guessan" and _nn("Kossi-Marie") ==
+             "Kossi-Marie" and _nn("Ɖossou") == "Ɖossou"
+             and _nn("J. Houngbo") == "J. Houngbo", )
+
+    # --- Les courriels échappent ce qu'on leur confie.
+    from utils.email import gabarit_html as _gab, Markup as _Mk
+    html = _gab("Titre <i>", ["<a href='https://piege.example'>clic</a>",
+                              _Mk("<b>{}</b>").format("<img src=x>")])
+    verifier("Un paragraphe saisi par un membre reste du texte",
+             "<a href=" not in html and "&lt;a href=" in html)
+    verifier("Le HTML voulu passe, et la donnée qu'il entoure est échappée",
+             "<b>&lt;img src=x&gt;</b>" in html)
+    verifier("Le titre est échappé lui aussi", "Titre &lt;i&gt;" in html)
+
+    # --- Répondre est le rôle des référents ; commenter est ouvert.
+    r = eleve.post("/api/reponses", json={"id_question": id_q53,
+                                          "contenu": "Ma réponse d'élève."})
+    verifier("Un bénéficiaire ne publie pas de réponse de premier niveau",
+             r.status_code == 403, f"reçu {r.status_code}")
+    r = referente.post("/api/reponses", json={
+        "id_question": id_q53, "contenu": "Réponse de la référente."})
+    id_r53 = (r.get_json() or {}).get("id_reponse")
+    verifier("Une référente répond", r.status_code == 201 and bool(id_r53),
+             f"reçu {r.status_code}")
+    r = eleve.post("/api/reponses", json={
+        "id_question": id_q53, "id_parent_reponse": id_r53,
+        "contenu": "Merci, et pour les frais ?"})
+    id_c53 = (r.get_json() or {}).get("id_reponse")
+    verifier("Un bénéficiaire commente une réponse",
+             r.status_code == 201, f"reçu {r.status_code}")
+    r = voisin.post("/api/reponses", json={
+        "id_question": id_q53, "id_parent_reponse": id_c53,
+        "contenu": "Un commentaire de commentaire."})
+    verifier("Un commentaire de commentaire est refusé (il serait invisible)",
+             r.status_code == 400, f"reçu {r.status_code}")
+    for corps_bizarre, nom in ((
+            {"id_question": "abc", "contenu": "x"}, "texte"),
+            ({"id_question": [1], "contenu": "x"}, "liste"),
+            ({"id_question": id_q53, "id_parent_reponse": "zz",
+              "contenu": "x"}, "parent texte")):
+        r = referente.post("/api/reponses", json=corps_bizarre)
+        verifier(f"Un identifiant mal formé ({nom}) répond 400, pas 500",
+                 r.status_code == 400, f"reçu {r.status_code}")
+
+    # --- Retirer le contenu d'autrui relève du droit de modération.
+    r = classeur.delete(f"/api/reponses/{id_c53}")
+    verifier("Un administrateur sans droit de modération ne supprime pas "
+             "la réponse d'autrui", r.status_code == 403,
+             f"reçu {r.status_code}")
+    r = classeur.delete(f"/api/questions/{id_q53}")
+    verifier("Ni la question d'autrui", r.status_code == 403,
+             f"reçu {r.status_code}")
+    r = voisin.delete(f"/api/reponses/{id_c53}")
+    verifier("Un membre ne supprime pas le commentaire d'un autre",
+             r.status_code == 403, f"reçu {r.status_code}")
+    avant_audit = jeton_sql("SELECT COUNT(*) FROM audit_admin "
+                            "WHERE action = 'supprimer_reponse'")
+    r = moderatrice.delete(f"/api/reponses/{id_c53}")
+    verifier("La modération le peut", r.status_code == 200,
+             f"reçu {r.status_code}")
+    verifier("Et cela laisse une trace au journal d'administration",
+             jeton_sql("SELECT COUNT(*) FROM audit_admin "
+                       "WHERE action = 'supprimer_reponse'")
+             == avant_audit + 1)
+
+    # --- Des requêtes mal formées répondent 4xx, jamais 500.
+    for chemin in ("/api/questions?limite=-1", "/api/questions?limite=0",
+                   "/api/mentors?limite=-5"):
+        r = eleve.get(chemin)
+        verifier(f"{chemin} répond sans erreur serveur",
+                 r.status_code == 200, f"reçu {r.status_code}")
+    r = eleve.get("/api/questions?limite=-1")
+    verifier("Et « limite=-1 » ne renvoie pas tout le fil",
+             len(r.get_json() or []) <= 1, str(len(r.get_json() or [])))
+    verifier("Marquer utile une question inexistante répond 404",
+             eleve.post("/api/questions/999999/utile").status_code == 404)
+    verifier("La sauvegarder aussi",
+             eleve.post("/api/questions/999999/sauvegarder").status_code
+             == 404)
+    verifier("Marquer utile une réponse inexistante répond 404",
+             eleve.post("/api/reponses/999999/utile").status_code == 404)
+    r = eleve.post("/api/questions", json={
+        "titre": "Question trop longue pour être raisonnable ici",
+        "corps": "x" * 5001, "id_secteur": id_sec})
+    verifier("Une question de plus de 5000 caractères est refusée",
+             r.status_code == 400, f"reçu {r.status_code}")
+    for id_bizarre in ("abc", 999999):
+        r = eleve.post("/api/questions", json={
+            "titre": "Question avec une catégorie étrange ici",
+            "corps": "Un corps normal.", "id_secteur": id_bizarre})
+        verifier(f"Une catégorie invalide ({id_bizarre!r}) répond 400",
+                 r.status_code == 400, f"reçu {r.status_code}")
+
+    # --- La photo de profil n'est qu'une image.
+    for photo, nom in (('https://x" onerror="alert(1)', "guillemet"),
+                       ("javascript:alert(1)", "javascript:"),
+                       ("data:image/svg+xml;base64,PHN2Zz4=", "SVG")):
+        r = eleve.put("/api/profil/moi", json={"photo_url": photo})
+        verifier(f"Une photo piégée ({nom}) est refusée",
+                 r.status_code == 400, f"reçu {r.status_code}")
+    r = eleve.put("/api/profil/moi", json={
+        "photo_url": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ=="})
+    verifier("Une vraie image encodée est acceptée", r.status_code == 200,
+             r.get_data(as_text=True)[:120])
+    r = eleve.put("/api/profil/moi", json={"bio": "b" * 5000})
+    verifier("La biographie est bornée à la modification",
+             r.status_code == 200 and jeton_sql(
+                 "SELECT LENGTH(bio) FROM utilisateur WHERE id_utilisateur "
+                 "= ?", (id_eleve,)) == 2000)
+
+    # --- Signalement : ni sur soi, ni perdu après un rejet, ni sans limite.
+    verifier("On ne signale pas sa propre question",
+             eleve.post(f"/api/questions/{id_q53}/signaler",
+                        json={"motif": "x"}).status_code == 400)
+    voisin.post(f"/api/questions/{id_q53}/signaler",
+                json={"motif": "Premier motif"})
+    id_sig53 = jeton_sql("SELECT id_signalement FROM signalement "
+                         "WHERE id_contenu = ? AND id_signaleur = ?",
+                         (id_q53, id_voisin))
+    r = moderatrice.post(f"/api/admin/signalements/{id_sig53}",
+                         json={"action": "rejeter"})
+    verifier("La modération rejette le signalement", r.status_code == 200,
+             f"reçu {r.status_code}")
+    r = moderatrice.post(f"/api/admin/signalements/{id_sig53}",
+                         json={"action": "suspendre"})
+    verifier("Une seconde décision sur un signalement tranché répond 409",
+             r.status_code == 409, f"reçu {r.status_code}")
+    r = voisin.post(f"/api/questions/{id_q53}/signaler",
+                    json={"motif": "Ça continue"})
+    verifier("Un nouveau signalement après un rejet rouvre le dossier",
+             jeton_sql("SELECT statut FROM signalement "
+                       "WHERE id_signalement = ?", (id_sig53,)) == "ouvert",
+             r.get_data(as_text=True)[:120])
+    liste = moderatrice.get("/api/admin/signalements").get_json() or []
+    verifier("Sans le droit « utilisateurs », l'adresse du signaleur "
+             "n'apparaît pas", bool(liste) and all("email" not in s
+                                                     for s in liste))
+
+    # --- Administration.
+    r = patron.get("/api/admin/utilisateurs?q=%25")
+    total_joker = (r.get_json() or {}).get("total", -1)
+    verifier("Un « % » cherché ne renvoie pas tous les comptes",
+             total_joker == 0, f"total {total_joker}")
+    r = patron.get("/api/admin/utilisateurs?limite=5")
+    verifier("La liste des comptes ne transporte plus les photos",
+             all("photo_url" not in u
+                 for u in (r.get_json() or {}).get("utilisateurs", [])))
+    r = gestionnaire.post(f"/api/admin/mentors/{id_voisin}/refuser",
+                          json={"motif": "x"})
+    verifier("On ne refuse pas une candidature qui n'existe pas",
+             r.status_code == 404 and jeton_sql(
+                 "SELECT role FROM utilisateur WHERE id_utilisateur = ?",
+                 (id_voisin,)) == "etudiant", f"reçu {r.status_code}")
+    r = patron.post(f"/api/admin/mentors/{id_moderatrice}/refuser",
+                    json={"motif": "x"})
+    verifier("Et un refus ne rétrograde jamais un administrateur",
+             jeton_sql("SELECT role FROM utilisateur WHERE id_utilisateur "
+                       "= ?", (id_moderatrice,)) == "admin",
+             f"reçu {r.status_code}")
+    patron.post(f"/api/admin/utilisateurs/{id_moderatrice}/suspendre")
+    r = gestionnaire.post(
+        f"/api/admin/utilisateurs/{id_moderatrice}/reactiver")
+    verifier("Un administrateur ordinaire ne rouvre pas le compte d'un "
+             "administrateur suspendu", r.status_code == 403,
+             f"reçu {r.status_code}")
+    patron.post(f"/api/admin/utilisateurs/{id_moderatrice}/reactiver")
+
+    # Un compte qui a décidé est vidé plutôt qu'effacé, et plus rien ne
+    # permet d'y rentrer.
+    fermee, id_fermee = _compte_admin("Partante", "partante.s53@test.io",
+                                      "PartanteTest2026!", "admin",
+                                      '["categories"]')
+    with app.app_context():
+        from utils.audit import journaliser as _j
+        _j(id_fermee, "creer_secteur", "secteur", 1, "essai")
+    hache_avant = jeton_sql("SELECT mot_de_passe FROM utilisateur "
+                            "WHERE id_utilisateur = ?", (id_fermee,))
+    r = fermee.delete("/api/profil/moi", json={
+        "mot_de_passe": "PartanteTest2026!", "confirmation": "SUPPRIMER"})
+    verifier("Un administrateur ferme son propre compte",
+             r.status_code == 200, r.get_data(as_text=True)[:120])
+    verifier("Son journal d'administration survit",
+             jeton_sql("SELECT COUNT(*) FROM audit_admin "
+                       "WHERE id_acteur = ?", (id_fermee,)) >= 1)
+    verifier("Le compte est vidé et fermé",
+             jeton_sql("SELECT est_actif FROM utilisateur "
+                       "WHERE id_utilisateur = ?", (id_fermee,)) == 0
+             and jeton_sql("SELECT email FROM utilisateur "
+                           "WHERE id_utilisateur = ?",
+                           (id_fermee,)).endswith("@lasourcee.invalid"))
+    verifier("Son ancien mot de passe ne vaut plus rien",
+             jeton_sql("SELECT mot_de_passe FROM utilisateur "
+                       "WHERE id_utilisateur = ?", (id_fermee,))
+             != hache_avant)
+    r = patron.post(f"/api/admin/utilisateurs/{id_fermee}/reactiver")
+    verifier("Et personne ne peut le rouvrir", r.status_code == 400,
+             f"reçu {r.status_code}")
+
+    # --- Le mot de passe redemandé ne se devine pas depuis une session.
+    tentatives = [voisin.post("/api/auth/changer-mdp", json={
+        "mot_de_passe_actuel": f"Faux{i}Faux{i}!",
+        "nouveau_mot_de_passe": "NouveauMdp2026!"}).status_code
+        for i in range(6)]
+    verifier("Au-delà de cinq essais, le changement de mot de passe se "
+             "bloque", tentatives[:5] == [401] * 5 and tentatives[5] == 429,
+             str(tentatives))
+
+    # --- Une écriture venue d'un autre site est refusée.
+    r = voisin.post("/api/questions", json={
+        "titre": "Question envoyée depuis un autre site", "corps": "x",
+        "id_secteur": id_sec}, headers={"Origin": "https://piege.example"})
+    verifier("Une origine étrangère est refusée", r.status_code == 403,
+             f"reçu {r.status_code}")
+    r = voisin.post("/api/questions", json={
+        "titre": "Question envoyée depuis un autre site", "corps": "x",
+        "id_secteur": id_sec}, headers={"Sec-Fetch-Site": "cross-site"})
+    verifier("Même sans Origin, un Sec-Fetch-Site « cross-site » l'est aussi",
+             r.status_code == 403, f"reçu {r.status_code}")
+    r = voisin.post("/api/questions", json={
+        "titre": "Question envoyée depuis la plateforme", "corps": "x",
+        "id_secteur": id_sec}, headers={"Origin": "http://localhost",
+                                        "Sec-Fetch-Site": "same-origin"})
+    verifier("La même requête depuis la plateforme passe",
+             r.status_code == 201, f"reçu {r.status_code}")
+    r = voisin.get("/api/questions", headers={
+        "Origin": "https://piege.example"})
+    verifier("Une lecture n'est pas concernée", r.status_code == 200,
+             f"reçu {r.status_code}")
+
+    # --- Une suspension retire aussi ce que le compte a publié.
+    patron.post(f"/api/admin/utilisateurs/{id_eleve}/suspendre")
+    verifier("La page publique d'une question d'un compte suspendu répond "
+             "404", app.test_client().get(f"/question/{id_q53}").status_code
+             == 404)
+    verifier("Elle quitte le fil des membres",
+             all(q.get("id_question") != id_q53
+                 for q in (voisin.get("/api/questions").get_json() or [])))
+    patron.post(f"/api/admin/utilisateurs/{id_eleve}/reactiver")
 
     # ---- Bilan -----------------------------------------------------------
     total = len(_resultats)

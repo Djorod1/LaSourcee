@@ -5,12 +5,21 @@ from flask import Blueprint, g, jsonify, request
 from models.db import recuperer_un, recuperer_tous, executer, curseur
 from services import evenements
 from routes.recherche import motif_like
+from utils.audit import journaliser
 from utils.auth_helpers import connexion_requise
+from utils.permissions import a_le_droit
+from utils.securite import est_bloque, enregistrer_echec
 from services.notifications import notifier_reaction, notifier
 
 bp_questions = Blueprint("questions", __name__, url_prefix="/api/questions")
 
 TRIS_AUTORISES = {"recent", "populaire", "sansrep"}
+
+LONGUEUR_MAX_CORPS = 5000
+
+# Signalements par membre et par quart d'heure. Assez pour qui tombe sur
+# plusieurs contenus déplacés, trop peu pour noyer la modération.
+MAX_SIGNALEMENTS = 10
 
 
 @bp_questions.get("")
@@ -20,12 +29,17 @@ def lister():
     id_secteur = request.args.get("id_secteur", type=int)
     id_pays    = request.args.get("id_pays", type=int)
     terme      = (request.args.get("q") or "").strip()
-    limite     = min(request.args.get("limite", default=30, type=int), 100)
+    # Borné des deux côtés : « limite=-1 » renvoyait tout le fil sous
+    # SQLite, et une erreur 500 sous PostgreSQL (LIMIT négatif refusé).
+    limite     = max(1, min(request.args.get("limite", default=30, type=int),
+                            100))
 
     if tri not in TRIS_AUTORISES:
         tri = "recent"
 
-    conditions = []
+    # Une suspension retire aussi ce que le compte a publié : ses
+    # questions restaient au fil, sous les yeux des membres.
+    conditions = ["u.est_actif = 1"]
     params = []
     if id_secteur:
         conditions.append("q.id_secteur = %s")
@@ -85,7 +99,10 @@ def publier():
     d = request.get_json(silent=True) or {}
     titre  = (d.get("titre") or "").strip()
     corps  = (d.get("corps") or "").strip()
-    id_sec = d.get("id_secteur")
+    try:
+        id_sec = int(d.get("id_secteur") or 0)
+    except (TypeError, ValueError):
+        id_sec = 0
 
     if not titre:
         return jsonify({"erreur": "Titre requis."}), 400
@@ -93,8 +110,17 @@ def publier():
         return jsonify({"erreur": "Titre trop long (max 200)."}), 400
     if not corps:
         return jsonify({"erreur": "Corps de question requis."}), 400
-    if not id_sec:
+    # Le corps n'avait aucune borne : 1,5 Mo passait, et chaque membre
+    # le téléchargeait ensuite avec le fil. Une question tient en bien
+    # moins ; la réponse, elle, est déjà bornée à 4000.
+    if len(corps) > LONGUEUR_MAX_CORPS:
+        return jsonify({"erreur": f"Question trop longue (max "
+                                  f"{LONGUEUR_MAX_CORPS} caractères)."}), 400
+    if id_sec <= 0:
         return jsonify({"erreur": "Catégorie obligatoire."}), 400
+    if not recuperer_un("SELECT 1 FROM secteur WHERE id_secteur = %s",
+                        (id_sec,)):
+        return jsonify({"erreur": "Catégorie inconnue."}), 400
 
     with curseur(commit=True) as cur:
         cur.execute(
@@ -224,11 +250,17 @@ def supprimer(id_q):
                      (id_q,))
     if not q:
         return jsonify({"erreur": "Question introuvable."}), 404
-    if q["id_auteur"] != g.utilisateur["id_utilisateur"] \
-            and not g.utilisateur.get("est_admin"):
+    # Retirer la question d'autrui relève de la modération, donc de son
+    # droit, et laisse une trace. Tout compte administrateur le pouvait,
+    # sans que rien ne l'inscrive nulle part.
+    moderation = q["id_auteur"] != g.utilisateur["id_utilisateur"]
+    if moderation and not a_le_droit(g.utilisateur, "signalements"):
         return jsonify({"erreur": "Action non autorisée."}), 403
     executer("DELETE FROM question WHERE id_question = %s",
              (id_q,), commit=True)
+    if moderation:
+        journaliser(g.utilisateur["id_utilisateur"], "supprimer_question",
+                    "question", id_q, f"auteur {q['id_auteur']}")
     return jsonify({"ok": True})
 
 
@@ -300,6 +332,11 @@ def retenir(id_q):
 @connexion_requise
 def basculer_utile(id_q):
     id_user = g.utilisateur["id_utilisateur"]
+    # Sans ce contrôle, la clé étrangère refusait l'insertion et la
+    # requête finissait en erreur 500 au lieu d'un simple 404.
+    if not recuperer_un("SELECT 1 FROM question WHERE id_question = %s",
+                        (id_q,)):
+        return jsonify({"erreur": "Question introuvable."}), 404
     deja = recuperer_un(
         """SELECT 1 FROM marquage_question
             WHERE id_question = %s AND id_utilisateur = %s
@@ -344,6 +381,9 @@ def basculer_utile(id_q):
 @connexion_requise
 def basculer_sauver(id_q):
     id_user = g.utilisateur["id_utilisateur"]
+    if not recuperer_un("SELECT 1 FROM question WHERE id_question = %s",
+                        (id_q,)):
+        return jsonify({"erreur": "Question introuvable."}), 404
     deja = recuperer_un(
         """SELECT 1 FROM sauvegarde
             WHERE id_question = %s AND id_utilisateur = %s""",
@@ -375,27 +415,48 @@ def signaler(id_q):
     problème collectif, alors qu'une seule personne était en cause.
     C'est exactement ce qui transforme un outil de modération en arme.
     """
-    if not recuperer_un("SELECT 1 FROM question WHERE id_question = %s",
-                        (id_q,)):
+    q = recuperer_un("SELECT id_auteur FROM question WHERE id_question = %s",
+                     (id_q,))
+    if not q:
         return jsonify({"erreur": "Question introuvable."}), 404
 
     d = request.get_json(silent=True) or {}
     motif = (d.get("motif") or "Signalé sans motif précisé").strip()[:300]
     id_user = g.utilisateur["id_utilisateur"]
 
+    if q["id_auteur"] == id_user:
+        return jsonify({"erreur": "Vous ne pouvez pas signaler votre propre "
+                                  "question. Vous pouvez la supprimer."}), 400
+
+    cle_debit = f"signaler|{id_user}"
+    if est_bloque(cle_debit, MAX_SIGNALEMENTS):
+        return jsonify({"erreur": "Trop de signalements en peu de temps. "
+                                  "Réessayez dans quelques minutes."}), 429
+
     deja = recuperer_un(
-        """SELECT id_signalement FROM signalement
+        """SELECT id_signalement, statut FROM signalement
             WHERE id_signaleur = %s AND type_contenu = 'question'
               AND id_contenu = %s""",
         (id_user, id_q))
     if deja:
         # Le motif est mis a jour : quelqu'un qui precise sa pensee ne
         # doit pas avoir a creer un second signalement pour le faire.
-        executer("UPDATE signalement SET motif = %s WHERE id_signalement = %s",
+        #
+        # Et un signalement deja tranche est rouvert. On repondait « motif
+        # mis a jour » en laissant la ligne a « rejete » : le nouveau
+        # signalement n'apparaissait plus nulle part, et la personne
+        # croyait avoir ete entendue.
+        rouvert = deja.get("statut") != "ouvert"
+        executer("UPDATE signalement SET motif = %s, statut = 'ouvert', "
+                 "action = NULL, traite_par = NULL, traite_le = NULL "
+                 "WHERE id_signalement = %s",
                  (motif, deja["id_signalement"]), commit=True)
+        enregistrer_echec(cle_debit)
         return jsonify({"ok": True, "deja_signale": True,
-                        "message": "Vous aviez déjà signalé cette question. "
-                                   "Votre motif a été mis à jour."})
+                        "message": ("Votre signalement a été rouvert."
+                                    if rouvert else
+                                    "Vous aviez déjà signalé cette question. "
+                                    "Votre motif a été mis à jour.")})
 
     executer(
         """INSERT INTO signalement
@@ -404,6 +465,7 @@ def signaler(id_q):
         (id_user, id_q, motif),
         commit=True,
     )
+    enregistrer_echec(cle_debit)   # compte le débit, pas un échec
     # Le motif n'est pas recopie ici : il est ecrit par un membre, et le
     # journal d'activite ne garde aucun texte. Seul compte le fait qu'un
     # signalement a eu lieu, et sur quoi.
